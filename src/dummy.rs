@@ -4,7 +4,6 @@ pub enum Expr {
     String(String),
     Bool(bool),
     Identifier(String),
-    // 나중에: BinaryOp, FunctionCall 등 추가
 }
 
 #[derive(Debug)]
