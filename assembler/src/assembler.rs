@@ -22,8 +22,8 @@ pub enum RelocKind {
     Relative,
 }
 
-pub fn assemble(source: &str, isa: &impl ISA) -> Result<AssemblerOutput, AssemError> {
-    let tokens = toknize(source)
+pub fn assemble(source: &str, isa: &impl ISA) -> Result<AssemblerOutput, AsmError> {
+    let tokens = tokenize(source)
         .map_err(|e| AsmError::LexerError(e.to_string()))?;
 
     let ast: AST = isa.parse(&tokens)?;

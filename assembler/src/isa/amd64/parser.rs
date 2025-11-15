@@ -46,6 +46,7 @@ fn parse_instruction(tokens: &[Token], pos: &mut usize) -> Result<ASTNode, AsmEr
         if *pos >= tokens.len() { break; }
 
         match &tokens[*pos].kind {
+            TokenKind::Newline => break,
             TokenKind::Number(n) => {
                 operands.push(Operand::Immediate(*n));
                 *pos += 1;
@@ -63,6 +64,13 @@ fn parse_instruction(tokens: &[Token], pos: &mut usize) -> Result<ASTNode, AsmEr
 
             TokenKind::Colon => break,
             _ => break,
+        }
+    }
+    
+    while *pos < tokens.len() {
+        match tokens[*pos].kind {
+            TokenKind::Newline => { *pos += 1; }
+            _ => break
         }
     }
 

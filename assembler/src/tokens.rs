@@ -9,6 +9,7 @@ pub enum TokenKind {
     RBracket,
     Plus,
     Minus,
+    Newline,
 }
 
 #[derive(Debug, Clone)]
@@ -24,7 +25,13 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
 
     while let Some(&ch) = chars.peek() {
         match ch {
-            ' ' | '\t' | '\n' | '\r' => {
+            ' ' | '\t' | '\r' => {
+                chars.next();
+                pos += 1;
+            }
+
+            '\n' => {
+                tokens.push(Token { kind: TokenKind::Newline, position: pos });
                 chars.next();
                 pos += 1;
             }
