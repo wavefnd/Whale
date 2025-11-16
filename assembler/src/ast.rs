@@ -33,14 +33,14 @@ pub enum DirectiveValue {
 pub enum Operand {
     Register(String),
     Immediate(i64),
-    Memory(MemoryOperand),
-    LabelRef(String),
+    Label(String),
+    Memory(MemoryOperand)
 }
 
 #[derive(Debug, Clone)]
 pub struct MemoryOperand {
     pub base: Option<String>,
     pub index: Option<String>,
-    pub scale: Option<u8>,
-    pub displacement: Option<i64>,
+    pub scale: u8,
+    pub disp: i64,
 }

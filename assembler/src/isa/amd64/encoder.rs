@@ -19,8 +19,8 @@ pub fn encode(ast: &AST) -> Result<AssemblerOutput, AsmError> {
                 encode_instruction(ins, &mut bytes, &mut relocs)?;
             }
 
-            ASTNode::Directive(_) => {
-                // TODO Add DB, DW, DD Later
+            ASTNode::Directive(dir) => {
+                encode_directive(dir, &mut bytes)?;
             }
         }
     }
@@ -55,7 +55,7 @@ fn encode_mov(
     let src = &ins.operands[1];
 
     // mov r64, imm64
-    if let Operand::LabelRef(regname) = dst {
+    if let Operand::Label(regname) = dst {
         if let Some(reg) = lookup_reg(regname) {
             match src {
                 Operand::Immediate(val) => {
@@ -68,7 +68,7 @@ fn encode_mov(
                     return Ok(());
                 }
 
-                Operand::LabelRef(label) => {
+                Operand::Label(label) => {
                     // Requires reloc
                     bytes.push(0x48);
                     bytes.push(0xB8 + reg);
@@ -94,4 +94,87 @@ fn lookup_reg(name: &str) -> Option<u8> {
         if *n == name { return Some(*code); }
     }
     None
+}
+
+fn encode_directive(dir: &Directive, bytes: &mut Vec<u8>) -> Result<(), AsmError> {
+    match dir.name.as_str() {
+        "db" => encode_db(dir, bytes),
+        "dw" => encode_dw(dir, bytes),
+        "dd" => encode_dd(dir, bytes),
+        "dq" => encode_dq(dir, bytes),
+        _ => Err(AsmError::EncodeError(format!("Unknown directive {}", dir.name))),
+    }
+}
+
+fn encode_db(dir: &Directive, bytes: &mut Vec<u8>) -> Result<(), AsmError> {
+    for v in &dir.values {
+        match v {
+            DirectiveValue::Number(n) => {
+                bytes.push(*n as u8);
+            }
+            DirectiveValue::StringLiteral(s) => {
+                for ch in s.bytes() {
+                    bytes.push(ch);
+                }
+            }
+            DirectiveValue::Identifier(_) => {
+                return Err(AsmError::EncodeError(
+                    "db does not support identifier".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+
+fn encode_dw(dir: &Directive, bytes: &mut Vec<u8>) -> Result<(), AsmError> {
+    for v in &dir.values {
+        match v {
+            DirectiveValue::Number(n) => {
+                let val = *n as i16;
+                bytes.extend_from_slice(&val.to_le_bytes());
+            }
+            _ => return Err(AsmError::EncodeError("dw supports only numbers".into())),
+        }
+    }
+    Ok(())
+}
+
+fn encode_dd(dir: &Directive, bytes: &mut Vec<u8>) -> Result<(), AsmError> {
+    for v in &dir.values {
+        match v {
+            DirectiveValue::Number(n) => {
+                let val = *n as i32;
+                bytes.extend_from_slice(&val.to_le_bytes());
+            }
+            DirectiveValue::Identifier(name) => {
+                // relocatable data
+                // dd label
+                // → reserve 4 bytes and add reloc
+                // but for now: not implemented
+                return Err(AsmError::EncodeError("dd identifier reloc not implemented yet".into()));
+            }
+            _ => return Err(AsmError::EncodeError("dd supports only numbers".into())),
+        }
+    }
+    Ok(())
+}
+
+fn encode_dq(dir: &Directive, bytes: &mut Vec<u8>) -> Result<(), AsmError> {
+    for v in &dir.values {
+        match v {
+            DirectiveValue::Number(n) => {
+                let val = *n as i64;
+                bytes.extend_from_slice(&val.to_le_bytes());
+            }
+            DirectiveValue::Identifier(name) => {
+                // relocatable data 8 bytes
+                // dd label → reloc 4 bytes, dq label → reloc 8 bytes
+                return Err(AsmError::EncodeError("dq identifier reloc not implemented yet".into()));
+            }
+            _ => return Err(AsmError::EncodeError("dq supports only numbers".into())),
+        }
+    }
+    Ok(())
 }

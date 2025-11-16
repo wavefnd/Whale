@@ -9,6 +9,8 @@ pub enum TokenKind {
     RBracket,
     Plus,
     Minus,
+    Multiply,
+    Divide,
     Newline,
 }
 
@@ -63,6 +65,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
 
             '-' => {
                 tokens.push(Token { kind: TokenKind::Minus, position: pos });
+                chars.next(); pos += 1;
+            }
+            
+            '*' => {
+                tokens.push(Token { kind: TokenKind::Multiply, position: pos });
                 chars.next(); pos += 1;
             }
 
