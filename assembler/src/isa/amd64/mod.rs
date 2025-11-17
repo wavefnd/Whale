@@ -6,6 +6,7 @@ use crate::assembler::{AssemblerOutput};
 pub mod encoder;
 pub mod parser;
 pub mod tables;
+pub mod encoding;
 
 pub struct AMD64;
 
