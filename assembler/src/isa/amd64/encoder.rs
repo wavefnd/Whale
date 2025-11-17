@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::error::AsmError;
 use crate::assembler::{AssemblerOutput, Relocation, RelocKind};
+use crate::error::AsmError::ParserError;
 use crate::isa::amd64::tables::*;
 
 pub fn encode(ast: &AST) -> Result<AssemblerOutput, AsmError> {
@@ -56,7 +57,7 @@ fn encode_mov(
 
     // mov r64, imm64
     if let Operand::Label(regname) = dst {
-        if let Some(reg) = lookup_reg(regname) {
+        if let Some(reg) = lookup_reg(regname, 64) {
             match src {
                 Operand::Immediate(val) => {
                     // REX.W + mov rax, imm64 = 0x48 B8 + imm64
@@ -89,11 +90,16 @@ fn encode_mov(
     Err(AsmError::EncodeError("Unsupported mov form".into()))
 }
 
-fn lookup_reg(name: &str) -> Option<u8> {
-    for (n, code) in REGISTERS_64 {
-        if *n == name { return Some(*code); }
-    }
-    None
+fn lookup_reg(name: &str, mode: u8) -> Option<u8> {
+    let regs = match mode {
+        64 => REGISTERS_64,
+        32 => REGISTERS_32,
+        _ => return None,
+    };
+
+    regs.iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, code)| *code)
 }
 
 fn encode_directive(dir: &Directive, bytes: &mut Vec<u8>) -> Result<(), AsmError> {

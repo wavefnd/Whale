@@ -235,11 +235,20 @@ fn parse_directive(tokens: &[Token], pos: &mut usize) -> Result<ASTNode, AsmErro
 fn is_register(name: &str) -> bool {
     matches!(
         name,
+        // 64bit
         "rax" | "rbx" | "rcx" | "rdx" |
         "rsi" | "rdi" | "rbp" | "rsp" |
         "r8" | "r9" | "r10" | "r11" |
         "r12" | "r13" | "r14" | "r15" |
-        "eax" | "ebx" | "ecx" | "edx"
+        // 32bit
+        "eax" | "ebx" | "ecx" | "edx" |
+        "esi" | "edi" | "dbp" | "esp" |
+        // 16bit
+        "ax" | "bx" | "cx" | "dx" |
+        "si" | "di" | "bp" | "sp" |
+        // 8bit
+        "al" | "bl" | "cl" | "dl" |
+        "ah" | "bh" | "ch" | "dh"
     )
 }
 

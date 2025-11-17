@@ -18,6 +18,17 @@ pub const REGISTERS_64: &[(&str, u8)] = &[
     ("r15", 15),
 ];
 
+pub const REGISTERS_32: &[(&str, u8)] = &[
+    ("eax", 0),
+    ("ecx", 1),
+    ("edx", 2),
+    ("ebx", 3),
+    ("esp", 4),
+    ("ebp", 5),
+    ("esi", 6),
+    ("edi", 7),
+];
+
 pub const MNEMONICS: &[&str] = &[
     "mov",
     "add",
