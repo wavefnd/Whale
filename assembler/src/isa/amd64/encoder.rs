@@ -2,6 +2,7 @@ use crate::ast::*;
 use crate::error::AsmError;
 use crate::assembler::{AssemblerOutput, Relocation, RelocKind};
 use crate::error::AsmError::ParserError;
+use crate::isa::amd64::encoding::{ModRM, REX};
 use crate::isa::amd64::tables::*;
 
 pub fn encode(ast: &AST) -> Result<AssemblerOutput, AsmError> {
@@ -86,6 +87,36 @@ fn encode_mov(
             }
         }
     }
+
+    if let Operand::Register(dst_reg_name) = dst {
+        if let Operand::Register(src_reg_name) = src {
+            let dst_code = lookup_reg(dst_reg_name, 64)
+                .ok_or_else(|| AsmError::EncodeError("Invalid dst register".into()))?;
+
+            let src_code = lookup_reg(src_reg_name, 64)
+                .ok_or_else(|| AsmError::EncodeError("Invalid src register".into()))?;
+
+            let mut rex = REX {
+                w: true,
+                r: src_code >= 8,
+                x: false,
+                b: dst_code >= 8,
+            };
+
+            bytes.push(rex.encode());
+
+            bytes.push(0x89);
+
+            let modrm = ModRM::new(
+                0b11,
+                src_code & 7,
+                dst_code & 7,
+            );
+
+            bytes.push(modrm.encode());
+            return Ok(());
+        }
+     }
 
     Err(AsmError::EncodeError("Unsupported mov form".into()))
 }
