@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "assembler",
+    "object",
+    "linker",
 ]
 
 [package]
@@ -10,3 +12,4 @@ edition = "2021"
 
 [dependencies]
 assembler = { path = "assembler" }
+object = { path = "object" }
