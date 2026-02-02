@@ -1,6 +1,12 @@
+[workspace]
+members = [
+    "assembler",
+]
+
 [package]
 name = "whale"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+assembler = { path = "assembler" }
