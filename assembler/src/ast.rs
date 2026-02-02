@@ -8,6 +8,9 @@ pub enum ASTNode {
     Instruction(Instruction),
     Directive(Directive),
     Label(String),
+    Section(String),
+    Global(String),
+    Extern(String),
 }
 
 #[derive(Debug, Clone)]

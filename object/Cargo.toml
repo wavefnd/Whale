@@ -1,0 +1,8 @@
+[package]
+name = "object"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Future dependencies like 'elf' crate if we don't want to build from scratch, 
+# but building basic ELF writer from scratch is a good learning exercise for this project.

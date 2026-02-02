@@ -8,7 +8,6 @@ pub fn parse(tokens: &[Token]) -> Result<AST, AsmError> {
 
     while pos < tokens.len() {
         match &tokens[pos].kind {
-            // label: identifier :
             TokenKind::Identifier(name) => {
                 if pos + 1 < tokens.len() && matches!(tokens[pos + 1].kind, TokenKind::Colon) {
                     items.push(ASTNode::Label(name.clone()));
@@ -21,16 +20,12 @@ pub fn parse(tokens: &[Token]) -> Result<AST, AsmError> {
                     continue;
                 }
 
-                // instruction start
                 items.push(parse_instruction(tokens, &mut pos)?);
             }
-
             TokenKind::Newline => pos += 1,
-            // skip newlines or unknown tokens for now
             _ => pos += 1,
         }
     }
-
     Ok(AST { items })
 }
 
@@ -52,10 +47,8 @@ fn parse_mnemonic(tokens: &[Token], pos: &mut usize) -> Result<String, AsmError>
 
 fn parse_operand_list(tokens: &[Token], pos: &mut usize) -> Result<Vec<Operand>, AsmError> {
     let mut ops = Vec::new();
-
     loop {
         if *pos >= tokens.len() { break; }
-
         match &tokens[*pos].kind {
             TokenKind::Newline => { *pos += 1; break; }
             _ => {
@@ -63,7 +56,6 @@ fn parse_operand_list(tokens: &[Token], pos: &mut usize) -> Result<Vec<Operand>,
                 ops.push(operand);
             }
         }
-
         if *pos < tokens.len() && matches!(tokens[*pos].kind, TokenKind::Comma) {
             *pos += 1;
             continue;
@@ -71,11 +63,9 @@ fn parse_operand_list(tokens: &[Token], pos: &mut usize) -> Result<Vec<Operand>,
             break;
         }
     }
-
     while *pos < tokens.len() && matches!(tokens[*pos].kind, TokenKind::Newline) {
         *pos += 1;
     }
-
     Ok(ops)
 }
 
@@ -85,51 +75,40 @@ fn parse_operand(tokens: &[Token], pos: &mut usize) -> Result<Operand, AsmError>
             *pos += 1;
             Ok(Operand::Immediate(*n))
         }
-
         TokenKind::Identifier(name) => {
             let s = name.clone();
             *pos += 1;
-
             if is_register(&s) {
                 return Ok(Operand::Register(s));
             }
-
             return Ok(Operand::Label(s));
         }
-
         TokenKind::LBracket => {
             parse_memory_operand(tokens, pos)
         }
-
         _ => Err(AsmError::ParserError("Unexpected token in operand".into())),
     }
 }
 
-
 fn parse_memory_operand(tokens: &[Token], pos: &mut usize) -> Result<Operand, AsmError> {
     *pos += 1;
-
     let mut base: Option<String> = None;
     let mut index: Option<String> = None;
     let mut scale: u8 = 1;
     let mut disp: i64 = 0;
     let mut negative = false;
-
     while *pos < tokens.len() {
         match &tokens[*pos].kind {
             TokenKind::Identifier(name) => {
                 let reg = name.clone();
                 *pos += 1;
-
                 if is_register(&reg) {
                     if base.is_none() {
                         base = Some(reg);
                     } else if index.is_none() {
                         index = Some(reg);
-
                         if *pos < tokens.len() && matches!(tokens[*pos].kind, TokenKind::Multiply) {
-                            *pos += 1; // skip '*'
-
+                            *pos += 1;
                             match &tokens[*pos].kind {
                                 TokenKind::Number(n) => {
                                     scale = *n as u8;
@@ -142,49 +121,23 @@ fn parse_memory_operand(tokens: &[Token], pos: &mut usize) -> Result<Operand, As
                         return Err(AsmError::ParserError("Too many registers in memory operand".into()));
                     }
                 } else {
-                    return Ok(Operand::Memory(MemoryOperand {
-                        base: None,
-                        index: None,
-                        scale: 1,
-                        disp: 0,
-                    }));
+                   // Label-based memory? [msg]
+                   return Err(AsmError::ParserError("Label-based memory not supported in [] yet".into()));
                 }
             }
-
             TokenKind::Number(n) => {
                 let val = if negative { -*n } else { *n };
                 disp += val;
                 negative = false;
                 *pos += 1;
             }
-
-            TokenKind::Plus => {
-                negative = false;
-                *pos += 1;
-            }
-
-            TokenKind::Minus => {
-                negative = true;
-                *pos += 1;
-            }
-
-            TokenKind::RBracket => {
-                *pos += 1;
-                break;
-            }
-
-            TokenKind::Comma | TokenKind::Newline => break,
-
-            _ => return Err(AsmError::ParserError("Unexpected token in memory operand".into())),
+            TokenKind::Plus => { negative = false; *pos += 1; }
+            TokenKind::Minus => { negative = true; *pos += 1; }
+            TokenKind::RBracket => { *pos += 1; break; }
+            _ => break,
         }
     }
-
-    Ok(Operand::Memory(MemoryOperand {
-        base,
-        index,
-        scale,
-        disp,
-    }))
+    Ok(Operand::Memory(MemoryOperand { base, index, scale, disp }))
 }
 
 fn parse_directive(tokens: &[Token], pos: &mut usize) -> Result<ASTNode, AsmError> {
@@ -194,64 +147,50 @@ fn parse_directive(tokens: &[Token], pos: &mut usize) -> Result<ASTNode, AsmErro
     };
     *pos += 1;
 
-    let mut values = Vec::new();
-
-    loop {
-        if *pos >= tokens.len() { break; }
-
-        match &tokens[*pos].kind {
-            TokenKind::Newline => {
+    match name.as_str() {
+        "section" => {
+            if let TokenKind::Identifier(sec_name) = &tokens[*pos].kind {
                 *pos += 1;
-                break;
+                return Ok(ASTNode::Section(sec_name.clone()));
             }
-
-            TokenKind::Number(n) => {
-                values.push(DirectiveValue::Number(*n));
+            Err(AsmError::ParserError("Expected section name".into()))
+        }
+        "global" => {
+             if let TokenKind::Identifier(sym_name) = &tokens[*pos].kind {
                 *pos += 1;
+                return Ok(ASTNode::Global(sym_name.clone()));
             }
-
-            TokenKind::StringLiteral(s) => {
-                values.push(DirectiveValue::StringLiteral(s.clone()));
+            Err(AsmError::ParserError("Expected global symbol name".into()))
+        }
+        "extern" => {
+             if let TokenKind::Identifier(sym_name) = &tokens[*pos].kind {
                 *pos += 1;
+                return Ok(ASTNode::Extern(sym_name.clone()));
             }
-
-            TokenKind::Identifier(s) => {
-                values.push(DirectiveValue::StringLiteral(s.clone()));
-                *pos += 1;
+            Err(AsmError::ParserError("Expected extern symbol name".into()))
+        }
+        _ => {
+            let mut values = Vec::new();
+            loop {
+                if *pos >= tokens.len() { break; }
+                match &tokens[*pos].kind {
+                    TokenKind::Newline => { *pos += 1; break; }
+                    TokenKind::Number(n) => { values.push(DirectiveValue::Number(*n)); *pos += 1; }
+                    TokenKind::StringLiteral(s) => { values.push(DirectiveValue::StringLiteral(s.clone())); *pos += 1; }
+                    TokenKind::Identifier(s) => { values.push(DirectiveValue::Identifier(s.clone())); *pos += 1; }
+                    TokenKind::Comma => { *pos += 1; continue; }
+                    _ => break,
+                }
             }
-
-            TokenKind::Comma => {
-                *pos += 1;
-                continue;
-            }
-
-            _ => break,
+            Ok(ASTNode::Directive(Directive { name, values }))
         }
     }
-
-    Ok(ASTNode::Directive(Directive {name, values}))
 }
 
 fn is_register(name: &str) -> bool {
-    matches!(
-        name,
-        // 64bit
-        "rax" | "rbx" | "rcx" | "rdx" |
-        "rsi" | "rdi" | "rbp" | "rsp" |
-        "r8" | "r9" | "r10" | "r11" |
-        "r12" | "r13" | "r14" | "r15" |
-        // 32bit
-        "eax" | "ebx" | "ecx" | "edx" |
-        "esi" | "edi" | "dbp" | "esp" |
-        // 16bit
-        "ax" | "bx" | "cx" | "dx" |
-        "si" | "di" | "bp" | "sp" |
-        // 8bit
-        "al" | "bl" | "cl" | "dl" |
-        "ah" | "bh" | "ch" | "dh"
-    )
+    matches!(name, "rax" | "rbx" | "rcx" | "rdx" | "rsi" | "rdi" | "rbp" | "rsp" | "r8" | "r9" | "r10" | "r11" | "r12" | "r13" | "r14" | "r15" | "eax" | "ebx" | "ecx" | "edx" | "esi" | "edi" | "ebp" | "esp" | "r8d" | "r9d" | "r10d" | "r11d" | "r12d" | "r13d" | "r14d" | "r15d" | "ax" | "bx" | "cx" | "dx" | "si" | "di" | "bp" | "sp" | "r8w" | "r9w" | "r10w" | "r11w" | "r12w" | "r13w" | "r14w" | "r15w" | "al" | "bl" | "cl" | "dl" | "ah" | "bh" | "ch" | "dh" | "r8b" | "r9b" | "r10b" | "r11b" | "r12b" | "r13b" | "r14b" | "r15b")
 }
 
 fn is_directive(name: &str) -> bool {
-    matches!(name, "db" | "dw" | "dd" | "dq")
+    matches!(name, "db" | "dw" | "dd" | "dq" | "section" | "global" | "extern")
 }

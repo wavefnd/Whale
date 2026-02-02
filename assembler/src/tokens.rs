@@ -27,6 +27,14 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
 
     while let Some(&ch) = chars.peek() {
         match ch {
+            ';' => {
+                while let Some(&c) = chars.peek() {
+                    if c == '\n' { break; }
+                    chars.next();
+                    pos += 1;
+                }
+            }
+
             ' ' | '\t' | '\r' => {
                 chars.next();
                 pos += 1;
@@ -97,10 +105,10 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, String> {
                 tokens.push(Token { kind: TokenKind::Number(parsed), position: pos });
             }
 
-            c if c.is_alphanumeric() || c == '_' => {
+            c if c.is_alphanumeric() || c == '_' || c == '.' => {
                 let mut id = String::new();
                 while let Some(&d) = chars.peek() {
-                    if d.is_alphanumeric() || d == '_' {
+                    if d.is_alphanumeric() || d == '_' || d == '.' {
                         id.push(d);
                         chars.next();
                         pos += 1;
