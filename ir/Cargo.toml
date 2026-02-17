@@ -1,0 +1,11 @@
+[package]
+name = "ir"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+socket = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"], optional = true }

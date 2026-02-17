@@ -2,7 +2,7 @@
 members = [
     "assembler",
     "object",
-    "linker",
+    "linker", "ir",
 ]
 
 [package]
@@ -10,6 +10,12 @@ name = "whale"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+socket-cli = ["ir/socket", "dep:serde_json"]
+
 [dependencies]
 assembler = { path = "assembler" }
 object = { path = "object" }
+ir = { path = "../ir", default-features = false }
+serde_json = { version = "1", optional = true }

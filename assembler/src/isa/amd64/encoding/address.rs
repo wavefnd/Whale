@@ -2,14 +2,12 @@ use crate::ast::MemoryOperand;
 use crate::error::AsmError;
 use crate::isa::amd64::tables::{REGISTERS_32, REGISTERS_64};
 
-/// displacement 크기
 #[derive(Debug, Clone)]
 pub enum DispKind {
     Disp8(i8),
     Disp32(i32),
 }
 
-/// Memory addressing 인코딩 결과
 #[derive(Debug, Clone)]
 pub struct EncodedAddress {
     pub mod_bits: u8,
@@ -17,12 +15,10 @@ pub struct EncodedAddress {
     pub sib: Option<(u8, u8, u8)>, // (scale, index, base)
     pub disp: Option<DispKind>,
 
-    /// REX 확장 정보
     pub rex_b: bool,
     pub rex_x: bool,
 }
 
-/// base/index → 레지스터 번호 찾기
 fn reg_code(name: &str, mode: u8) -> Option<u8> {
     let regs = match mode {
         64 => REGISTERS_64,
