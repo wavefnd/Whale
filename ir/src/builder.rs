@@ -13,6 +13,12 @@ impl<'a> FunctionBuilder<'a> {
         self.func.entry
     }
 
+    pub fn undef(&mut self, ty: Type) -> ValueId {
+        let dst = self.define_value(ty.clone());
+        self.cur_block_mut().instructions.push(Instruction::Undef { dst, ty });
+        dst
+    }
+
     fn _cur_block(&self) -> &BasicBlock {
         self.func
             .blocks
