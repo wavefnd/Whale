@@ -147,6 +147,33 @@ struct SymBuild {
 }
 
 pub fn write_elf(obj: &ObjectFile) -> Result<Vec<u8>, String> {
+    for section in &obj.sections {
+        if section.name.contains('\0') {
+            return Err(format!(
+                "section name {:?} contains embedded NUL byte",
+                section.name
+            ));
+        }
+    }
+
+    for sym in &obj.symbols {
+        if sym.name.contains('\0') {
+            return Err(format!(
+                "symbol name {:?} contains embedded NUL byte",
+                sym.name
+            ));
+        }
+    }
+
+    for reloc in &obj.relocations {
+        if reloc.symbol.contains('\0') {
+            return Err(format!(
+                "relocation reference {:?} contains embedded NUL byte",
+                reloc.symbol
+            ));
+        }
+    }
+
     let mut shstrtab = vec![0u8];
     let mut strtab = vec![0u8];
 
@@ -406,6 +433,11 @@ fn align_up(value: u64, align: u64) -> u64 {
 }
 
 fn push_name(table: &mut Vec<u8>, name: &str) -> u32 {
+    debug_assert!(
+        !name.contains('\0'),
+        "push_name received embedded NUL in {:?}",
+        name
+    );
     let idx = table.len() as u32;
     table.extend_from_slice(name.as_bytes());
     table.push(0);
@@ -444,5 +476,182 @@ fn reloc_type(kind: RelocKind) -> u32 {
         RelocKind::Relative8 => 15, // R_X86_64_PC8
         RelocKind::GOTPCREL => 9,   // R_X86_64_GOTPCREL
         RelocKind::PLT32 => 4,      // R_X86_64_PLT32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::object::{ObjectFile, ObjectFormat};
+    use crate::core::reloc::{ObjectRelocation, RelocKind};
+    use crate::core::section::{Section, SectionKind};
+    use crate::core::symbol::{ObjectSymbol, SymbolBinding, SymbolVisibility};
+
+    #[test]
+    fn test_reject_section_name_embedded_nul() {
+        let fixtures = [
+            ("\0text", "beginning"),
+            (".te\0xt", "middle"),
+            (".text\0", "end"),
+        ];
+
+        for (bad_name, position) in fixtures {
+            let mut obj = ObjectFile::new(ObjectFormat::ELF64);
+            obj.sections.push(Section {
+                name: bad_name.to_string(),
+                kind: SectionKind::Text,
+                data: vec![0x90],
+                align: 16,
+            });
+
+            let err = write_elf(&obj).expect_err(&format!("expected error for NUL at {position}"));
+            assert!(
+                err.contains("section name"),
+                "expected context 'section name', got: {err}"
+            );
+            assert!(
+                err.contains("embedded NUL"),
+                "expected 'embedded NUL' in error, got: {err}"
+            );
+            let escaped = format!("{:?}", bad_name);
+            assert!(
+                err.contains(&escaped),
+                "expected escaped name {escaped} in error, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_reject_symbol_name_embedded_nul() {
+        let fixtures = [
+            ("\0sym", "beginning"),
+            ("my\0sym", "middle"),
+            ("sym\0", "end"),
+        ];
+
+        for (bad_name, position) in fixtures {
+            let mut obj = ObjectFile::new(ObjectFormat::ELF64);
+            obj.sections.push(Section {
+                name: ".text".to_string(),
+                kind: SectionKind::Text,
+                data: vec![0x90],
+                align: 16,
+            });
+            obj.symbols.push(ObjectSymbol {
+                name: bad_name.to_string(),
+                section_index: Some(0),
+                value: 0,
+                size: 1,
+                binding: SymbolBinding::Global,
+                visibility: SymbolVisibility::Default,
+            });
+
+            let err = write_elf(&obj).expect_err(&format!("expected error for NUL at {position}"));
+            assert!(
+                err.contains("symbol name"),
+                "expected context 'symbol name', got: {err}"
+            );
+            assert!(
+                err.contains("embedded NUL"),
+                "expected 'embedded NUL' in error, got: {err}"
+            );
+            let escaped = format!("{:?}", bad_name);
+            assert!(
+                err.contains(&escaped),
+                "expected escaped name {escaped} in error, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_reject_relocation_reference_embedded_nul() {
+        let fixtures = [
+            ("\0reloc", "beginning"),
+            ("rel\0oc", "middle"),
+            ("reloc\0", "end"),
+        ];
+
+        for (bad_name, position) in fixtures {
+            let mut obj = ObjectFile::new(ObjectFormat::ELF64);
+            obj.sections.push(Section {
+                name: ".text".to_string(),
+                kind: SectionKind::Text,
+                data: vec![0x90; 8],
+                align: 16,
+            });
+            obj.relocations.push(ObjectRelocation {
+                section_index: 0,
+                offset: 0,
+                symbol: bad_name.to_string(),
+                kind: RelocKind::Relative32,
+                addend: -4,
+            });
+
+            let err = write_elf(&obj).expect_err(&format!("expected error for NUL at {position}"));
+            assert!(
+                err.contains("relocation reference"),
+                "expected context 'relocation reference', got: {err}"
+            );
+            assert!(
+                err.contains("embedded NUL"),
+                "expected 'embedded NUL' in error, got: {err}"
+            );
+            let escaped = format!("{:?}", bad_name);
+            assert!(
+                err.contains(&escaped),
+                "expected escaped name {escaped} in error, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_valid_names_utf8_and_empty() {
+        let mut obj = ObjectFile::new(ObjectFormat::ELF64);
+        let sec_idx = obj.sections.len();
+        obj.sections.push(Section {
+            name: ".текст_café_日本語".to_string(),
+            kind: SectionKind::Text,
+            data: vec![0x90],
+            align: 16,
+        });
+        // Empty symbol name (mandatory STN_UNDEF entry)
+        obj.symbols.push(ObjectSymbol {
+            name: "".to_string(),
+            section_index: None,
+            value: 0,
+            size: 0,
+            binding: SymbolBinding::Local,
+            visibility: SymbolVisibility::Default,
+        });
+        // Non-ASCII UTF-8 symbol
+        obj.symbols.push(ObjectSymbol {
+            name: "функция_café".to_string(),
+            section_index: Some(sec_idx),
+            value: 0,
+            size: 1,
+            binding: SymbolBinding::Global,
+            visibility: SymbolVisibility::Default,
+        });
+        // Relocation referencing valid non-ASCII symbol
+        obj.relocations.push(ObjectRelocation {
+            section_index: sec_idx,
+            offset: 0,
+            symbol: "внешний_sym".to_string(),
+            kind: RelocKind::Relative32,
+            addend: -4,
+        });
+
+        let elf_bytes = write_elf(&obj).expect("writing ELF with valid UTF-8 names must succeed");
+        assert_eq!(&elf_bytes[0..4], &[0x7f, b'E', b'L', b'F']);
+
+        let contains_nul_terminated = |bytes: &[u8], name: &str| {
+            let mut pattern = name.as_bytes().to_vec();
+            pattern.push(0);
+            bytes.windows(pattern.len()).any(|w| w == pattern.as_slice())
+        };
+
+        assert!(contains_nul_terminated(&elf_bytes, ".текст_café_日本語"));
+        assert!(contains_nul_terminated(&elf_bytes, "функция_café"));
+        assert!(contains_nul_terminated(&elf_bytes, "внешний_sym"));
     }
 }
