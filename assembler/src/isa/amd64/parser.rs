@@ -357,11 +357,10 @@ where
         if expect_term {
             match kind {
                 TokenKind::Plus => {
-                    sign = 1;
                     *pos += 1;
                 }
                 TokenKind::Minus => {
-                    sign = -1;
+                    sign = -sign;
                     *pos += 1;
                 }
                 TokenKind::Number(n) => {

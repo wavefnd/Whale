@@ -184,4 +184,40 @@ far_target:
         assert_eq!(text.data[169], 0xFB);
         assert_eq!(text.data[170], 0xC3);
     }
+
+    fn eval_imm32(expr: &str) -> i32 {
+        let src = format!("section .text\nglobal _start\n_start:\n    mov eax, {expr}\n    ret\n");
+        let out = assemble(&src, &AMD64).expect("assemble should succeed");
+        let text = out
+            .sections
+            .iter()
+            .find(|s| s.name == ".text")
+            .expect("text section");
+        i32::from_le_bytes([text.data[1], text.data[2], text.data[3], text.data[4]])
+    }
+
+    #[test]
+    fn unary_plus_after_infix_minus_subtracts() {
+        assert_eq!(eval_imm32("10 - +2"), 8);
+    }
+
+    #[test]
+    fn unary_minus_after_infix_minus_adds() {
+        assert_eq!(eval_imm32("10 - -2"), 12);
+    }
+
+    #[test]
+    fn double_unary_minus_is_positive() {
+        assert_eq!(eval_imm32("--2"), 2);
+    }
+
+    #[test]
+    fn unary_minus_then_plus_is_negative() {
+        assert_eq!(eval_imm32("-+2"), -2);
+    }
+
+    #[test]
+    fn leading_unary_minus_negates() {
+        assert_eq!(eval_imm32("-3"), -3);
+    }
 }
