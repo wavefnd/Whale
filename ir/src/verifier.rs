@@ -19,6 +19,10 @@ pub enum VerifyError {
         func: String,
         value: ValueId,
     },
+    VoidParameter {
+        func: String,
+        param: String,
+    },
     UnterminatedBlock {
         func: String,
         block: String,
@@ -46,6 +50,12 @@ pub fn verify_module(m: &Module) -> Result<(), VerifyError> {
         // value id set
         let mut defined = std::collections::HashSet::<ValueId>::new();
         for p in &f.params {
+            if p.ty == Type::Void {
+                return Err(VerifyError::VoidParameter {
+                    func: f.name.clone(),
+                    param: p.name.clone(),
+                });
+            }
             defined.insert(p.id);
         }
 

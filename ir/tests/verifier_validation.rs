@@ -76,6 +76,48 @@ fn returned_values_require_type_metadata_and_a_definition() {
 }
 
 #[test]
+fn unused_void_parameters_are_rejected() {
+    for params in [
+        vec![("bad".into(), Type::Void)],
+        vec![("ok".into(), Type::I32), ("bad".into(), Type::Void)],
+    ] {
+        let mut builder = ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+        let mut function = builder.begin_function("invalid", params, Type::Void);
+        function.ret(None);
+        function.finish();
+
+        assert!(matches!(
+            ir::verify_module(&builder.finish()),
+            Err(VerifyError::VoidParameter { func, param })
+                if func == "invalid" && param == "bad"
+        ));
+    }
+}
+
+#[test]
+fn zero_argument_void_functions_are_valid() {
+    let mut builder = ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+    let mut function = builder.begin_function("noop", vec![], Type::Void);
+    function.ret(None);
+    function.finish();
+
+    assert!(ir::verify_module(&builder.finish()).is_ok());
+}
+
+#[test]
+fn integer_and_pointer_parameters_are_valid() {
+    for ty in [Type::I32, Type::ptr_to(Type::I32), Type::ptr_to(Type::Void)] {
+        let mut builder = ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+        let mut function =
+            builder.begin_function("identity", vec![("value".into(), ty.clone())], ty);
+        function.ret(Some(function.param_value(0)));
+        function.finish();
+
+        assert!(ir::verify_module(&builder.finish()).is_ok());
+    }
+}
+
+#[test]
 fn valid_parameter_returns_and_wrong_terminator_annotations() {
     let mut builder = ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
     let mut function = builder.begin_function("identity", vec![("x".into(), Type::I32)], Type::I32);
