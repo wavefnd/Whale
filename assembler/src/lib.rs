@@ -246,13 +246,14 @@ dd 10 + --2
         assert_eq!(
             data.data,
             vec![
-                0x08, 0x00, 0x00, 0x00,
-                0x0C, 0x00, 0x00, 0x00,
-                0x08, 0x00, 0x00, 0x00,
-                0x0C, 0x00, 0x00, 0x00,
+                0x08, 0x00, 0x00, 0x00, 0x0C, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x0C, 0x00,
+                0x00, 0x00,
             ]
         );
-        assert!(data.relocs.is_empty(), "dd constants must not produce relocations");
+        assert!(
+            data.relocs.is_empty(),
+            "dd constants must not produce relocations"
+        );
     }
 
     #[test]
@@ -278,32 +279,48 @@ _start:
         assert_eq!(
             text.data,
             vec![
-                0xB8, 0x08, 0x00, 0x00, 0x00,
-                0xBB, 0x0C, 0x00, 0x00, 0x00,
-                0xB9, 0x08, 0x00, 0x00, 0x00,
-                0xC3,
+                0xB8, 0x08, 0x00, 0x00, 0x00, 0xBB, 0x0C, 0x00, 0x00, 0x00, 0xB9, 0x08, 0x00, 0x00,
+                0x00, 0xC3,
             ]
         );
-        assert!(text.relocs.is_empty(), "equ immediate must not create relocations");
+        assert!(
+            text.relocs.is_empty(),
+            "equ immediate must not create relocations"
+        );
     }
 
     #[test]
     fn trailing_operator_and_missing_term_errors() {
         let res1 = assemble("section .text\n_start:\n    mov eax, 10 +\n", &AMD64);
-        assert!(res1.is_err());
-        assert!(res1.unwrap_err().to_string().contains("Expression cannot end with operator"));
+        match res1 {
+            Err(e) => assert!(e
+                .to_string()
+                .contains("Expression cannot end with operator")),
+            Ok(_) => panic!("expected error on trailing '+'"),
+        }
 
         let res2 = assemble("section .text\n_start:\n    mov eax, 10 -\n", &AMD64);
-        assert!(res2.is_err());
-        assert!(res2.unwrap_err().to_string().contains("Expression cannot end with operator"));
+        match res2 {
+            Err(e) => assert!(e
+                .to_string()
+                .contains("Expression cannot end with operator")),
+            Ok(_) => panic!("expected error on trailing '-'"),
+        }
 
         let res3 = assemble("section .text\n_start:\n    mov eax, 10 - +\n", &AMD64);
-        assert!(res3.is_err());
-        assert!(res3.unwrap_err().to_string().contains("Expression cannot end with operator"));
+        match res3 {
+            Err(e) => assert!(e
+                .to_string()
+                .contains("Expression cannot end with operator")),
+            Ok(_) => panic!("expected error on trailing '- +'"),
+        }
 
         let res4 = assemble("section .data\n    dd 10 +\n", &AMD64);
-        assert!(res4.is_err());
-        assert!(res4.unwrap_err().to_string().contains("Expression cannot end with operator"));
+        match res4 {
+            Err(e) => assert!(e
+                .to_string()
+                .contains("Expression cannot end with operator")),
+            Ok(_) => panic!("expected error on trailing '+' in data directive"),
+        }
     }
 }
-
