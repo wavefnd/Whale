@@ -220,4 +220,90 @@ far_target:
     fn leading_unary_minus_negates() {
         assert_eq!(eval_imm32("-3"), -3);
     }
+
+    #[test]
+    fn unary_chain_following_infix_plus() {
+        assert_eq!(eval_imm32("10 + -+2"), 8);
+        assert_eq!(eval_imm32("10 + --2"), 12);
+        assert_eq!(eval_imm32("10 + -2"), 8);
+    }
+
+    #[test]
+    fn dd_unary_sign_composition_emits_expected_bytes() {
+        let src = r#"
+section .data
+dd 10 - +2
+dd 10 - -2
+dd 10 + -+2
+dd 10 + --2
+"#;
+        let out = assemble(src, &AMD64).expect("assemble should succeed");
+        let data = out
+            .sections
+            .iter()
+            .find(|s| s.name == ".data")
+            .expect("data section");
+        assert_eq!(
+            data.data,
+            vec![
+                0x08, 0x00, 0x00, 0x00,
+                0x0C, 0x00, 0x00, 0x00,
+                0x08, 0x00, 0x00, 0x00,
+                0x0C, 0x00, 0x00, 0x00,
+            ]
+        );
+        assert!(data.relocs.is_empty(), "dd constants must not produce relocations");
+    }
+
+    #[test]
+    fn equ_unary_sign_composition() {
+        let src = r#"
+section .text
+global _start
+VAL_SUB_PLUS  equ 10 - +2
+VAL_SUB_MINUS equ 10 - -2
+VAL_ADD_CHAIN equ 10 + -+2
+_start:
+    mov eax, VAL_SUB_PLUS
+    mov ebx, VAL_SUB_MINUS
+    mov ecx, VAL_ADD_CHAIN
+    ret
+"#;
+        let out = assemble(src, &AMD64).expect("assemble should succeed");
+        let text = out
+            .sections
+            .iter()
+            .find(|s| s.name == ".text")
+            .expect("text section");
+        assert_eq!(
+            text.data,
+            vec![
+                0xB8, 0x08, 0x00, 0x00, 0x00,
+                0xBB, 0x0C, 0x00, 0x00, 0x00,
+                0xB9, 0x08, 0x00, 0x00, 0x00,
+                0xC3,
+            ]
+        );
+        assert!(text.relocs.is_empty(), "equ immediate must not create relocations");
+    }
+
+    #[test]
+    fn trailing_operator_and_missing_term_errors() {
+        let res1 = assemble("section .text\n_start:\n    mov eax, 10 +\n", &AMD64);
+        assert!(res1.is_err());
+        assert!(res1.unwrap_err().to_string().contains("Expression cannot end with operator"));
+
+        let res2 = assemble("section .text\n_start:\n    mov eax, 10 -\n", &AMD64);
+        assert!(res2.is_err());
+        assert!(res2.unwrap_err().to_string().contains("Expression cannot end with operator"));
+
+        let res3 = assemble("section .text\n_start:\n    mov eax, 10 - +\n", &AMD64);
+        assert!(res3.is_err());
+        assert!(res3.unwrap_err().to_string().contains("Expression cannot end with operator"));
+
+        let res4 = assemble("section .data\n    dd 10 +\n", &AMD64);
+        assert!(res4.is_err());
+        assert!(res4.unwrap_err().to_string().contains("Expression cannot end with operator"));
+    }
 }
+
