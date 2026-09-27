@@ -38,6 +38,7 @@ fn verifier_requires_a_supported_target_and_its_exact_layout() {
 fn lowering_rejects_target_layout_mismatches_without_relying_on_verification() {
     use ir::lower_ast::{frontend::Program, lower_o0, LowerError};
     let program = Program {
+        declarations: vec![],
         globals: vec![],
         functions: vec![],
     };

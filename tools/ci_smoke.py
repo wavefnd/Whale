@@ -115,11 +115,11 @@ def smoke(binary, socket, artifacts, emulator=None, sysroot=None):
             rejected(["asm", "--amd64", bad_asm], root / "rejected.o", b"closing ']'")
 
             socket_input = root / "socket input.json"
-            program = {"globals": [], "functions": [{"name": "answer", "parameters": [],
+            program = {"declarations": [], "globals": [], "functions": [{"name": "answer", "convention": "Whale", "linkage": "Internal", "link_name": None, "parameters": [],
                        "return_type": {"Int": {"bits": 32, "signed": True}},
                        "body": [{"Return": {"Lit": {"Int": {
                            "bits": 32, "signed": True, "value": "42"}}}}]}]}
-            socket_input.write_text(json.dumps({"format_version": 1, "semantics_version": 1, "features": [], "program": program}), encoding="utf-8")
+            socket_input.write_text(json.dumps({"format_version": 2, "semantics_version": 1, "features": [], "program": program}), encoding="utf-8")
             if socket == "disabled":
                 result = invoke(["ir", "lower", socket_input], success=False, diagnostic=b"requires feature 'socket-cli'")
                 if result.returncode != 2:
@@ -142,12 +142,12 @@ def smoke(binary, socket, artifacts, emulator=None, sysroot=None):
                      "init": {"Var": "constant"}},
                 ]
                 multi_program["functions"].append({
-                    "name": "from_global", "parameters": [],
+                    "name": "from_global", "convention": "Whale", "linkage": "Internal", "link_name": None, "parameters": [],
                     "return_type": {"Int": {"bits": 32, "signed": True}},
                     "body": [{"Return": {"Var": "alias"}}],
                 })
                 multi_json = root / "multiple functions.json"
-                multi_json.write_text(json.dumps({"format_version": 1, "semantics_version": 1, "features": [], "program": multi_program}), encoding="utf-8")
+                multi_json.write_text(json.dumps({"format_version": 2, "semantics_version": 1, "features": [], "program": multi_program}), encoding="utf-8")
                 reference = None
                 for _ in range(3):
                     data = invoke(["ir", "lower", multi_json]).stdout
@@ -162,7 +162,7 @@ def smoke(binary, socket, artifacts, emulator=None, sysroot=None):
                 rejected(["ir", "lower", bad_json], root / "rejected.wir", b"Failed to parse socket JSON")
                 program["functions"][0]["body"][0]["Return"] = {"Lit": {"Bool": True}}
                 invalid_program = root / "type mismatch.json"
-                invalid_program.write_text(json.dumps({"format_version": 1, "semantics_version": 1, "features": [], "program": program}), encoding="utf-8")
+                invalid_program.write_text(json.dumps({"format_version": 2, "semantics_version": 1, "features": [], "program": program}), encoding="utf-8")
                 rejected(["ir", "lower", invalid_program], root / "rejected.wir", b"lower_o0 failed")
         except Exception:
             repro = artifacts / "smoke-repro"

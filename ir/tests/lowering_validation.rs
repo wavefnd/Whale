@@ -5,6 +5,9 @@ use ir::{ConstValue, DataLayout, Type};
 
 fn function(name: &str, ty: ast::TypeRef, expr: Option<ast::Expr>) -> ast::Function {
     ast::Function {
+        convention: ir::CallingConvention::Whale,
+        linkage: ir::Linkage::Internal,
+        link_name: None,
         name: name.into(),
         parameters: vec![],
         return_type: ty,
@@ -32,7 +35,7 @@ fn int(bits: u16, signed: bool, value: i128) -> ast::Expr {
 fn names_are_unique_within_their_own_namespaces() {
     let f = function("same", ast::TypeRef::Void, None);
     assert!(
-        matches!(lower(ast::Program { globals: vec![], functions: vec![f.clone(), f.clone()] }), Err(LowerError::DuplicateFunction(name)) if name == "same")
+        matches!(lower(ast::Program { declarations: vec![], globals: vec![], functions: vec![f.clone(), f.clone()] }), Err(LowerError::DuplicateFunction(name)) if name == "same")
     );
     let global = ast::GlobalConst {
         name: "same".into(),
@@ -43,9 +46,10 @@ fn names_are_unique_within_their_own_namespaces() {
         init: int(32, true, 1),
     };
     assert!(
-        matches!(lower(ast::Program { globals: vec![global.clone(), global.clone()], functions: vec![] }), Err(LowerError::DuplicateGlobal(name)) if name == "same")
+        matches!(lower(ast::Program { declarations: vec![], globals: vec![global.clone(), global.clone()], functions: vec![] }), Err(LowerError::DuplicateGlobal(name)) if name == "same")
     );
     let m = lower(ast::Program {
+        declarations: vec![],
         globals: vec![global],
         functions: vec![f, function("other", ast::TypeRef::Void, None)],
     })
@@ -73,12 +77,13 @@ fn duplicate_parameters_fail_before_the_body_is_lowered() {
     );
     f.parameters = vec![p.clone(), p];
     assert!(
-        matches!(lower(ast::Program { globals: vec![], functions: vec![f.clone()] }), Err(LowerError::DuplicateParameter { func, param }) if func == "f" && param == "x")
+        matches!(lower(ast::Program { declarations: vec![], globals: vec![], functions: vec![f.clone()] }), Err(LowerError::DuplicateParameter { func, param }) if func == "f" && param == "x")
     );
     f.parameters[1].name = "y".into();
     for (index, name) in [(0, "x"), (1, "y")] {
         f.body = vec![ast::Stmt::Return(Some(ast::Expr::Var(name.into())))];
         let m = lower(ast::Program {
+            declarations: vec![],
             globals: vec![],
             functions: vec![f.clone()],
         })
@@ -109,6 +114,7 @@ fn void_returns_never_discard_an_expression() {
     for expr in [int(32, true, 1), ast::Expr::Var("missing".into())] {
         assert!(matches!(
             lower(ast::Program {
+                declarations: vec![],
                 globals: vec![],
                 functions: vec![function("f", ast::TypeRef::Void, Some(expr))]
             }),
@@ -116,6 +122,7 @@ fn void_returns_never_discard_an_expression() {
         ));
     }
     let m = lower(ast::Program {
+        declarations: vec![],
         globals: vec![],
         functions: vec![function("f", ast::TypeRef::Void, None)],
     })
@@ -123,6 +130,7 @@ fn void_returns_never_discard_an_expression() {
     ir::verify_module(&m).unwrap();
     assert!(matches!(
         lower(ast::Program {
+            declarations: vec![],
             globals: vec![],
             functions: vec![function(
                 "f",
@@ -165,10 +173,12 @@ fn integer_literals_have_the_same_range_in_globals_and_function_bodies() {
         let expr = int(bits, signed, value);
         let programs = [
             ast::Program {
+                declarations: vec![],
                 globals: vec![],
                 functions: vec![function("f", ty.clone(), Some(expr.clone()))],
             },
             ast::Program {
+                declarations: vec![],
                 globals: vec![ast::GlobalConst {
                     name: "g".into(),
                     ty,
@@ -198,6 +208,7 @@ fn integer_literals_have_the_same_range_in_globals_and_function_bodies() {
 #[test]
 fn bool_and_one_bit_integer_types_remain_distinct_in_printed_ir() {
     let m = lower(ast::Program {
+        declarations: vec![],
         globals: vec![],
         functions: vec![
             function(
@@ -241,6 +252,7 @@ fn bool_and_one_bit_integer_types_remain_distinct_in_printed_ir() {
 #[test]
 fn integer_arithmetic_wrapping_is_unchanged_by_literal_validation() {
     let m = lower(ast::Program {
+        declarations: vec![],
         globals: vec![ast::GlobalConst {
             name: "g".into(),
             ty: ast::TypeRef::Int {
@@ -281,11 +293,13 @@ fn boolean_equality_is_supported_but_integer_arithmetic_is_not_boolean_arithmeti
             };
             let program = if runtime {
                 ast::Program {
+                    declarations: vec![],
                     globals: vec![],
                     functions: vec![function("f", ast::TypeRef::Bool, Some(expr))],
                 }
             } else {
                 ast::Program {
+                    declarations: vec![],
                     globals: vec![ast::GlobalConst {
                         name: "g".into(),
                         ty: ast::TypeRef::Bool,
@@ -318,6 +332,7 @@ fn one_bit_integer_conditions_need_explicit_conversion() {
         );
         assert!(matches!(
             lower(ast::Program {
+                declarations: vec![],
                 globals: vec![],
                 functions: vec![f]
             }),
@@ -337,6 +352,7 @@ fn o0_keeps_function_arithmetic_visible_in_ir() {
         right: Box::new(int(32, true, 2)),
     };
     let m = lower(ast::Program {
+        declarations: vec![],
         globals: vec![],
         functions: vec![function(
             "f",

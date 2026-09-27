@@ -20,7 +20,7 @@ fn cases() -> Vec<(&'static str, &'static [u8])> {
     #[allow(unused_mut)]
     let mut cases: Vec<(&str, &[u8])> = vec![("asm", b"section .text\nret\n"), ("object", b"\xc3")];
     #[cfg(feature = "socket-cli")]
-    cases.push(("ir", br#"{"format_version":1,"semantics_version":1,"features":[],"program":{"globals":[],"functions":[]}}"#));
+    cases.push(("ir", br#"{"format_version":2,"semantics_version":1,"features":[],"program":{"declarations":[],"globals":[],"functions":[]}}"#));
     cases
 }
 

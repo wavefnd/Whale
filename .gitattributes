@@ -3,3 +3,6 @@
 *.sh linguist-vendored
 Makefile linguist-vendored
 Dockerfile linguist-vendored
+
+# Printed IR is byte-stable across hosts, including its LF line endings.
+*.wir text eol=lf

@@ -10,7 +10,7 @@ fn unsupported_targets_fail_before_reading_input_or_replacing_output() {
     fs::write(&output, b"previous output").unwrap();
     for valid_input in [false, true] {
         if valid_input {
-            fs::write(&input, br#"{"format_version":1,"semantics_version":1,"features":[],"program":{"globals":[],"functions":[]}}"#).unwrap();
+            fs::write(&input, br#"{"format_version":2,"semantics_version":1,"features":[],"program":{"declarations":[],"globals":[],"functions":[]}}"#).unwrap();
         }
         for target in [
             "banana",
@@ -39,7 +39,7 @@ fn unsupported_targets_fail_before_reading_input_or_replacing_output() {
 fn explicit_and_default_targets_print_the_same_output_layout() {
     let scratch = tempfile::tempdir().unwrap();
     let input = scratch.path().join("input.json");
-    fs::write(&input, br#"{"format_version":1,"semantics_version":1,"features":[],"program":{"globals":[],"functions":[]}}"#).unwrap();
+    fs::write(&input, br#"{"format_version":2,"semantics_version":1,"features":[],"program":{"declarations":[],"globals":[],"functions":[]}}"#).unwrap();
     let run = |args: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_whale"))
             .args(["ir", "lower"])

@@ -27,6 +27,7 @@ pub enum Type {
     F64,
 
     Ptr(Box<Type>),
+    FnPtr(Box<crate::FunctionSignature>),
 
     Array(Box<Type>, u64),
     Struct(Vec<Type>),
@@ -63,6 +64,7 @@ impl fmt::Display for Type {
             Type::F32 => write!(f, "f32"),
             Type::F64 => write!(f, "f64"),
 
+            Type::FnPtr(sig) => write!(f, "fnptr<{sig}>"),
             Type::Ptr(inner) => write!(f, "ptr<{}>", inner),
 
             Type::Array(inner, n) => write!(f, "array<{}, {}>", inner, n),

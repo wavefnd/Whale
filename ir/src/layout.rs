@@ -63,7 +63,7 @@ pub fn layout_of_with_limit(
         Type::I32 | Type::U32 | Type::F32 => scalar(4, 4),
         Type::I64 | Type::U64 | Type::F64 => scalar(8, 8),
         Type::I128 | Type::U128 => scalar(16, 16),
-        Type::Ptr(_) => {
+        Type::Ptr(_) | Type::FnPtr(_) => {
             let bytes = target.data_layout().ptr_bits / 8;
             scalar(u64::from(bytes), bytes)
         }

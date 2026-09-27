@@ -11,7 +11,15 @@ fn block(id: u32, instructions: Vec<Instruction>, terminator: Terminator) -> Bas
 
 fn module(blocks: Vec<BasicBlock>, values: &[(u32, Type)]) -> Module {
     let mut m = Module::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+    m.declarations.push(FunctionDecl {
+        id: FunctionId(0),
+        name: "flow".into(),
+        signature: FunctionSignature::whale(vec![Type::Bool], Type::Void),
+        linkage: Linkage::Internal,
+        link_name: None,
+    });
     m.functions.push(Function {
+        id: FunctionId(0),
         name: "flow".into(),
         params: vec![Param {
             name: "condition".into(),

@@ -112,6 +112,82 @@ impl ModuleBuilder {
         id
     }
 
+    pub fn declare_function(
+        &mut self,
+        name: impl Into<String>,
+        signature: crate::FunctionSignature,
+        linkage: crate::Linkage,
+        link_name: Option<String>,
+    ) -> Result<crate::FunctionId, crate::CallError> {
+        let name = name.into();
+        let candidate = crate::FunctionDecl {
+            id: crate::FunctionId(self.module.declarations.len() as u32),
+            name,
+            signature,
+            linkage,
+            link_name,
+        };
+        crate::function::validate_decl(&candidate)?;
+        if let Some(existing) = self
+            .module
+            .declarations
+            .iter()
+            .find(|d| d.name == candidate.name)
+        {
+            let mut same = candidate.clone();
+            same.id = existing.id;
+            return if &same == existing {
+                Ok(existing.id)
+            } else {
+                Err(crate::CallError::ConflictingDeclaration(candidate.name))
+            };
+        }
+        if let Some(link) = &candidate.link_name {
+            if self
+                .module
+                .declarations
+                .iter()
+                .any(|d| d.link_name.as_ref() == Some(link))
+            {
+                return Err(crate::CallError::LinkNameCollision(link.clone()));
+            }
+        }
+        let id = candidate.id;
+        self.module.declarations.push(candidate);
+        Ok(id)
+    }
+
+    pub fn function_id(&self, name: &str) -> Result<crate::FunctionId, crate::CallError> {
+        self.module
+            .declarations
+            .iter()
+            .find(|d| d.name == name)
+            .map(|d| d.id)
+            .ok_or_else(|| crate::CallError::UnknownFunctionName(name.into()))
+    }
+
+    pub fn begin_declared_function(
+        &mut self,
+        id: crate::FunctionId,
+        names: Vec<String>,
+    ) -> Result<FunctionBuilder<'_>, crate::CallError> {
+        let decl = self
+            .module
+            .declarations
+            .iter()
+            .find(|d| d.id == id)
+            .cloned()
+            .ok_or(crate::CallError::UnknownFunction(id))?;
+        if self.module.functions.iter().any(|f| f.id == id) {
+            return Err(crate::CallError::DuplicateDefinition(id));
+        }
+        if names.len() != decl.signature.params.len() {
+            return Err(crate::CallError::DefinitionMismatch(id));
+        }
+        let params = names.into_iter().zip(decl.signature.params).collect();
+        Ok(self.build_function(id, decl.name, params, decl.signature.ret))
+    }
+
     pub fn begin_function(
         &mut self,
         name: impl Into<String>,
@@ -119,7 +195,29 @@ impl ModuleBuilder {
         ret_ty: Type,
     ) -> FunctionBuilder<'_> {
         let name = name.into();
+        // This legacy convenience API is intentionally infallible. The verifier
+        // diagnoses duplicate names and invalid signatures, as before.
+        let id = crate::FunctionId(self.module.declarations.len() as u32);
+        self.module.declarations.push(crate::FunctionDecl {
+            id,
+            name: name.clone(),
+            signature: crate::FunctionSignature::whale(
+                params.iter().map(|(_, t)| t.clone()).collect(),
+                ret_ty.clone(),
+            ),
+            linkage: crate::Linkage::Internal,
+            link_name: None,
+        });
+        self.build_function(id, name, params, ret_ty)
+    }
 
+    fn build_function(
+        &mut self,
+        id: crate::FunctionId,
+        name: String,
+        params: Vec<(String, Type)>,
+        ret_ty: Type,
+    ) -> FunctionBuilder<'_> {
         let mut p = Vec::new();
         let mut value_types = Vec::new();
 
@@ -133,6 +231,7 @@ impl ModuleBuilder {
         let entry_block = BasicBlock::new(entry, "entry");
 
         let func = Function {
+            id,
             name,
             params: p,
             ret_ty,
@@ -349,19 +448,101 @@ impl<'a> FunctionBuilder<'a> {
         });
     }
 
-    pub fn call(&mut self, ret_ty: Type, callee: Callee, args: Vec<ValueId>) -> Option<ValueId> {
+    pub fn function_id(&self, name: &str) -> Result<crate::FunctionId, crate::CallError> {
+        self.mb.function_id(name)
+    }
+
+    pub fn null_function(
+        &mut self,
+        signature: crate::FunctionSignature,
+    ) -> Result<ValueId, crate::CallError> {
+        crate::function::validate_signature(&signature)?;
+        let dst = self.define_value(Type::FnPtr(Box::new(signature.clone())));
+        self.cur_block_mut()
+            .instructions
+            .push(Instruction::NullFunction { dst, signature });
+        Ok(dst)
+    }
+
+    pub fn function_addr(
+        &mut self,
+        function: crate::FunctionId,
+    ) -> Result<ValueId, crate::CallError> {
+        let signature = self.callee_signature(&Callee::Direct(function))?;
+        crate::function::validate_signature(&signature)?;
+        let dst = self.define_value(Type::FnPtr(Box::new(signature.clone())));
+        self.cur_block_mut()
+            .instructions
+            .push(Instruction::FunctionAddr {
+                dst,
+                function,
+                signature,
+            });
+        Ok(dst)
+    }
+
+    pub fn callee_signature(
+        &self,
+        callee: &Callee,
+    ) -> Result<crate::FunctionSignature, crate::CallError> {
+        match callee {
+            Callee::Direct(id) => self
+                .mb
+                .module
+                .declarations
+                .iter()
+                .find(|d| d.id == *id)
+                .map(|d| d.signature.clone())
+                .ok_or(crate::CallError::UnknownFunction(*id)),
+            Callee::Indirect(value) => match self.func.value_type(*value) {
+                Some(Type::FnPtr(sig)) => Ok((**sig).clone()),
+                Some(_) => Err(crate::CallError::NotFunctionPointer(*value)),
+                None => Err(crate::CallError::UnknownValue(*value)),
+            },
+        }
+    }
+
+    pub fn call(
+        &mut self,
+        callee: Callee,
+        args: Vec<ValueId>,
+    ) -> Result<Option<ValueId>, crate::CallError> {
+        let signature = self.callee_signature(&callee)?;
+        crate::function::validate_signature(&signature)?;
+        if args.len() != signature.params.len() {
+            return Err(crate::CallError::ArgumentCount {
+                expected: signature.params.len(),
+                got: args.len(),
+            });
+        }
+        for (index, (arg, expected)) in args.iter().zip(&signature.params).enumerate() {
+            let got = self
+                .func
+                .value_type(*arg)
+                .ok_or(crate::CallError::UnknownValue(*arg))?;
+            if got != expected {
+                return Err(crate::CallError::ArgumentType {
+                    index,
+                    expected: expected.clone(),
+                    got: got.clone(),
+                });
+            }
+        }
+        let ret_ty = signature.ret;
+
         let dst = if ret_ty == Type::Void {
             None
         } else {
             Some(self.define_value(ret_ty.clone()))
         };
         self.cur_block_mut().instructions.push(Instruction::Call {
+            convention: signature.convention,
             dst,
             ret_ty,
             callee,
             args,
         });
-        dst
+        Ok(dst)
     }
 
     pub fn finish(self) {

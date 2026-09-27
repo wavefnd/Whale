@@ -99,7 +99,8 @@ pub enum CheckedOp {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Callee {
-    Symbol(String),
+    Direct(crate::FunctionId),
+    Indirect(ValueId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -251,7 +252,18 @@ pub enum Instruction {
         align: u32,
     },
 
+    NullFunction {
+        dst: ValueId,
+        signature: crate::FunctionSignature,
+    },
+    FunctionAddr {
+        dst: ValueId,
+        function: crate::FunctionId,
+        signature: crate::FunctionSignature,
+    },
+    /// Null and invalid indirect targets trap before entering a callee.
     Call {
+        convention: crate::CallingConvention,
         dst: Option<ValueId>,
         ret_ty: Type,
         callee: Callee,

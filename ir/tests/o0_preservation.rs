@@ -20,8 +20,12 @@ fn expression(value: i128) -> ast::Stmt {
 fn lower(body: Vec<ast::Stmt>) -> Result<Module, LowerError> {
     lower_o0(
         &ast::Program {
+            declarations: vec![],
             globals: vec![],
             functions: vec![ast::Function {
+                convention: ir::CallingConvention::Whale,
+                linkage: ir::Linkage::Internal,
+                link_name: None,
                 name: "preserve".into(),
                 parameters: vec![],
                 return_type: ast::TypeRef::Void,

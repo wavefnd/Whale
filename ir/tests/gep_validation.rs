@@ -32,6 +32,7 @@ fn gep(base: Type, indices: Vec<(Type, Option<ConstValue>)>, result: Type) -> Mo
         base_ptr: ValueId(0),
         indices: (0..indices.len()).map(|i| ValueId(i as u32 + 1)).collect(),
     });
+    m.declarations[0].signature.params = f.params.iter().map(|p| p.ty.clone()).collect();
     m
 }
 

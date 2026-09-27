@@ -1,5 +1,5 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "semantics_version": 1,
   "features": [],
   "program": {
@@ -24,8 +24,12 @@
               }
             }
           }
-        ]
+        ],
+        "convention": "Whale",
+        "linkage": "Internal",
+        "link_name": null
       }
-    ]
+    ],
+    "declarations": []
   }
 }
