@@ -256,6 +256,18 @@ pub(super) fn verify_instruction(f: &Function, ins: &Instruction) -> Result<(), 
             verify_operand(f, *on_true, ty)?;
             verify_operand(f, *on_false, ty)?;
         }
+        Instruction::Extract {
+            dst_ty,
+            tuple,
+            index,
+            ..
+        } => {
+            let field = match f.value_type(*tuple) {
+                Some(Type::Tuple(fields)) => fields.get(*index as usize),
+                _ => None,
+            };
+            verify_type_category(f, "extract", dst_ty, field == Some(dst_ty))?;
+        }
         Instruction::Alloca { ty, align, .. } => {
             verify_alignment(f, *align)?;
             verify_type_category(f, "alloca", ty, is_storable(ty))?;

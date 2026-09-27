@@ -4,6 +4,8 @@ use crate::{ConstValue, Type};
 
 #[derive(Debug)]
 pub enum LowerError {
+    Call(crate::CallError),
+    VoidCallUsedAsValue,
     NumericLiteral(String),
     Target(crate::TargetError),
     Layout(crate::LayoutError),

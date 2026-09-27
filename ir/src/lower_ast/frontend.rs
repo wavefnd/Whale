@@ -4,6 +4,7 @@
 #[cfg_attr(feature = "socket", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
 pub struct Program {
+    pub declarations: Vec<FunctionDeclaration>,
     pub globals: Vec<GlobalConst>,
     pub functions: Vec<Function>,
 }
@@ -21,6 +22,9 @@ pub struct GlobalConst {
 #[cfg_attr(feature = "socket", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
 pub struct Function {
+    pub convention: crate::CallingConvention,
+    pub linkage: crate::Linkage,
+    pub link_name: Option<String>,
     pub name: String,
     pub parameters: Vec<Parameter>,
     pub return_type: TypeRef,
@@ -44,6 +48,7 @@ pub enum TypeRef {
     Int { bits: u16, signed: bool }, // i/u
     Float { bits: u16 },             // f16/f32/f64...
     Ptr(Box<TypeRef>),
+    FnPtr(Box<SignatureRef>),
     Array { elem: Box<TypeRef>, len: u64 },
     Opaque(String),
 }
@@ -87,6 +92,12 @@ pub enum Stmt {
 #[cfg_attr(feature = "socket", serde(deny_unknown_fields))]
 #[derive(Clone, Debug)]
 pub enum Expr {
+    FunctionRef(String),
+    NullFunction(SignatureRef),
+    Call {
+        callee: CalleeRef,
+        args: Vec<Expr>,
+    },
     Var(String),
     Lit(Lit),
     Binary {
@@ -136,4 +147,30 @@ pub enum BinOpRef {
     Add,
     Sub,
     Mul,
+}
+
+#[cfg_attr(feature = "socket", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "socket", serde(deny_unknown_fields))]
+#[derive(Clone, Debug)]
+pub struct SignatureRef {
+    pub params: Vec<TypeRef>,
+    pub ret: TypeRef,
+    pub convention: crate::CallingConvention,
+    pub variadic: bool,
+}
+#[cfg_attr(feature = "socket", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "socket", serde(deny_unknown_fields))]
+#[derive(Clone, Debug)]
+pub struct FunctionDeclaration {
+    pub name: String,
+    pub signature: SignatureRef,
+    pub linkage: crate::Linkage,
+    pub link_name: Option<String>,
+}
+#[cfg_attr(feature = "socket", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "socket", serde(deny_unknown_fields))]
+#[derive(Clone, Debug)]
+pub enum CalleeRef {
+    Direct(String),
+    Indirect(Box<Expr>),
 }

@@ -29,7 +29,7 @@ pub use float::*;
 pub use function::*;
 
 /// Independently versioned printed typed IR and shared execution semantics.
-pub const IR_FORMAT_VERSION: u32 = 1;
+pub const IR_FORMAT_VERSION: u32 = 2;
 pub const SEMANTICS_VERSION: u32 = 1;
 pub use instr::*;
 pub use layout::*;
@@ -84,6 +84,7 @@ mod tests {
         };
 
         let program = s::Program {
+            declarations: vec![],
             globals: vec![s::GlobalConst {
                 name: "A".into(),
                 ty: i32s.clone(),
@@ -94,6 +95,9 @@ mod tests {
                 }),
             }],
             functions: vec![s::Function {
+                convention: crate::CallingConvention::Whale,
+                linkage: crate::Linkage::Internal,
+                link_name: None,
                 name: "main".into(),
                 parameters: vec![],
                 return_type: i32s.clone(),
@@ -120,8 +124,12 @@ mod tests {
         use crate::lower_ast::{frontend as s, lower_o0};
 
         let program = s::Program {
+            declarations: vec![],
             globals: vec![],
             functions: vec![s::Function {
+                convention: crate::CallingConvention::Whale,
+                linkage: crate::Linkage::Internal,
+                link_name: None,
                 name: "add".into(),
                 parameters: vec![
                     s::Parameter {
@@ -175,8 +183,12 @@ mod tests {
         };
 
         let program = s::Program {
+            declarations: vec![],
             globals: vec![],
             functions: vec![s::Function {
+                convention: crate::CallingConvention::Whale,
+                linkage: crate::Linkage::Internal,
+                link_name: None,
                 name: "max".into(),
                 parameters: vec![
                     s::Parameter {
@@ -250,8 +262,12 @@ mod tests {
         };
 
         let program = s::Program {
+            declarations: vec![],
             globals: vec![],
             functions: vec![s::Function {
+                convention: crate::CallingConvention::Whale,
+                linkage: crate::Linkage::Internal,
+                link_name: None,
                 name: "sum_to_n".into(),
                 parameters: vec![s::Parameter {
                     name: "n".into(),
@@ -320,8 +336,12 @@ mod tests {
         use crate::DataLayout;
 
         let program = s::Program {
+            declarations: vec![],
             globals: vec![],
             functions: vec![s::Function {
+                convention: crate::CallingConvention::Whale,
+                linkage: crate::Linkage::Internal,
+                link_name: None,
                 name: "main".into(),
                 parameters: vec![],
                 return_type: s::TypeRef::Int {

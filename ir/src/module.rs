@@ -18,6 +18,7 @@ pub struct Module {
     pub datalayout: DataLayout,
     pub globals: Vec<Global>,
     pub functions: Vec<Function>,
+    pub declarations: Vec<crate::FunctionDecl>,
 }
 
 impl Module {
@@ -27,6 +28,7 @@ impl Module {
             datalayout,
             globals: Vec::new(),
             functions: Vec::new(),
+            declarations: Vec::new(),
         }
     }
 }

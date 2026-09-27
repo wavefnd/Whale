@@ -41,6 +41,25 @@ pub fn print_module(m: &Module) -> String {
         out.push('\n');
     }
 
+    for d in &m.declarations {
+        out.push_str(&format!(
+            "  declare @f{} {:?}: {}, linkage {}",
+            d.id.0,
+            d.name,
+            d.signature,
+            match d.linkage {
+                crate::Linkage::Internal => "internal",
+                crate::Linkage::External => "external",
+            }
+        ));
+        if let Some(link) = &d.link_name {
+            out.push_str(&format!(", link_name {link:?}"));
+        }
+        out.push('\n');
+    }
+    if !m.declarations.is_empty() {
+        out.push('\n');
+    }
     for f in &m.functions {
         out.push_str(&print_function(f));
         out.push('\n');
@@ -59,7 +78,7 @@ fn print_function(f: &Function) -> String {
         }
         out.push_str(&format!("{}: {}", p.name, p.ty));
     }
-    out.push_str(&format!(") -> {} {{\n", f.ret_ty));
+    out.push_str(&format!(") -> {}, id @f{} {{\n", f.ret_ty, f.id.0));
 
     for b in &f.blocks {
         out.push_str(&print_block(b));
@@ -227,7 +246,14 @@ fn print_instr(i: &Instruction) -> String {
             format!("memset ptr<u8> {dst}, u8 {val}, u64 {n}, align {align}")
         }
 
+        NullFunction { dst, signature } => format!("{dst}: fnptr<{signature}> = null_function"),
+        FunctionAddr {
+            dst,
+            function,
+            signature,
+        } => format!("{dst}: fnptr<{signature}> = function_addr @f{}", function.0),
         Call {
+            convention,
             dst,
             ret_ty,
             callee,
@@ -237,7 +263,14 @@ fn print_instr(i: &Instruction) -> String {
             if let Some(v) = dst {
                 s.push_str(&format!("{v}: {ret_ty} = "));
             }
-            s.push_str(&format!("call {ret_ty} {}(", fmt_callee(callee)));
+            s.push_str(&format!(
+                "call {} {ret_ty} {}(",
+                match convention {
+                    crate::CallingConvention::Whale => "whale",
+                    crate::CallingConvention::SysV64 => "sysv64",
+                },
+                fmt_callee(callee)
+            ));
             for (i, a) in args.iter().enumerate() {
                 if i != 0 {
                     s.push_str(", ");
@@ -416,13 +449,8 @@ fn fmt_cast(op: &crate::CastOp) -> &'static str {
 
 fn fmt_callee(c: &Callee) -> String {
     match c {
-        Callee::Symbol(s) => {
-            if s.starts_with('@') {
-                s.clone()
-            } else {
-                format!("@{s}")
-            }
-        }
+        Callee::Direct(id) => format!("@f{}", id.0),
+        Callee::Indirect(value) => format!("indirect {value}"),
     }
 }
 

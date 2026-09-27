@@ -22,14 +22,23 @@ fn disabled_feature_reports_recovery_without_output() {
 #[test]
 #[cfg(feature = "socket-cli")]
 fn schema_and_lowering_errors_preserve_existing_output_even_without_verify() {
-    let valid = include_str!("../ir/tests/fixtures/ast-v1-u128.json");
+    let valid = include_str!("../ir/tests/fixtures/ast-v2-u128.json");
+    let calls = include_str!("../ir/tests/fixtures/ast-v2-calls.json");
     let cases = [
+        (
+            calls.replace("\"Direct\": \"emit\"", "\"Direct\": \"missing\""),
+            "UnknownFunctionName",
+        ),
+        (
+            calls.replace("\"convention\": \"Whale\"", "\"convention\": \"Unknown\""),
+            "AST envelope/schema",
+        ),
         (
             "{\"globals\":[],\"functions\":[]}".to_string(),
             "AST envelope/schema",
         ),
         (
-            valid.replace("\"format_version\": 1", "\"format_version\": 9"),
+            valid.replace("\"format_version\": 2", "\"format_version\": 9"),
             "unsupported AST format_version",
         ),
         (

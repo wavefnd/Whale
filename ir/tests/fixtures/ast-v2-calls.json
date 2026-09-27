@@ -1,0 +1,167 @@
+{
+  "format_version": 2,
+  "semantics_version": 1,
+  "features": [],
+  "program": {
+    "declarations": [
+      {
+        "name": "emit",
+        "signature": {
+          "params": [
+            {
+              "Int": {
+                "bits": 32,
+                "signed": true
+              }
+            }
+          ],
+          "ret": "Void",
+          "convention": "SysV64",
+          "variadic": false
+        },
+        "linkage": "External",
+        "link_name": "emit_i32"
+      }
+    ],
+    "globals": [],
+    "functions": [
+      {
+        "name": "increment",
+        "parameters": [
+          {
+            "name": "x",
+            "ty": {
+              "Int": {
+                "bits": 32,
+                "signed": true
+              }
+            }
+          }
+        ],
+        "return_type": {
+          "Int": {
+            "bits": 32,
+            "signed": true
+          }
+        },
+        "body": [
+          {
+            "Return": {
+              "Binary": {
+                "left": {
+                  "Var": "x"
+                },
+                "op": "Add",
+                "right": {
+                  "Lit": {
+                    "Int": {
+                      "bits": 32,
+                      "signed": true,
+                      "value": "1"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "convention": "Whale",
+        "linkage": "Internal",
+        "link_name": null
+      },
+      {
+        "name": "answer",
+        "parameters": [],
+        "return_type": {
+          "Int": {
+            "bits": 32,
+            "signed": true
+          }
+        },
+        "body": [
+          {
+            "VarDecl": {
+              "name": "callback",
+              "ty": {
+                "FnPtr": {
+                  "params": [
+                    {
+                      "Int": {
+                        "bits": 32,
+                        "signed": true
+                      }
+                    }
+                  ],
+                  "ret": {
+                    "Int": {
+                      "bits": 32,
+                      "signed": true
+                    }
+                  },
+                  "convention": "Whale",
+                  "variadic": false
+                }
+              },
+              "init": {
+                "FunctionRef": "increment"
+              }
+            }
+          },
+          {
+            "VarDecl": {
+              "name": "result",
+              "ty": {
+                "Int": {
+                  "bits": 32,
+                  "signed": true
+                }
+              },
+              "init": {
+                "Call": {
+                  "callee": {
+                    "Indirect": {
+                      "Var": "callback"
+                    }
+                  },
+                  "args": [
+                    {
+                      "Lit": {
+                        "Int": {
+                          "bits": 32,
+                          "signed": true,
+                          "value": "41"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "ExprStmt": {
+              "Call": {
+                "callee": {
+                  "Direct": "emit"
+                },
+                "args": [
+                  {
+                    "Var": "result"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "Return": {
+              "Var": "result"
+            }
+          }
+        ],
+        "convention": "Whale",
+        "linkage": "Internal",
+        "link_name": null
+      }
+    ]
+  }
+}

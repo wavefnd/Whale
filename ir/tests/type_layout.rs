@@ -129,8 +129,12 @@ fn field_addition_padding_and_nesting_fail_without_wrapping() {
 fn lowering_uses_allocation_layout_and_rejects_overflow() {
     use ir::lower_ast::{frontend as ast, lower_o0, LowerError};
     let make = |len| ast::Program {
+        declarations: vec![],
         globals: vec![],
         functions: vec![ast::Function {
+            convention: ir::CallingConvention::Whale,
+            linkage: ir::Linkage::Internal,
+            link_name: None,
             name: "array_parameter".into(),
             parameters: vec![ast::Parameter {
                 name: "a".into(),

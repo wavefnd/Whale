@@ -1,0 +1,37 @@
+module {
+  format_version 2
+  semantics_version 1
+  target "x86_64-whale-linux"
+  datalayout { ptr=64, endian=little }
+
+  declare @f0 "emit": sysv64 (i32) -> void, linkage external, link_name "emit_i32"
+  declare @f1 "increment": whale (i32) -> i32, linkage internal
+  declare @f2 "answer": whale () -> i32, linkage internal
+
+  fn @increment(x: i32) -> i32, id @f1 {
+  entry:
+    %v1: ptr<i32> = alloca i32, align 4
+    store i32 %v0, ptr<i32> %v1, align 4
+    %v2: i32 = load i32, ptr<i32> %v1, align 4
+    %v3: i32 = const i32 1
+    %v4: i32 = add i32 %v2, %v3
+    ret i32 %v4
+  }
+
+  fn @answer() -> i32, id @f2 {
+  entry:
+    %v6: ptr<fnptr<whale (i32) -> i32>> = alloca fnptr<whale (i32) -> i32>, align 8
+    %v10: ptr<i32> = alloca i32, align 4
+    %v5: fnptr<whale (i32) -> i32> = function_addr @f1
+    store fnptr<whale (i32) -> i32> %v5, ptr<fnptr<whale (i32) -> i32>> %v6, align 8
+    %v7: fnptr<whale (i32) -> i32> = load fnptr<whale (i32) -> i32>, ptr<fnptr<whale (i32) -> i32>> %v6, align 8
+    %v8: i32 = const i32 41
+    %v9: i32 = call whale i32 indirect %v7(%v8)
+    store i32 %v9, ptr<i32> %v10, align 4
+    %v11: i32 = load i32, ptr<i32> %v10, align 4
+    call sysv64 void @f0(%v11)
+    %v12: i32 = load i32, ptr<i32> %v10, align 4
+    ret i32 %v12
+  }
+
+}

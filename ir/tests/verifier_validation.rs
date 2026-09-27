@@ -44,6 +44,7 @@ fn void_returns_cannot_carry_a_value_and_nonvoid_returns_require_one() {
         Err(VerifyError::RetTypeMismatch { got: None, .. })
     ));
     module.functions[0].ret_ty = Type::Void;
+    module.declarations[0].signature.ret = Type::Void;
     module.functions[0].blocks[0].terminator = Some(Terminator::Ret {
         ty: Type::Void,
         value: None,

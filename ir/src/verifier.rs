@@ -4,12 +4,17 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{BlockId, ConstValue, Instruction, Module, Terminator, Type, ValueId};
 
+mod calls;
 mod cfg;
 mod constants;
 mod operands;
 
 #[derive(Debug)]
 pub enum VerifyError {
+    Call {
+        func: String,
+        reason: crate::CallError,
+    },
     Target(crate::TargetError),
     InvalidConstExpression {
         scope: String,
@@ -178,6 +183,7 @@ pub fn verify_module(m: &Module) -> Result<(), VerifyError> {
             });
         }
     }
+    calls::verify_declarations(m)?;
     for f in &m.functions {
         let mut blocks = HashSet::new();
         for block in &f.blocks {
@@ -383,6 +389,7 @@ pub fn verify_module(m: &Module) -> Result<(), VerifyError> {
         for block in &f.blocks {
             for instruction in &block.instructions {
                 operands::verify_instruction(f, instruction)?;
+                calls::verify_instruction(m, f, instruction)?;
             }
         }
     }
@@ -453,6 +460,9 @@ fn verify_value_types(f: &crate::Function) -> Result<(), VerifyError> {
 fn instr_result(ins: &Instruction) -> Option<(ValueId, Type)> {
     use Instruction::*;
     match ins {
+        NullFunction { dst, signature } | FunctionAddr { dst, signature, .. } => {
+            Some((*dst, Type::FnPtr(Box::new(signature.clone()))))
+        }
         ConstDecl {
             dst, expression, ..
         } => Some((*dst, expression.ty.clone())),
@@ -510,7 +520,7 @@ fn instr_uses(ins: &Instruction) -> Vec<ValueId> {
                 crate::ConstRef::Global(_) => None,
             })
             .collect(),
-        Const { .. } | Undef { .. } => vec![],
+        Const { .. } | Undef { .. } | NullFunction { .. } | FunctionAddr { .. } => vec![],
 
         Mov { src, .. } => vec![*src],
 
@@ -551,7 +561,14 @@ fn instr_uses(ins: &Instruction) -> Vec<ValueId> {
         Memcpy { dst, src, n, .. } => vec![*dst, *src, *n],
         Memset { dst, val, n, .. } => vec![*dst, *val, *n],
 
-        Call { args, .. } => args.clone(),
+        Call { callee, args, .. } => {
+            let mut uses = Vec::new();
+            if let crate::Callee::Indirect(value) = callee {
+                uses.push(*value);
+            }
+            uses.extend(args);
+            uses
+        }
 
         TrapIf { cond, .. } => vec![*cond],
     }

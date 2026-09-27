@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Whale AST format 1, semantics 1",
+  "title": "Whale AST format 2, semantics 1",
   "$comment": "Duplicate raw keys must be rejected before JSON Schema validation. Declared integer ranges and expression/type compatibility are checked by lowering; not all represented types can be used by every scalar operation.",
   "type": "object",
   "properties": {
     "format_version": {
-      "const": 1
+      "const": 2
     },
     "semantics_version": {
       "const": 1
@@ -163,6 +163,18 @@
           },
           "required": [
             "Bool"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "FnPtr": {
+              "$ref": "#/$defs/Signature"
+            }
+          },
+          "required": [
+            "FnPtr"
           ],
           "additionalProperties": false
         }
@@ -377,6 +389,58 @@
           },
           "required": [
             "Cmp"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "FunctionRef": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "FunctionRef"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Call": {
+              "type": "object",
+              "properties": {
+                "callee": {
+                  "$ref": "#/$defs/Callee"
+                },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/Expr"
+                  }
+                }
+              },
+              "required": [
+                "callee",
+                "args"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "Call"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "NullFunction": {
+              "$ref": "#/$defs/Signature"
+            }
+          },
+          "required": [
+            "NullFunction"
           ],
           "additionalProperties": false
         }
@@ -660,23 +724,193 @@
                 "items": {
                   "$ref": "#/$defs/Stmt"
                 }
+              },
+              "convention": {
+                "$ref": "#/$defs/Convention"
+              },
+              "linkage": {
+                "$ref": "#/$defs/Linkage"
+              },
+              "link_name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
               "name",
               "parameters",
               "return_type",
-              "body"
+              "body",
+              "convention",
+              "linkage"
             ],
             "additionalProperties": false
+          }
+        },
+        "declarations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FunctionDeclaration"
           }
         }
       },
       "required": [
         "globals",
-        "functions"
+        "functions",
+        "declarations"
       ],
       "additionalProperties": false
+    },
+    "Convention": {
+      "oneOf": [
+        {
+          "enum": [
+            "Whale",
+            "SysV64"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Whale": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "Whale"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "SysV64": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "SysV64"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Linkage": {
+      "oneOf": [
+        {
+          "enum": [
+            "Internal",
+            "External"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Internal": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "Internal"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "External": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "External"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Signature": {
+      "type": "object",
+      "properties": {
+        "params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Type"
+          }
+        },
+        "ret": {
+          "$ref": "#/$defs/Type"
+        },
+        "convention": {
+          "$ref": "#/$defs/Convention"
+        },
+        "variadic": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "params",
+        "ret",
+        "convention",
+        "variadic"
+      ],
+      "additionalProperties": false
+    },
+    "FunctionDeclaration": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "signature": {
+          "$ref": "#/$defs/Signature"
+        },
+        "linkage": {
+          "$ref": "#/$defs/Linkage"
+        },
+        "link_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "signature",
+        "linkage"
+      ],
+      "additionalProperties": false
+    },
+    "Callee": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "Direct": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "Direct"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "Indirect": {
+              "$ref": "#/$defs/Expr"
+            }
+          },
+          "required": [
+            "Indirect"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
   }
 }

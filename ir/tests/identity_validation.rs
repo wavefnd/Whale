@@ -64,6 +64,11 @@ fn ids_are_local_to_functions_and_metadata_order_does_not_matter() {
     m.functions[0].value_types.reverse();
     let mut second = m.functions[0].clone();
     second.name = "second".into();
+    second.id = ir::FunctionId(1);
+    let mut decl = m.declarations[0].clone();
+    decl.id = second.id;
+    decl.name = second.name.clone();
+    m.declarations.push(decl);
     m.functions.push(second);
     assert!(ir::verify_module(&m).is_ok());
 }
@@ -71,6 +76,14 @@ fn ids_are_local_to_functions_and_metadata_order_does_not_matter() {
 #[test]
 fn derived_result_types_match_builder_metadata() {
     let mut builder = ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+    let external = builder
+        .declare_function(
+            "external",
+            ir::FunctionSignature::whale(vec![], Type::I32),
+            ir::Linkage::External,
+            Some("external".into()),
+        )
+        .unwrap();
     let mut f = builder.begin_function("derived", vec![], Type::Void);
     let value = f.const_i32(1);
     let comparison = f.icmp(ir::ICmpPred::Eq, Type::I32, value, value);
@@ -81,7 +94,8 @@ fn derived_result_types_match_builder_metadata() {
     f.store(Type::I32, value, ptr, 4);
     let loaded = f.load(Type::I32, ptr, 4);
     let called = f
-        .call(Type::I32, ir::Callee::Symbol("external".into()), vec![])
+        .call(ir::Callee::Direct(external), vec![])
+        .unwrap()
         .unwrap();
     f.ret(None);
     f.finish();

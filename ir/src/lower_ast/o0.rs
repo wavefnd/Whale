@@ -50,6 +50,32 @@ pub fn lower_o0(
     }
     let mut mb = ModuleBuilder::new(target.name(), datalayout);
 
+    for d in &program.declarations {
+        let signature = super::support::signature_to_whale(&d.signature)?;
+        mb.declare_function(d.name.clone(), signature, d.linkage, d.link_name.clone())
+            .map_err(LowerError::Call)?;
+    }
+    for f in &program.functions {
+        let signature = crate::FunctionSignature {
+            params: f
+                .parameters
+                .iter()
+                .map(|p| socket_type_to_whale(&p.ty))
+                .collect::<Result<_, _>>()?,
+            ret: socket_type_to_whale(&f.return_type)?,
+            convention: f.convention,
+            variadic: false,
+        };
+        mb.declare_function(f.name.clone(), signature, f.linkage, f.link_name.clone())
+            .map_err(LowerError::Call)?;
+    }
+    for d in &program.declarations {
+        if d.linkage == crate::Linkage::Internal && !functions.contains(&d.name) {
+            return Err(LowerError::Call(crate::CallError::MissingDefinition(
+                mb.function_id(&d.name).map_err(LowerError::Call)?,
+            )));
+        }
+    }
     let mut gconsts: ConstMap = HashMap::new();
     for g in &program.globals {
         if gconsts.contains_key(&g.name) {
@@ -93,13 +119,10 @@ fn lower_function_o0(
 ) -> Result<(), LowerError> {
     let ret_ty = socket_type_to_whale(&f.return_type)?;
 
-    let params: Vec<(String, Type)> = f
-        .parameters
-        .iter()
-        .map(|p| Ok((p.name.clone(), socket_type_to_whale(&p.ty)?)))
-        .collect::<Result<_, LowerError>>()?;
-
-    let mut fb = mb.begin_function(f.name.clone(), params, ret_ty.clone());
+    let id = mb.function_id(&f.name).map_err(LowerError::Call)?;
+    let mut fb = mb
+        .begin_declared_function(id, f.parameters.iter().map(|p| p.name.clone()).collect())
+        .map_err(LowerError::Call)?;
 
     let mut env: HashMap<String, Binding> = HashMap::new();
     let mut loop_stack: Vec<LoopCtx> = Vec::new();
@@ -267,6 +290,10 @@ fn lower_stmt_o0(
             }
         }
 
+        frontend::Stmt::ExprStmt(frontend::Expr::Call { callee, args }) => {
+            lower_call(fb, env, global_consts, callee, args, target)?;
+            Ok(())
+        }
         frontend::Stmt::ExprStmt(e) => {
             let _ = lower_expr_o0(fb, env, global_consts, e, target)?;
             Ok(())
@@ -405,6 +432,25 @@ fn lower_expr_o0(
     target: crate::Target,
 ) -> Result<(ValueId, Type), LowerError> {
     match expr {
+        frontend::Expr::NullFunction(sig) => {
+            let signature = super::support::signature_to_whale(sig)?;
+            let value = fb
+                .null_function(signature.clone())
+                .map_err(LowerError::Call)?;
+            Ok((value, Type::FnPtr(Box::new(signature))))
+        }
+        frontend::Expr::FunctionRef(name) => {
+            let id = fb.function_id(name).map_err(LowerError::Call)?;
+            let signature = fb
+                .callee_signature(&crate::Callee::Direct(id))
+                .map_err(LowerError::Call)?;
+            let value = fb.function_addr(id).map_err(LowerError::Call)?;
+            Ok((value, Type::FnPtr(Box::new(signature))))
+        }
+        frontend::Expr::Call { callee, args } => {
+            let (value, ty) = lower_call(fb, env, global_consts, callee, args, target)?;
+            Ok((value.ok_or(LowerError::VoidCallUsedAsValue)?, ty))
+        }
         frontend::Expr::Var(name) => {
             if let Some(b) = env.get(name).cloned() {
                 return match b {
@@ -511,6 +557,9 @@ fn preserve_const_expr(
     ctx: &ConstEvalCtx<'_>,
 ) -> Result<ConstExpr, LowerError> {
     match expr {
+        frontend::Expr::NullFunction(_)
+        | frontend::Expr::Call { .. }
+        | frontend::Expr::FunctionRef(_) => Err(LowerError::NonConstExpr),
         frontend::Expr::Lit(literal) => {
             let (ty, value) = lit_to_const(literal)?;
             Ok(ConstExpr::literal(ty, value))
@@ -635,4 +684,30 @@ fn lower_lit_o0(
         ConstValue::F(v) => fb.const_float_bits(ty.clone(), v),
     };
     Ok((id, ty))
+}
+
+fn lower_call(
+    fb: &mut crate::FunctionBuilder<'_>,
+    env: &mut HashMap<String, Binding>,
+    globals: &ConstMap,
+    callee: &frontend::CalleeRef,
+    args: &[frontend::Expr],
+    target: crate::Target,
+) -> Result<(Option<ValueId>, Type), LowerError> {
+    // The callee expression is evaluated first, followed by arguments in source order.
+    let callee = match callee {
+        frontend::CalleeRef::Direct(name) => {
+            crate::Callee::Direct(fb.function_id(name).map_err(LowerError::Call)?)
+        }
+        frontend::CalleeRef::Indirect(expr) => {
+            crate::Callee::Indirect(lower_expr_o0(fb, env, globals, expr, target)?.0)
+        }
+    };
+    let signature = fb.callee_signature(&callee).map_err(LowerError::Call)?;
+    let mut values = Vec::new();
+    for arg in args {
+        values.push(lower_expr_o0(fb, env, globals, arg, target)?.0);
+    }
+    let value = fb.call(callee, values).map_err(LowerError::Call)?;
+    Ok((value, signature.ret))
 }

@@ -14,6 +14,7 @@ pub(crate) fn socket_type_to_whale(t: &frontend::TypeRef) -> Result<Type, LowerE
         S::Int { bits, signed } => int_type(*bits, *signed)?,
         S::Float { bits } => float_type(*bits)?,
 
+        S::FnPtr(sig) => Type::FnPtr(Box::new(signature_to_whale(sig)?)),
         S::Ptr(inner) => Type::Ptr(Box::new(socket_type_to_whale(inner)?)),
         S::Array { elem, len } => Type::Array(Box::new(socket_type_to_whale(elem)?), *len),
 
@@ -140,4 +141,21 @@ pub(crate) fn map_cmp(op: frontend::CmpOpRef, ty: &Type) -> Result<CmpOp, LowerE
     }
 
     Err(LowerError::UnsupportedExpr)
+}
+
+pub(crate) fn signature_to_whale(
+    sig: &frontend::SignatureRef,
+) -> Result<crate::FunctionSignature, LowerError> {
+    let sig = crate::FunctionSignature {
+        params: sig
+            .params
+            .iter()
+            .map(socket_type_to_whale)
+            .collect::<Result<_, _>>()?,
+        ret: socket_type_to_whale(&sig.ret)?,
+        convention: sig.convention,
+        variadic: sig.variadic,
+    };
+    crate::function::validate_signature(&sig).map_err(LowerError::Call)?;
+    Ok(sig)
 }

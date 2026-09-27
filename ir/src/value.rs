@@ -2,6 +2,9 @@
 
 use core::fmt;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FunctionId(pub u32);
+
 /// Stable identity of a global inside one module, independent of its name/order.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GlobalId(pub u32);

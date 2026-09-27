@@ -114,7 +114,7 @@ Save this minimal typed AST as `program.json`:
 
 ```json
 {
-  "format_version": 1,
+  "format_version": 2,
   "semantics_version": 1,
   "features": [],
   "program": {
@@ -141,9 +141,13 @@ Save this minimal typed AST as `program.json`:
               }
             }
           }
-        ]
+        ],
+        "convention": "Whale",
+        "linkage": "Internal",
+        "link_name": null
       }
-    ]
+    ],
+    "declarations": []
   }
 }
 ```
@@ -154,40 +158,73 @@ cargo run --release --locked --features socket-cli -- ir lower program.json -o p
 
 The command lowers and verifies the module, then writes textual IR to
 `program.wir`. Omit `-o program.wir` to print it to standard output. The input
-schema is documented in [AST JSON Schema](ir/schema/ast-v1.schema.json) and
+schema is documented in [AST JSON Schema](ir/schema/ast-v2.schema.json) and
 [the frontend AST types](ir/src/lower_ast/frontend.rs).
 
-The envelope requires `format_version: 1`, `semantics_version: 1`, and
+The envelope requires `format_version: 2`, `semantics_version: 1`, and
 `features: []`. Unversioned inputs, unknown fields/versions/features, duplicate
 JSON keys, and trailing JSON are rejected even with `--no-verify`. The raw JSON
 entry point is `ir::lower_ast::interchange::decode`; its default input limit is
 8 MiB, configurable with `decode_with_limit`. Integers use decimal strings;
 f16/f32/f64 values use `0x` followed by exactly 4/8/16 hexadecimal storage digits.
 For example, `{"Float":{"bits":32,"value":"0x80000000"}}` preserves negative zero.
-Replace old bare Program payloads with this envelope and numeric JSON values with
-strings. AST and printed typed IR have independent format versions and a shared
+Migrate format 1 inputs by setting `format_version` to 2, adding a `declarations`
+array to `program`, and adding `convention` and `linkage` to every definition.
+Internal functions use `"Whale"` and `"Internal"`; external functions must supply
+a nonempty `link_name`. Missing versions and format 1 inputs are rejected.
+Integers and floats retain their exact string encoding. AST and printed typed IR have independent format versions and a shared
 semantics version; printed IR includes both version fields. Text parsing is still
 unavailable.
 
 The AST supports scalar literals, variables/constants, add/sub/mul, comparisons,
-assignment, return, if/while and break/continue. Function-call expressions and
-aggregate expressions are not supported. Unsupported forms fail explicitly.
+assignment, return, if/while, break/continue, function declarations, direct calls,
+and typed function pointers with indirect calls. Aggregate expressions, variadic
+signatures, and SysV64 aggregate signatures are not supported. Unsupported forms fail explicitly.
 If the binary lacks `socket-cli`, `whale ir` exits with status 2 and prints the
 feature-enabled recovery command shown above.
 
 For a complete invalid input, save the following as `invalid.json`:
 
 ```json
-{"format_version":99,"semantics_version":1,"features":[],"program":{"globals":[],"functions":[]}}
+{
+  "format_version": 99,
+  "semantics_version": 1,
+  "features": [],
+  "program": {
+    "declarations": [],
+    "globals": [],
+    "functions": []
+  }
+}
 ```
 
 ```sh
 cargo run --locked --features socket-cli -- ir lower invalid.json -o rejected.wir
 ```
 
-This exits nonzero with `unsupported AST format_version 99; expected 1`. It does
+This exits nonzero with `unsupported AST format_version 99; expected 2`. It does
 not create `rejected.wir`; an existing output is preserved. Lowering/type errors
 likewise fail before output publication.
+
+### Typed function calls
+
+The [complete call input](ir/tests/fixtures/ast-v2-calls.json) lowers a local
+function, a stored function pointer, an indirect call, and a SysV64 external
+call. Its [printed IR](ir/tests/fixtures/calls-v2.wir) is checked by a regression test.
+
+```sh
+cargo run --locked --features socket-cli -- ir lower ir/tests/fixtures/ast-v2-calls.json
+```
+
+Declarations carry `FunctionId`, parameter/result types, calling convention,
+linkage, and explicit external link names. Calls resolve by function identity or
+by a `fnptr<signature>` SSA value. The verifier checks arity, argument/result
+types, conventions, and indirect-callee dominance. Callee expressions evaluate
+before arguments, which evaluate left to right. Void calls have no result;
+unused nonvoid results remain in O0 IR. Null or invalid indirect targets have a
+defined trap contract; runtime checks await the interpreter/native backend.
+This IR support does not implement machine ABI lowering or carry identities
+through object emission and linking yet.
 
 ### Wrap raw bytes in an object
 

@@ -14,8 +14,8 @@ fn lower(source: &str) -> Result<ir::Module, String> {
     )
     .map_err(|e| format!("{e:?}"))
 }
-const INTEGER: &str = include_str!("fixtures/ast-v1-u128.json");
-const FLOAT: &str = include_str!("fixtures/ast-v1-float.json");
+const INTEGER: &str = include_str!("fixtures/ast-v2-u128.json");
+const FLOAT: &str = include_str!("fixtures/ast-v2-float.json");
 
 #[test]
 fn exact_numeric_fixtures_round_trip_and_lower() {
@@ -28,7 +28,7 @@ fn exact_numeric_fixtures_round_trip_and_lower() {
     }
     let printed = ir::print_module(&lower(INTEGER).unwrap());
     assert!(printed.contains(&u128::MAX.to_string()));
-    assert!(printed.contains("format_version 1\n  semantics_version 1"));
+    assert!(printed.contains("format_version 2\n  semantics_version 1"));
     assert!(ir::print_module(&lower(FLOAT).unwrap()).contains("0xffc01234"));
     let signed = INTEGER
         .replace("false", "true")
@@ -40,8 +40,8 @@ fn exact_numeric_fixtures_round_trip_and_lower() {
 fn raw_json_rejects_duplicate_keys_even_inside_enum_and_escaped_names() {
     for (from, to) in [
         (
-            "\"format_version\": 1",
-            "\"format_version\": 1, \"format_version\": 1",
+            "\"format_version\": 2",
+            "\"format_version\": 2, \"format_version\": 2",
         ),
         ("\"globals\": []", "\"globals\": [], \"glob\\u0061ls\": []"),
         ("\"bits\": 128", "\"bits\": 128, \"bits\": 128"),
@@ -59,7 +59,7 @@ fn raw_json_rejects_duplicate_keys_even_inside_enum_and_escaped_names() {
 fn unsupported_schema_versions_and_features_are_errors() {
     for source in [
         "{\"globals\":[],\"functions\":[]}".to_string(),
-        INTEGER.replace("\"format_version\": 1", "\"format_version\": 99"),
+        INTEGER.replace("\"format_version\": 2", "\"format_version\": 99"),
         INTEGER.replace("\"semantics_version\": 1", "\"semantics_version\": 99"),
         INTEGER.replace("\"features\": []", "\"features\": [\"unknown\"]"),
         INTEGER.replace("\"globals\": []", "\"extra\": 0, \"globals\": []"),
@@ -153,7 +153,7 @@ fn every_float_width_preserves_zero_infinity_and_nan_storage() {
 
 #[test]
 fn unit_variant_objects_have_the_same_meaning_and_encode_canonically() {
-    let source = r#"{"format_version":1,"semantics_version":1,"features":[],"program":{"globals":[],"functions":[{"name":"empty","parameters":[],"return_type":{"Void":null},"body":[{"Return":null}]}]}}"#;
+    let source = r#"{"format_version":2,"semantics_version":1,"features":[],"program":{"declarations":[],"globals":[],"functions":[{"name":"empty","convention":"Whale","linkage":"Internal","link_name":null,"parameters":[],"return_type":{"Void":null},"body":[{"Return":null}]}]}}"#;
     let encoded = encode(decode(source).unwrap()).unwrap();
     assert!(encoded.contains("\"return_type\": \"Void\""));
     ir::verify_module(&lower(source).unwrap()).unwrap();

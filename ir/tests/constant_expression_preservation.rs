@@ -27,12 +27,16 @@ fn ty() -> ast::TypeRef {
 #[test]
 fn unused_and_unreachable_constant_declarations_keep_their_expressions() {
     let program = ast::Program {
+        declarations: vec![],
         globals: vec![ast::GlobalConst {
             name: "global_sum".into(),
             ty: ty(),
             init: sum(int(1), int(2)),
         }],
         functions: vec![ast::Function {
+            convention: ir::CallingConvention::Whale,
+            linkage: ir::Linkage::Internal,
+            link_name: None,
             name: "f".into(),
             parameters: vec![],
             return_type: ast::TypeRef::Void,
@@ -76,12 +80,16 @@ fn unused_and_unreachable_constant_declarations_keep_their_expressions() {
 #[test]
 fn shadowed_names_keep_distinct_declarations_and_resolved_references() {
     let program = ast::Program {
+        declarations: vec![],
         globals: vec![ast::GlobalConst {
             name: "value".into(),
             ty: ty(),
             init: int(10),
         }],
         functions: vec![ast::Function {
+            convention: ir::CallingConvention::Whale,
+            linkage: ir::Linkage::Internal,
+            link_name: None,
             name: "f".into(),
             parameters: vec![],
             return_type: ast::TypeRef::Bool,
