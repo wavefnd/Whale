@@ -1,5 +1,5 @@
 module {
-  format_version 2
+  format_version 3
   semantics_version 1
   target "x86_64-whale-linux"
   datalayout { ptr=64, endian=little }
@@ -8,8 +8,8 @@ module {
   declare @f1 "increment": whale (i32) -> i32, linkage internal
   declare @f2 "answer": whale () -> i32, linkage internal
 
-  fn @increment(x: i32) -> i32, id @f1 {
-  entry:
+  fn @f1 "increment"(%v0 "x": i32) -> i32, entry %b0 {
+  %b0 "entry":
     %v1: ptr<i32> = alloca i32, align 4
     store i32 %v0, ptr<i32> %v1, align 4
     %v2: i32 = load i32, ptr<i32> %v1, align 4
@@ -18,8 +18,8 @@ module {
     ret i32 %v4
   }
 
-  fn @answer() -> i32, id @f2 {
-  entry:
+  fn @f2 "answer"() -> i32, entry %b1 {
+  %b1 "entry":
     %v6: ptr<fnptr<whale (i32) -> i32>> = alloca fnptr<whale (i32) -> i32>, align 8
     %v10: ptr<i32> = alloca i32, align 4
     %v5: fnptr<whale (i32) -> i32> = function_addr @f1

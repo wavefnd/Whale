@@ -206,11 +206,25 @@ This exits nonzero with `unsupported AST format_version 99; expected 2`. It does
 not create `rejected.wir`; an existing output is preserved. Lowering/type errors
 likewise fail before output publication.
 
+### Typed IR output and validation
+
+The printer emits typed IR format 3 with semantics version 1. AST JSON remains
+format 2. Definitions and references use explicit `@fN`, `@gN`, `%vN` and `%bN`
+identities; names are quoted annotations, and each function records its entry
+block. Name/string fields escape quotes, backslashes, control characters and
+Unicode line separators. See the [identity fixture](ir/tests/fixtures/text-identities-v3.wir)
+for repeated block names and IDs scoped to different functions.
+
+The verifier checks cast operands, opcode categories and width direction, and
+checks signed/unsigned checked arithmetic with a `tuple<T, bool>` result.
+Tuple extraction requires an existing field and its exact type. These checks do
+not implement runtime conversion traps, pointer metadata or a text IR parser.
+
 ### Typed function calls
 
 The [complete call input](ir/tests/fixtures/ast-v2-calls.json) lowers a local
 function, a stored function pointer, an indirect call, and a SysV64 external
-call. Its [printed IR](ir/tests/fixtures/calls-v2.wir) is checked by a regression test.
+call. Its [printed IR](ir/tests/fixtures/calls-v3.wir) is checked by a regression test.
 
 ```sh
 cargo run --locked --features socket-cli -- ir lower ir/tests/fixtures/ast-v2-calls.json
