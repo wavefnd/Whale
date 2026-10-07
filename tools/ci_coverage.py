@@ -18,7 +18,10 @@ def summarize(lcov, root):
     source = None
     for line in lcov.splitlines():
         if line.startswith("SF:"):
-            source = Path(line[3:]).resolve()
+            source_path = Path(line[3:])
+            if not source_path.is_absolute():
+                source_path = root / source_path
+            source = source_path.resolve()
             selected = None
             # Prefer the most specific package over the root workspace package.
             for directory in sorted(packages, key=lambda path: len(path.parts), reverse=True):
