@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A bounded oracle for verified scalar integer/control-flow IR.
-//! Memory, floating point, addresses and calls are rejected before execution.
+//! Tracked stack memory is supported; floating-point computation and calls remain unsupported.
 
 mod integer;
+mod memory;
+pub use memory::{MemoryLimits, MemoryResource, MemoryTrap};
 
 use crate::*;
 use std::{collections::HashMap, fmt};
@@ -12,12 +14,14 @@ use std::{collections::HashMap, fmt};
 pub struct InterpreterOptions {
     pub max_steps: u64,
     pub ir_limits: IrLimits,
+    pub memory_limits: MemoryLimits,
 }
 impl Default for InterpreterOptions {
     fn default() -> Self {
         Self {
             max_steps: 1_000_000,
             ir_limits: IrLimits::default(),
+            memory_limits: MemoryLimits::default(),
         }
     }
 }
@@ -53,6 +57,7 @@ pub enum TrapReason {
     DivisionByZero,
     RemainderByZero,
     Explicit(String),
+    Memory(MemoryTrap),
 }
 impl fmt::Display for TrapReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -60,6 +65,7 @@ impl fmt::Display for TrapReason {
             Self::DivisionByZero => f.write_str("division by zero"),
             Self::RemainderByZero => f.write_str("remainder by zero"),
             Self::Explicit(reason) => write!(f, "{reason:?}"),
+            Self::Memory(reason) => reason.fmt(f),
         }
     }
 }
@@ -90,6 +96,11 @@ pub enum InterpreterError {
         site: ExecutionSite,
         limit: u64,
     },
+    MemoryLimit {
+        site: ExecutionSite,
+        resource: MemoryResource,
+        limit: u64,
+    },
     Trap(InterpreterTrap),
 }
 impl fmt::Display for InterpreterError {
@@ -102,6 +113,7 @@ impl fmt::Display for InterpreterError {
             Self::ArgumentType { index, expected } => write!(f, "argument {index} must be a {expected} literal in range"),
             Self::UnsupportedInstruction { site, operation } => write!(f, "unsupported interpreter operation {operation} at {site}"),
             Self::StepLimit { site, limit } => write!(f, "interpreter step limit {limit} reached at {site}"),
+            Self::MemoryLimit { site, resource, limit } => write!(f, "interpreter memory {resource:?} limit {limit} reached at {site}"),
             Self::Trap(trap) => write!(f, "trap at {}: {} (after {} steps)", trap.site, trap.reason, trap.steps),
         }
     }
@@ -112,12 +124,19 @@ impl std::error::Error for InterpreterError {}
 enum Value {
     Scalar(ConstValue),
     Checked(ConstValue, bool),
+    Pointer(memory::Pointer),
 }
 impl Value {
     fn scalar(&self) -> &ConstValue {
         match self {
             Self::Scalar(v) => v,
             _ => unreachable!("verified scalar operand"),
+        }
+    }
+    fn pointer(&self) -> memory::Pointer {
+        match self {
+            Self::Pointer(p) => *p,
+            _ => unreachable!("verified pointer operand"),
         }
     }
     fn boolean(&self) -> bool {
@@ -132,6 +151,7 @@ fn scalar_type(ty: &Type) -> bool {
 }
 fn value_type(ty: &Type) -> bool {
     scalar_type(ty)
+        || matches!(ty, Type::Ptr(_))
         || matches!(ty, Type::Tuple(ts) if ts.len() == 2 && integer::shape(&ts[0]).is_some() && ts[1] == Type::Bool)
 }
 fn destination(inst: &Instruction) -> Option<ValueId> {
@@ -157,7 +177,7 @@ fn destination(inst: &Instruction) -> Option<ValueId> {
         | NullFunction { dst, .. }
         | FunctionAddr { dst, .. } => Some(*dst),
         Call { dst, .. } => *dst,
-        Store { .. } | Memcpy { .. } | Memset { .. } | TrapIf { .. } => None,
+        Uninit { .. } | Store { .. } | Memcpy { .. } | Memset { .. } | TrapIf { .. } => None,
     }
 }
 fn supported(inst: &Instruction) -> Result<(), &'static str> {
@@ -169,7 +189,9 @@ fn supported(inst: &Instruction) -> Result<(), &'static str> {
         Bin { ty, .. } | Not { ty, .. } | Checked { ty, .. } if integer::shape(ty).is_some() => {
             return Ok(())
         }
-        Cmp { ty, .. } | ICmp { ty, .. } if scalar_type(ty) => return Ok(()),
+        Cmp { ty, .. } | ICmp { ty, .. } if scalar_type(ty) || matches!(ty, Type::Ptr(_)) => {
+            return Ok(())
+        }
         Cast {
             op, src_ty, dst_ty, ..
         } if matches!(
@@ -181,25 +203,109 @@ fn supported(inst: &Instruction) -> Result<(), &'static str> {
             return Ok(())
         }
         Extract { dst_ty, .. } if scalar_type(dst_ty) => return Ok(()),
-        TrapIf { .. } => return Ok(()),
+        Alloca { ty, .. } | Uninit { ty, .. } if allocation_type(ty) => return Ok(()),
+        Load { ty, .. } | Store { ty, .. } if value_type(ty) => return Ok(()),
+        Gep { .. } => return Ok(()),
+        Cast {
+            op: CastOp::Bitcast,
+            src_ty: Type::Ptr(_),
+            dst_ty: Type::Ptr(_),
+            ..
+        }
+        | Cast {
+            op: CastOp::IntToPtr | CastOp::PtrToInt,
+            ..
+        } => return Ok(()),
+        TrapIf { .. } | Memcpy { .. } | Memset { .. } => return Ok(()),
         Undef { .. } => "undef",
         ConstDecl { .. } | Const { .. } => "non-integer constant",
         Mov { .. } | Phi { .. } | Select { .. } | Extract { .. } => "non-scalar value",
         Bin { .. } | Not { .. } | Checked { .. } | Cmp { .. } | ICmp { .. } | FCmp { .. } => {
             "non-integer arithmetic/comparison"
         }
-        Cast { .. } => "non-integer cast",
+        Cast { .. } => "unsupported cast",
         Alloca { .. } => "alloca",
         Load { .. } => "load",
         Store { .. } => "store",
-        Gep { .. } => "gep",
-        Memcpy { .. } => "memcpy",
-        Memset { .. } => "memset",
+        Uninit { .. } => "uninit",
         NullFunction { .. } => "null_function",
         FunctionAddr { .. } => "function_addr",
         Call { .. } => "call",
     };
     Err(unsupported)
+}
+fn allocation_type(root: &Type) -> bool {
+    let mut pending = vec![root];
+    while let Some(ty) = pending.pop() {
+        if scalar_type(ty) || matches!(ty, Type::Ptr(_)) {
+            continue;
+        }
+        match ty {
+            Type::Array(ty, _) => pending.push(ty),
+            Type::Struct(fields) | Type::Tuple(fields) => pending.extend(fields),
+            _ => return false,
+        }
+    }
+    true
+}
+fn memory_failure(fault: memory::Fault, site: ExecutionSite, steps: u64) -> InterpreterError {
+    match fault {
+        memory::Fault::Trap(reason) => InterpreterError::Trap(InterpreterTrap {
+            site,
+            reason: TrapReason::Memory(reason),
+            steps,
+        }),
+        memory::Fault::Limit { resource, limit } => InterpreterError::MemoryLimit {
+            site,
+            resource,
+            limit,
+        },
+    }
+}
+fn gep_plan(fun: &Function, base: ValueId, indices: &[ValueId]) -> Vec<memory::GepStep> {
+    let Type::Ptr(pointee) = fun.value_type(base).unwrap() else {
+        unreachable!("verified GEP base")
+    };
+    let mut selected: &Type = pointee;
+    let mut plan = Vec::new();
+    for (position, index) in indices.iter().enumerate() {
+        let l =
+            |ty| crate::layout_of_with_limit(ty, Target::X86_64WhaleLinux, MAX_IR_NESTING).unwrap();
+        if position == 0 {
+            plan.push(memory::GepStep::Stride(l(selected).size));
+            continue;
+        }
+        match selected {
+            Type::Array(element, _) => {
+                selected = element;
+                plan.push(memory::GepStep::Stride(l(selected).size));
+            }
+            Type::Struct(fields) | Type::Tuple(fields) => {
+                let ordinal = fun
+                    .blocks
+                    .iter()
+                    .flat_map(|b| &b.instructions)
+                    .find_map(|ins| match ins {
+                        Instruction::Const { dst, value, .. }
+                        | Instruction::ConstDecl { dst, value, .. }
+                            if dst == index =>
+                        {
+                            Some(match value {
+                                ConstValue::I(v) => *v as usize,
+                                ConstValue::U(v) => *v as usize,
+                                _ => unreachable!("verified field ordinal"),
+                            })
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                plan.push(memory::GepStep::Field(l(selected).field_offsets[ordinal]));
+                selected = &fields[ordinal];
+            }
+            _ => unreachable!("verified GEP path"),
+        }
+    }
+    plan
 }
 fn cmp_pred(op: CmpOp) -> ICmpPred {
     use CmpOp::*;
@@ -272,14 +378,46 @@ pub fn interpret_with_options(
         instruction,
         value,
     };
+    let mut sizes = HashMap::new();
+    let mut geps = HashMap::new();
     for block in &fun.blocks {
         for (index, inst) in block.instructions.iter().enumerate() {
+            let at = site(block.id, index, destination(inst));
             supported(inst).map_err(|operation| InterpreterError::UnsupportedInstruction {
-                site: site(block.id, index, destination(inst)),
+                site: at,
                 operation,
             })?;
+            match inst {
+                Instruction::Alloca { ty, .. } | Instruction::Uninit { ty, .. } => {
+                    let l =
+                        layout_of_with_limit(ty, Target::X86_64WhaleLinux, MAX_IR_NESTING).unwrap();
+                    let alignment = if matches!(ty, Type::Array(..)) && l.size >= 16 {
+                        l.align.max(16)
+                    } else {
+                        l.align
+                    };
+                    sizes.insert((block.id, index), (l.size, alignment));
+                }
+                Instruction::Gep {
+                    base_ptr, indices, ..
+                } => {
+                    let plan = gep_plan(fun, *base_ptr, indices);
+                    if plan
+                        .iter()
+                        .any(|step| matches!(step, memory::GepStep::Stride(0)))
+                    {
+                        return Err(InterpreterError::UnsupportedInstruction {
+                            site: at,
+                            operation: "zero-sized pointer arithmetic",
+                        });
+                    }
+                    geps.insert((block.id, index), plan);
+                }
+                _ => {}
+            }
         }
     }
+    let mut memory = memory::Memory::new(options.memory_limits);
     // Maps avoid allocations proportional to potentially sparse u32 identities.
     let blocks: HashMap<_, _> = fun.blocks.iter().map(|b| (b.id, b)).collect();
     let mut values: HashMap<_, _> = fun
@@ -348,20 +486,38 @@ pub fn interpret_with_options(
                 )),
                 Instruction::Cmp {
                     op, ty, lhs, rhs, ..
-                } => Value::Scalar(ConstValue::Bool(integer::compare(
-                    &cmp_pred(*op),
-                    ty,
-                    scalar(lhs),
-                    scalar(rhs),
-                ))),
+                } => {
+                    let result = if matches!(ty, Type::Ptr(_)) {
+                        let equal = memory
+                            .equal(get(lhs).pointer(), get(rhs).pointer())
+                            .map_err(|e| memory_failure(e, at, steps))?;
+                        if *op == CmpOp::Eq {
+                            equal
+                        } else {
+                            !equal
+                        }
+                    } else {
+                        integer::compare(&cmp_pred(*op), ty, scalar(lhs), scalar(rhs))
+                    };
+                    Value::Scalar(ConstValue::Bool(result))
+                }
                 Instruction::ICmp {
                     pred, ty, lhs, rhs, ..
-                } => Value::Scalar(ConstValue::Bool(integer::compare(
-                    pred,
-                    ty,
-                    scalar(lhs),
-                    scalar(rhs),
-                ))),
+                } => {
+                    let result = if matches!(ty, Type::Ptr(_)) {
+                        let equal = memory
+                            .equal(get(lhs).pointer(), get(rhs).pointer())
+                            .map_err(|e| memory_failure(e, at, steps))?;
+                        if *pred == ICmpPred::Eq {
+                            equal
+                        } else {
+                            !equal
+                        }
+                    } else {
+                        integer::compare(pred, ty, scalar(lhs), scalar(rhs))
+                    };
+                    Value::Scalar(ConstValue::Bool(result))
+                }
                 Instruction::Select {
                     cond,
                     on_true,
@@ -379,7 +535,77 @@ pub fn interpret_with_options(
                     dst_ty,
                     src,
                     ..
-                } => Value::Scalar(integer::cast(op, src_ty, dst_ty, scalar(src))),
+                } => match op {
+                    CastOp::IntToPtr => {
+                        Value::Pointer(memory::Pointer::raw(integer::raw(scalar(src), 64) as u64))
+                    }
+                    CastOp::PtrToInt => Value::Scalar(integer::pack(
+                        dst_ty,
+                        u128::from(get(src).pointer().address),
+                    )),
+                    CastOp::Bitcast if matches!(src_ty, Type::Ptr(_)) => get(src).clone(),
+                    _ => Value::Scalar(integer::cast(op, src_ty, dst_ty, scalar(src))),
+                },
+                Instruction::Alloca { align, .. } => {
+                    let (size, natural) = sizes[&(current, index)];
+                    Value::Pointer(
+                        memory
+                            .allocate(size, natural, *align)
+                            .map_err(|e| memory_failure(e, at, steps))?,
+                    )
+                }
+                Instruction::Load { ty, ptr, align, .. } => memory
+                    .load(get(ptr).pointer(), ty, *align)
+                    .map_err(|e| memory_failure(e, at, steps))?,
+                Instruction::Store {
+                    ty,
+                    value,
+                    ptr,
+                    align,
+                } => {
+                    memory
+                        .store(get(ptr).pointer(), ty, get(value), *align)
+                        .map_err(|e| memory_failure(e, at, steps))?;
+                    continue;
+                }
+                Instruction::Uninit { ptr, align, .. } => {
+                    memory
+                        .uninit(get(ptr).pointer(), sizes[&(current, index)].0, *align)
+                        .map_err(|e| memory_failure(e, at, steps))?;
+                    continue;
+                }
+                Instruction::Memcpy { dst, src, n, align } => {
+                    memory
+                        .copy(
+                            get(dst).pointer(),
+                            get(src).pointer(),
+                            integer::raw(scalar(n), 64) as u64,
+                            *align,
+                        )
+                        .map_err(|e| memory_failure(e, at, steps))?;
+                    continue;
+                }
+                Instruction::Memset { dst, val, n, align } => {
+                    memory
+                        .set(
+                            get(dst).pointer(),
+                            integer::raw(scalar(val), 8) as u8,
+                            integer::raw(scalar(n), 64) as u64,
+                            *align,
+                        )
+                        .map_err(|e| memory_failure(e, at, steps))?;
+                    continue;
+                }
+                Instruction::Gep {
+                    base_ptr, indices, ..
+                } => {
+                    let inputs: Vec<_> = indices.iter().map(|id| scalar(id).clone()).collect();
+                    Value::Pointer(
+                        memory
+                            .gep(get(base_ptr).pointer(), &geps[&(current, index)], &inputs)
+                            .map_err(|e| memory_failure(e, at, steps))?,
+                    )
+                }
                 Instruction::Checked {
                     op, ty, lhs, rhs, ..
                 } => {
@@ -436,10 +662,11 @@ pub fn interpret_with_options(
                 .find(|(case, _)| case == values[value].scalar())
                 .map_or(*default_bb, |(_, target)| *target),
             Terminator::Ret { value, .. } => {
+                memory.retire_all();
                 return Ok(InterpreterResult {
                     value: value.map(|v| values[&v].scalar().clone()),
                     steps,
-                })
+                });
             }
             Terminator::Trap { reason } => {
                 return Err(InterpreterError::Trap(InterpreterTrap {

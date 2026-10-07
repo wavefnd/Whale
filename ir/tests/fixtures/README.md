@@ -15,8 +15,8 @@ The control-flow case includes a loop, branches, short-circuit phi and direct
 calls; the cast case includes signed extension, integer-to-float and float
 truncation with memory loads/stores.
 
-`text_parser.rs` reads every retained output, verifies it and requires exact
-canonical print-parse-print equality. These tests do not require a Wave checkout
+`text_parser.rs` reads every retained output, verifies it and requires canonical
+print-parse-print equality, upgrading the header to format 4. These tests do not require a Wave checkout
 or claim native execution. To regenerate with a matching Wave checkout and a
 Whale dependency containing this reader/printer, run from the Wave root:
 
@@ -25,7 +25,7 @@ cargo run -- --whale build /path/to/wave-control.wave --emit=ir
 cargo run -- --whale build /path/to/wave-casts.wave --emit=ir
 ```
 
-AST JSON remains format 2, independently of typed text IR format 3. Readers reject
+AST JSON remains format 2, independently of canonical typed text IR format 4 (reader also accepts 3). Readers reject
 unsupported versions; fixtures are migrated explicitly when the format changes.
 
 ## Scalar integer execution oracle
@@ -44,4 +44,9 @@ ConstExpr evaluator. ConstExpr currently exposes only add/sub/mul and
 comparisons; division/remainder/shifts remain runtime instructions, with
 explicit edge vectors ready for any future constant-evaluation extension.
 The preserved Wave fixtures use memory and are parser/verifier fixtures;
-they deliberately report unsupported execution rather than simulate storage.
+`wave-control-v3.wir` @f0 now executes through tracked integer memory; its main
+function still rejects calls, and the cast fixture still rejects float execution.
+
+`tracked-memory-v4.wir` provides runnable pointer-copy and uninitialized-read
+cases. `initialization-loop-v4.wir` resets a hoisted slot on every declaration
+and traps on the second loop iteration instead of reading the first value.

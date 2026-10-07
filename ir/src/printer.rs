@@ -218,6 +218,7 @@ fn print_instr(i: &Instruction) -> String {
             align,
         } => format!("{dst}: {ty} = load {ty}, ptr<{ty}> {ptr}, align {align}"),
 
+        Uninit { ty, ptr, align } => format!("uninit {ty}, ptr<{ty}> {ptr}, align {align}"),
         Store {
             ty,
             value,

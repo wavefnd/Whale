@@ -125,6 +125,7 @@ pub enum Instruction {
         ty: Type,
         value: ConstValue,
     },
+    /// Legacy representation retained solely for a precise verification error.
     Undef {
         dst: ValueId,
         ty: Type,
@@ -222,6 +223,13 @@ pub enum Instruction {
     },
     Load {
         dst: ValueId,
+        ty: Type,
+        ptr: ValueId,
+        align: u32,
+    },
+    /// Marks the complete storage range uninitialized without changing bytes.
+    /// Retained at declaration position even when the allocation is in entry.
+    Uninit {
         ty: Type,
         ptr: ValueId,
         align: u32,

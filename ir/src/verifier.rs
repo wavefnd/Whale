@@ -12,6 +12,15 @@ mod operands;
 #[derive(Debug)]
 pub enum VerifyError {
     ResourceLimit(crate::LimitError),
+    ForbiddenUndef {
+        func: String,
+        value: ValueId,
+    },
+    InvalidMemoryLayout {
+        func: String,
+        operation: &'static str,
+        reason: crate::LayoutError,
+    },
     InvalidCast {
         func: String,
         value: ValueId,
@@ -166,6 +175,43 @@ pub fn verify_module_with_limits(m: &Module, limits: crate::IrLimits) -> Result<
     target
         .validate_layout(m.datalayout)
         .map_err(VerifyError::Target)?;
+    for f in &m.functions {
+        for block in &f.blocks {
+            for ins in &block.instructions {
+                if let Instruction::Undef { dst, .. } = ins {
+                    return Err(VerifyError::ForbiddenUndef {
+                        func: f.name.clone(),
+                        value: *dst,
+                    });
+                }
+                let storage = match ins {
+                    Instruction::Alloca { ty, .. } => Some(("alloca", ty)),
+                    Instruction::Load { ty, .. } => Some(("load", ty)),
+                    Instruction::Store { ty, .. } => Some(("store", ty)),
+                    Instruction::Uninit { ty, .. } => Some(("uninit", ty)),
+                    Instruction::Gep {
+                        base_ptr, indices, ..
+                    } if !indices.is_empty() => match f.value_type(*base_ptr) {
+                        Some(Type::Ptr(ty)) => Some(("gep", &**ty)),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some((operation, ty)) = storage {
+                    // Category errors keep their existing diagnostics below.
+                    if operands::is_storable(ty) {
+                        crate::layout_of_with_limit(ty, target, limits.max_type_depth).map_err(
+                            |reason| VerifyError::InvalidMemoryLayout {
+                                func: f.name.clone(),
+                                operation,
+                                reason,
+                            },
+                        )?;
+                    }
+                }
+            }
+        }
+    }
     let mut globals = HashSet::new();
     for g in &m.globals {
         if !globals.insert(&g.name) {
@@ -494,9 +540,12 @@ fn instr_result(ins: &Instruction) -> Option<(ValueId, Type)> {
         Checked { dst, ty, .. } => Some((*dst, Type::Tuple(vec![ty.clone(), Type::Bool]))),
         Alloca { dst, ty, .. } => Some((*dst, Type::ptr_to(ty.clone()))),
 
-        Store { .. } | Memcpy { .. } | Memset { .. } | Call { dst: None, .. } | TrapIf { .. } => {
-            None
-        }
+        Uninit { .. }
+        | Store { .. }
+        | Memcpy { .. }
+        | Memset { .. }
+        | Call { dst: None, .. }
+        | TrapIf { .. } => None,
 
         Call {
             dst: Some(v),
@@ -560,7 +609,7 @@ fn instr_uses(ins: &Instruction) -> Vec<ValueId> {
         Checked { lhs, rhs, .. } => vec![*lhs, *rhs],
 
         Alloca { .. } => vec![],
-        Load { ptr, .. } => vec![*ptr],
+        Load { ptr, .. } | Uninit { ptr, .. } => vec![*ptr],
         Store { value, ptr, .. } => vec![*value, *ptr],
 
         Gep {

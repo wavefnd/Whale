@@ -23,7 +23,10 @@ fn canonical_fixtures_preserve_scoped_sparse_ids_block_order_and_wave_output() {
         include_str!("fixtures/wave-control-v3.wir"),
         include_str!("fixtures/wave-casts-v3.wir"),
     ] {
-        assert_eq!(print_module(&roundtrip(text)), text);
+        assert_eq!(
+            print_module(&roundtrip(text)),
+            text.replace("format_version 3", "format_version 4")
+        );
     }
     let m = parse_module(include_str!("fixtures/text-identities-v3.wir")).unwrap();
     assert_eq!(m.functions[0].entry, BlockId(10));
@@ -98,7 +101,7 @@ fn every_scalar_opcode_and_predicate_reads_its_printed_form() {
 fn memory_dataflow_function_addresses_and_dead_o0_instructions_are_retained() {
     let text = function(
         "%v0 \"c\": bool",
-        r#"%v1: i32 = undef i32
+        r#"%v1: i32 = const i32 0
 %v2: i32 = mov i32 %v1
 %v3: i32 = not i32 %v2
 %v4: i32 = select bool %v0, i32 %v2, i32 %v3
@@ -118,7 +121,7 @@ trap_if bool %v0, reason="한글 λ\"\\\n\r\t\0\u{85}\u{2028}""#,
     );
     let m = roundtrip(&text);
     assert_eq!(m.functions[0].blocks[0].instructions.len(), 17);
-    assert!(print_module(&m).contains("undef i32"));
+    assert!(print_module(&m).contains("const i32 0"));
     // Whole aggregate types occur in memory and pointer signatures, even though
     // aggregate literal values and SysV aggregate ABI lowering are unsupported.
     roundtrip(&function("%v0 \"base\": ptr<array<struct{i32, tuple<u8, bool>}, 4>>", "%v1: u64 = const u64 0\n%v2: u64 = const u64 1\n%v3: ptr<tuple<u8, bool>> = gep %v0, %v1, %v1, %v2"));

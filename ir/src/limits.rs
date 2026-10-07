@@ -194,7 +194,8 @@ pub(crate) fn check_module(m: &Module, limits: IrLimits) -> Result<(), LimitErro
                     | Checked { ty, .. }
                     | Alloca { ty, .. }
                     | Load { ty, .. }
-                    | Store { ty, .. } => b.ty(ty)?,
+                    | Store { ty, .. }
+                    | Uninit { ty, .. } => b.ty(ty)?,
                     Phi { ty, incomings, .. } => {
                         b.ty(ty)?;
                         b.nodes(incomings.len())?;

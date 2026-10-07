@@ -222,13 +222,16 @@ fn function_references_can_be_stored_and_called_but_are_not_numeric_constants() 
 }
 
 #[test]
-fn ast_version_two_calls_fixture_roundtrips_and_matches_ir_version_three() {
+fn ast_version_two_calls_fixture_roundtrips_and_prints_current_ir_and_reads_version_three() {
     let source = include_str!("fixtures/ast-v2-calls.json");
     let canonical = encode(decode(source).unwrap()).unwrap();
     assert_eq!(encode(decode(&canonical).unwrap()).unwrap(), canonical);
     let m = lower(&decode(source).unwrap()).unwrap();
     verify_module(&m).unwrap();
-    assert_eq!(print_module(&m), include_str!("fixtures/calls-v3.wir"));
+    assert_eq!(
+        print_module(&m),
+        include_str!("fixtures/calls-v3.wir").replace("format_version 3", "format_version 4")
+    );
     for (from, to) in [
         ("\"Whale\"", "\"UnknownConvention\""),
         ("\"Internal\"", "\"Weak\""),

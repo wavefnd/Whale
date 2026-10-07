@@ -6,6 +6,71 @@ fn run(args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 #[test]
+fn run_tracked_memory_reports_initialization_and_validates_byte_budgets() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("tracked memory.wir");
+    fs::write(
+        &path,
+        include_str!("../ir/tests/fixtures/tracked-memory-v4.wir"),
+    )
+    .unwrap();
+    let input = path.to_str().unwrap();
+    let r = run(&[
+        "ir",
+        "run",
+        input,
+        "--function",
+        "@f0",
+        "--max-memory",
+        "20",
+    ]);
+    assert!(r.status.success(), "{r:?}");
+    assert_eq!(r.stdout, b"u32 42\n");
+    for (args, diagnostic) in [
+        (
+            vec!["--function", "@f0", "--max-memory", "3"],
+            "memory Bytes limit 3",
+        ),
+        (
+            vec!["--function", "@f1"],
+            "uninitialized byte at allocation offset 0",
+        ),
+        (
+            vec!["--function", "@f0", "--max-memory", "-1"],
+            "decimal u64",
+        ),
+        (
+            vec!["--function", "@f0", "--max-memory", "18446744073709551616"],
+            "decimal u64",
+        ),
+        (
+            vec![
+                "--function",
+                "@f0",
+                "--max-memory",
+                "20",
+                "--max-memory",
+                "20",
+            ],
+            "duplicate --max-memory",
+        ),
+        (
+            vec!["--function", "@f0", "--max-memory"],
+            "requires a u64 byte count",
+        ),
+    ] {
+        let mut command = vec!["ir", "run", input];
+        command.extend(args);
+        let r = run(&command);
+        assert_eq!(r.status.code(), Some(1), "{r:?}");
+        assert!(
+            String::from_utf8_lossy(&r.stderr).contains(diagnostic),
+            "{r:?}"
+        );
+        assert!(r.stdout.is_empty());
+    }
+}
+#[test]
 fn typed_ir_commands_work_without_socket_and_publish_only_verified_output() {
     let tmp = tempfile::tempdir().unwrap();
     let input = tmp.path().join("input.wir");
@@ -18,10 +83,17 @@ fn typed_ir_commands_work_without_socket_and_publish_only_verified_output() {
     assert!(result.status.success(), "{result:?}");
     let result = run(&["ir", "print", input]);
     assert!(result.status.success(), "{result:?}");
-    assert_eq!(result.stdout, good.as_bytes());
+    assert_eq!(
+        result.stdout,
+        good.replace("format_version 3", "format_version 4")
+            .as_bytes()
+    );
     let result = run(&["ir", "print", input, "-o", output]);
     assert!(result.status.success(), "{result:?}");
-    assert_eq!(fs::read_to_string(output).unwrap(), good);
+    assert_eq!(
+        fs::read_to_string(output).unwrap(),
+        good.replace("format_version 3", "format_version 4")
+    );
     for (source, args) in [
         (good.to_string(), vec!["ir", "print", input, "-o", input]),
         (
@@ -170,5 +242,5 @@ fn run_executes_exact_arguments_and_reports_traps_fuel_and_unsupported_operation
     let result = run(&["ir", "run", input, "--function", "@f0"]);
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("unsupported interpreter operation alloca"));
+        .contains("unsupported interpreter operation unsupported cast"));
 }

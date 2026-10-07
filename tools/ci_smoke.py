@@ -116,7 +116,7 @@ def smoke(binary, socket, artifacts, emulator=None, sysroot=None):
 
             typed_ir = root / "typed input.wir"
             typed_ir.write_text(
-                'module {\n  format_version 3\n  semantics_version 1\n'
+                'module {\n  format_version 4\n  semantics_version 1\n'
                 '  target "x86_64-whale-linux"\n  datalayout { ptr=64, endian=little }\n\n'
                 '  declare @f7 "answer": whale () -> i32, linkage internal\n\n'
                 '  fn @f7 "answer"() -> i32, entry %b11 {\n  %b11 "entry":\n'
@@ -134,6 +134,23 @@ def smoke(binary, socket, artifacts, emulator=None, sysroot=None):
                 encoding="utf-8", newline="\n")
             invoke(["ir", "run", trap_ir, "--function", "@f7"],
                    success=False, diagnostic=b"division by zero")
+            memory_ir = root / "tracked memory.wir"
+            memory_ir.write_text(typed_ir.read_text(encoding="utf-8").replace(
+                "%v42: i32 = const i32 42\n    ret i32 %v42",
+                "%v0: ptr<i32> = alloca i32, align 4\n"
+                "    uninit i32, ptr<i32> %v0, align 4\n"
+                "    %v42: i32 = const i32 42\n"
+                "    store i32 %v42, ptr<i32> %v0, align 4\n"
+                "    %v43: i32 = load i32, ptr<i32> %v0, align 4\n"
+                "    ret i32 %v43"), encoding="utf-8", newline="\n")
+            if invoke(["ir", "run", memory_ir, "--function", "@f7"]).stdout != b"i32 42\n":
+                raise AssertionError("tracked memory returned the wrong value")
+            invoke(["ir", "run", memory_ir, "--function", "@f7", "--max-memory", "3"],
+                   success=False, diagnostic=b"memory Bytes limit 3")
+            memory_ir.write_text(memory_ir.read_text(encoding="utf-8").replace(
+                "store i32 %v42, ptr<i32> %v0, align 4", ""), encoding="utf-8", newline="\n")
+            invoke(["ir", "run", memory_ir, "--function", "@f7"],
+                   success=False, diagnostic=b"uninitialized byte at allocation offset 0")
             printed = invoke(["ir", "print", typed_ir]).stdout
             if printed != typed_ir.read_bytes():
                 raise AssertionError("typed IR round trip changed explicit identities")
@@ -143,7 +160,7 @@ def smoke(binary, socket, artifacts, emulator=None, sysroot=None):
                 raise AssertionError("typed IR file differs from stdout")
             bad_ir = root / "unknown version.wir"
             bad_ir.write_text(typed_ir.read_text(encoding="utf-8").replace(
-                "format_version 3", "format_version 99"), encoding="utf-8")
+                "format_version 4", "format_version 99"), encoding="utf-8")
             rejected(["ir", "print", bad_ir], root / "rejected text.wir", b"unsupported IR format version")
 
             socket_input = root / "socket input.json"

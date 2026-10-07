@@ -515,8 +515,7 @@ fn invalid_arguments_modules_and_unsupported_dead_instructions_fail_before_execu
         Err(InterpreterError::Verification(_))
     ));
     for (body, operation) in [
-        ("%v8: i32 = undef i32", "undef"),
-        ("%v8: ptr<i32> = alloca i32, align 4", "alloca"),
+        ("%v8: ptr<f32> = alloca f32, align 4", "alloca"),
         ("%v8: f32 = const f32 0x00000000", "non-integer constant"),
     ] {
         let m = program(
@@ -563,7 +562,11 @@ fn published_integer_fixture_returns_values_and_explicit_overflow_trap() {
 #[test]
 fn verification_checks_other_functions_but_execution_restricts_only_the_selected_body() {
     let mut m = program(&[], "void", "%b11 \"entry\": ret void");
-    let other = program(&[], "void", "%b11 \"entry\": %v8: i32 = undef i32 ret void");
+    let other = program(
+        &[],
+        "void",
+        "%b11 \"entry\": %v8: f32 = const f32 0x00000000 ret void",
+    );
     let mut function = other.functions[0].clone();
     function.id = FunctionId(8);
     function.name = "other".into();
@@ -576,7 +579,7 @@ fn verification_checks_other_functions_but_execution_restricts_only_the_selected
     assert!(matches!(
         interpret(&m, FunctionId(8), &[]),
         Err(InterpreterError::UnsupportedInstruction {
-            operation: "undef",
+            operation: "non-integer constant",
             ..
         })
     ));

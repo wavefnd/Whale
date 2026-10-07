@@ -9,6 +9,7 @@ pub(super) struct Parser<'a> {
     at: usize,
     pub limits: IrLimits,
     nodes: usize,
+    pub(super) format_version: u32,
     locations: std::collections::HashMap<String, super::SourceLocation>,
 }
 impl<'a> Parser<'a> {
@@ -18,13 +19,16 @@ impl<'a> Parser<'a> {
             at: 0,
             limits,
             nodes: 0,
+            format_version: 0,
             locations: std::collections::HashMap::new(),
         }
     }
     pub fn verification_location(&self, e: &VerifyError) -> super::SourceLocation {
         use VerifyError::*;
         let name = match e {
-            InvalidCast { func, .. }
+            ForbiddenUndef { func, .. }
+            | InvalidMemoryLayout { func, .. }
+            | InvalidCast { func, .. }
             | Call { func, .. }
             | NonDominatingValue { func, .. }
             | InvalidPhi { func, .. }
@@ -369,9 +373,10 @@ impl<'a> Parser<'a> {
         self.expect("{")?;
         self.expect("format_version")?;
         let version: u32 = self.number()?;
-        if version != IR_FORMAT_VERSION {
+        if version != 3 && version != IR_FORMAT_VERSION {
             return Err(self.previous_error("unsupported IR format version"));
         }
+        self.format_version = version;
         self.expect("semantics_version")?;
         let semantics: u32 = self.number()?;
         if semantics != SEMANTICS_VERSION {

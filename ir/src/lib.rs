@@ -31,7 +31,7 @@ pub use float::*;
 pub use function::*;
 
 /// Independently versioned printed typed IR and shared execution semantics.
-pub const IR_FORMAT_VERSION: u32 = 3;
+pub const IR_FORMAT_VERSION: u32 = 4;
 pub const SEMANTICS_VERSION: u32 = 1;
 pub use instr::*;
 pub use interpreter::*;
