@@ -14,7 +14,7 @@ pub fn run(args: Vec<String>) {
         return;
     }
     let command = &args[0];
-    if !matches!(command.as_str(), "lower" | "verify" | "print") {
+    if !matches!(command.as_str(), "lower" | "verify" | "print" | "run") {
         fail(format!("unsupported IR command: {command}"));
     }
     #[cfg(not(feature = "socket-cli"))]
@@ -23,6 +23,9 @@ pub fn run(args: Vec<String>) {
         eprintln!("Build/run with: cargo run -p whale --features socket-cli -- ir lower ...");
         process::exit(2);
     }
+    let mut function = None;
+    let mut arguments = Vec::new();
+    let mut max_steps = None;
     let mut input = None;
     let mut output = None;
     #[cfg(feature = "socket-cli")]
@@ -32,11 +35,45 @@ pub fn run(args: Vec<String>) {
     let mut args = args.iter().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "-o" if command != "verify" => {
+            "-o" if matches!(command.as_str(), "lower" | "print") => {
                 if output.is_some() {
                     fail("duplicate -o option");
                 }
                 output = Some(args.next().unwrap_or_else(|| fail("-o requires a path")));
+            }
+            "--function" if command == "run" => {
+                if function.is_some() {
+                    fail("duplicate --function option");
+                }
+                let value = args
+                    .next()
+                    .unwrap_or_else(|| fail("--function requires @fN"));
+                function = Some(ir::FunctionId(
+                    value
+                        .strip_prefix("@f")
+                        .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or_else(|| fail("--function requires @fN with a u32 ID")),
+                ));
+            }
+            "--arg" if command == "run" => arguments.push(
+                args.next()
+                    .unwrap_or_else(|| fail("--arg requires a literal")),
+            ),
+            "--max-steps" if command == "run" => {
+                if max_steps.is_some() {
+                    fail("duplicate --max-steps option");
+                }
+                let value = args
+                    .next()
+                    .unwrap_or_else(|| fail("--max-steps requires a u64 count"));
+                max_steps = Some(
+                    value
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|_| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
+                        .unwrap_or_else(|| fail("--max-steps requires a decimal u64 count")),
+                );
             }
             #[cfg(feature = "socket-cli")]
             "--target" if command == "lower" => {
@@ -53,6 +90,9 @@ pub fn run(args: Vec<String>) {
             s if !s.starts_with('-') && input.is_none() => input = Some(arg),
             _ => fail(format!("unexpected argument: {arg}")),
         }
+    }
+    if command == "run" && function.is_none() {
+        fail("run requires --function @fN");
     }
     let input = input.unwrap_or_else(|| fail("missing input file"));
     #[cfg(feature = "socket-cli")]
@@ -102,6 +142,16 @@ pub fn run(args: Vec<String>) {
         println!("Verified IR {input}");
         return;
     }
+    if command == "run" {
+        execute(
+            &module,
+            input,
+            function.expect("required function"),
+            &arguments,
+            max_steps,
+        );
+        return;
+    }
     let text = printer::print_module(&module);
     if let Some(output) = output {
         super::output::publish(input.as_ref(), output.as_ref(), text.as_bytes())
@@ -115,10 +165,83 @@ fn print_help() {
     println!("Usage: whale ir <command> [options]");
     println!("  verify <input.wir>             Read and verify format 3 typed IR");
     println!("  print <input.wir> [-o <path>]   Verify and write canonical typed IR");
+    println!("  run <input.wir> --function @fN [--arg <literal> ...] [--max-steps <u64>]");
+    println!("    Execute scalar integer/bool and control flow; default limit 1000000 steps.");
     println!("  lower <socket.json> [-o <path>] Lower AST JSON (requires socket-cli)");
     println!("  lower options: --target x86_64-whale-linux, --no-verify");
     println!("  AST envelope: format_version: 2, semantics_version: 1, features: [], program: AST");
     println!("  Typed IR requires format_version 3 and semantics_version 1.");
     println!("  Integer literals are decimal; floats use exact-width 0x storage bits.");
     println!("  Unknown fields, versions, instructions and trailing input are rejected.");
+}
+
+fn execute(
+    module: &ir::Module,
+    input: &str,
+    function: ir::FunctionId,
+    literals: &[&String],
+    max_steps: Option<u64>,
+) {
+    let fun = module
+        .functions
+        .iter()
+        .find(|f| f.id == function)
+        .unwrap_or_else(|| fail(format!("{input}: no body for @f{}", function.0)));
+    if fun.params.len() != literals.len() {
+        fail(format!(
+            "{input}: expected {} arguments, got {}",
+            fun.params.len(),
+            literals.len()
+        ));
+    }
+    let arguments: Vec<_> = fun.params.iter().zip(literals).enumerate().map(|(index, (param, literal))| {
+        scalar_argument(&param.ty, literal).unwrap_or_else(|| {
+            fail(format!("{input}: argument {index} must be an exact decimal {} literal (bool uses true/false)", param.ty))
+        })
+    }).collect();
+    let mut options = ir::InterpreterOptions::default();
+    if let Some(limit) = max_steps {
+        options.max_steps = limit;
+    }
+    let result = ir::interpret_with_options(module, function, &arguments, options)
+        .unwrap_or_else(|e| fail(format!("{input}: {e}")));
+    match result.value {
+        Some(ir::ConstValue::I(v)) => println!("{} {v}", fun.ret_ty),
+        Some(ir::ConstValue::U(v)) => println!("{} {v}", fun.ret_ty),
+        Some(ir::ConstValue::Bool(v)) => println!("bool {v}"),
+        None => println!("void"),
+        Some(ir::ConstValue::F(_)) => unreachable!("interpreter scalar subset"),
+    }
+}
+
+fn scalar_argument(ty: &ir::Type, literal: &str) -> Option<ir::ConstValue> {
+    let decimal = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    match ty {
+        ir::Type::Bool => match literal {
+            "true" => Some(ir::ConstValue::Bool(true)),
+            "false" => Some(ir::ConstValue::Bool(false)),
+            _ => None,
+        },
+        ir::Type::I1
+        | ir::Type::I8
+        | ir::Type::I16
+        | ir::Type::I32
+        | ir::Type::I64
+        | ir::Type::I128
+            if decimal(literal.strip_prefix('-').unwrap_or(literal)) =>
+        {
+            literal.parse().ok().map(ir::ConstValue::I)
+        }
+        ir::Type::U1
+        | ir::Type::U8
+        | ir::Type::U16
+        | ir::Type::U32
+        | ir::Type::U64
+        | ir::Type::U128
+            if decimal(literal) =>
+        {
+            literal.parse().ok().map(ir::ConstValue::U)
+        }
+        _ => None,
+    }
 }

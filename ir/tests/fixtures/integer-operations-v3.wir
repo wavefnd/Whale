@@ -1,0 +1,57 @@
+module {
+  format_version 3
+  semantics_version 1
+  target "x86_64-whale-linux"
+  datalayout { ptr=64, endian=little }
+
+  declare @f0 "add_u8": whale () -> u8, linkage internal
+  declare @f1 "require_no_overflow": whale () -> u8, linkage internal
+
+  declare @f2 "minimum_division": whale () -> i8, linkage internal
+  declare @f3 "minimum_remainder": whale () -> i8, linkage internal
+  declare @f4 "negative_shift": whale () -> i8, linkage internal
+
+  fn @f0 "add_u8"() -> u8, entry %b0 {
+  %b0 "entry":
+    %v0: u8 = const u8 255
+    %v1: u8 = const u8 1
+    %v2: u8 = add u8 %v0, %v1
+    ret u8 %v2
+  }
+
+  fn @f1 "require_no_overflow"() -> u8, entry %b1 {
+  %b1 "entry":
+    %v3: u8 = const u8 255
+    %v4: u8 = const u8 1
+    %v5: tuple<u8, bool> = uadd_chk u8 %v3, %v4
+    %v6: u8 = extract %v5, 0
+    %v7: bool = extract %v5, 1
+    trap_if bool %v7, reason="integer overflow"
+    ret u8 %v6
+  }
+
+  fn @f2 "minimum_division"() -> i8, entry %b0 {
+  %b0 "entry":
+    %v0: i8 = const i8 -128
+    %v1: i8 = const i8 -1
+    %v2: i8 = sdiv i8 %v0, %v1
+    ret i8 %v2
+  }
+
+  fn @f3 "minimum_remainder"() -> i8, entry %b0 {
+  %b0 "entry":
+    %v0: i8 = const i8 -128
+    %v1: i8 = const i8 -1
+    %v2: i8 = srem i8 %v0, %v1
+    ret i8 %v2
+  }
+
+  fn @f4 "negative_shift"() -> i8, entry %b0 {
+  %b0 "entry":
+    %v0: i8 = const i8 -1
+    %v1: i8 = const i8 -1
+    %v2: i8 = shl i8 %v0, %v1
+    ret i8 %v2
+  }
+
+}

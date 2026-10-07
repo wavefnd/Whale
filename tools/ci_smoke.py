@@ -124,6 +124,16 @@ def smoke(binary, socket, artifacts, emulator=None, sysroot=None):
                 encoding="utf-8", newline="\n",
             )
             invoke(["ir", "verify", typed_ir])
+            if invoke(["ir", "run", typed_ir, "--function", "@f7"]).stdout != b"i32 42\n":
+                raise AssertionError("integer IR interpreter returned the wrong value")
+            invoke(["ir", "run", typed_ir, "--function", "@f7", "--max-steps", "0"],
+                   success=False, diagnostic=b"step limit 0")
+            trap_ir = root / "trap input.wir"
+            trap_ir.write_text(typed_ir.read_text(encoding="utf-8").replace(
+                "ret i32 %v42", "%v43: i32 = const i32 0\n    %v44: i32 = sdiv i32 %v42, %v43\n    ret i32 %v44"),
+                encoding="utf-8", newline="\n")
+            invoke(["ir", "run", trap_ir, "--function", "@f7"],
+                   success=False, diagnostic=b"division by zero")
             printed = invoke(["ir", "print", typed_ir]).stdout
             if printed != typed_ir.read_bytes():
                 raise AssertionError("typed IR round trip changed explicit identities")

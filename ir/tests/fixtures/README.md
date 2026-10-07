@@ -27,3 +27,21 @@ cargo run -- --whale build /path/to/wave-casts.wave --emit=ir
 
 AST JSON remains format 2, independently of typed text IR format 3. Readers reject
 unsupported versions; fixtures are migrated explicitly when the format changes.
+
+## Scalar integer execution oracle
+
+`integer-operations-v3.wir` is a complete, executable conformance module:
+`@f0` returns `u8 0`, `@f1` explicitly traps on the checked overflow flag,
+`@f2` returns `i8 -128` for MIN / -1, `@f3` returns `i8 0` for MIN % -1,
+and `@f4` returns `i8 -128` for a shift count with signed value -1.
+`interpreter-loop-v3.wir` uses reordered blocks, sparse IDs and simultaneously
+updated loop-carried phis; `@f7` with `u32 3` returns `i32 22` in 32 steps.
+
+The interpreter regression suite supplies independent expected boundary values
+for all twelve integer types (signed/unsigned widths 1, 8, 16, 32, 64, 128).
+It checks wrapping add/sub/mul against both the runtime and the separate
+ConstExpr evaluator. ConstExpr currently exposes only add/sub/mul and
+comparisons; division/remainder/shifts remain runtime instructions, with
+explicit edge vectors ready for any future constant-evaluation extension.
+The preserved Wave fixtures use memory and are parser/verifier fixtures;
+they deliberately report unsupported execution rather than simulate storage.

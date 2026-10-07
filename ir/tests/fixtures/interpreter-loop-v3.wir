@@ -1,0 +1,29 @@
+module {
+  format_version 3
+  semantics_version 1
+  target "x86_64-whale-linux"
+  datalayout { ptr=64, endian=little }
+
+  declare @f7 "swap_loop": whale (u32) -> i32, linkage internal
+
+  fn @f7 "swap_loop"(%v0 "iterations": u32) -> i32, entry %b11 {
+  %b90 "exit":
+    ret i32 %v5
+  %b11 "entry":
+    %v1: i32 = const i32 11
+    %v2: i32 = const i32 22
+    %v3: u32 = const u32 0
+    %v4: u32 = const u32 1
+    br label %b20
+  %b20 "loop":
+    %v5: i32 = phi i32 [ %v1, %b11 ], [ %v6, %b30 ]
+    %v6: i32 = phi i32 [ %v2, %b11 ], [ %v5, %b30 ]
+    %v7: u32 = phi u32 [ %v3, %b11 ], [ %v9, %b30 ]
+    %v8: bool = icmp ult u32 %v7, %v0
+    cbr bool %v8, label %b30, label %b90
+  %b30 "next":
+    %v9: u32 = add u32 %v7, %v4
+    br label %b20
+  }
+
+}
