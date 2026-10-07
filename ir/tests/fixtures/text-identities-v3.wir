@@ -1,0 +1,44 @@
+module {
+  format_version 3
+  semantics_version 1
+  target "x86_64-whale-linux"
+  datalayout { ptr=64, endian=little }
+
+  global @g7 "flow": i32 = const i32 3, align 4, init_expr i32 3
+
+  declare @f21 "flow": whale (i32, bool) -> i32, linkage internal
+  declare @f22 "other": whale (i32, bool) -> i32, linkage internal
+
+  fn @f21 "flow"(%v40 "x": i32, %v41 "c": bool) -> i32, entry %b10 {
+  %b40 "repeat":
+    %v42: i32 = phi i32 [ %v40, %b20 ], [ %v40, %b30 ]
+    switch i32 %v42, label %b60 [ 0: %b50 ]
+  %b50 "repeat":
+    trap reason="zero"
+  %b60 "repeat":
+    ret i32 %v42
+  %b30 "repeat":
+    br label %b40
+  %b20 "repeat":
+    br label %b40
+  %b10 "repeat":
+    cbr bool %v41, label %b20, label %b30
+  }
+
+  fn @f22 "other"(%v40 "x": i32, %v41 "c": bool) -> i32, entry %b10 {
+  %b40 "repeat":
+    %v42: i32 = phi i32 [ %v40, %b20 ], [ %v40, %b30 ]
+    switch i32 %v42, label %b60 [ 0: %b50 ]
+  %b50 "repeat":
+    trap reason="zero"
+  %b60 "repeat":
+    ret i32 %v42
+  %b30 "repeat":
+    br label %b40
+  %b20 "repeat":
+    br label %b40
+  %b10 "repeat":
+    cbr bool %v41, label %b20, label %b30
+  }
+
+}

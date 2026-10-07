@@ -13,7 +13,7 @@ pub fn print_module(m: &Module) -> String {
         crate::IR_FORMAT_VERSION,
         crate::SEMANTICS_VERSION
     ));
-    out.push_str(&format!("  target \"{}\"\n", m.target));
+    out.push_str(&format!("  target \"{}\"\n", escape(&m.target)));
     out.push_str("  datalayout { ");
     out.push_str(&format!(
         "ptr={}, endian={}",
@@ -27,13 +27,13 @@ pub fn print_module(m: &Module) -> String {
 
     for g in &m.globals {
         out.push_str(&format!(
-            "  global @{}: {} = const {} {}, align {}, id @g{}, init_expr {}\n",
-            g.name,
+            "  global @g{} \"{}\": {} = const {} {}, align {}, init_expr {}\n",
+            g.id.0,
+            escape(&g.name),
             g.ty,
             g.ty,
             fmt_const(&g.init),
             g.align,
-            g.id.0,
             print_const_expr(&g.init_expr)
         ));
     }
@@ -43,9 +43,9 @@ pub fn print_module(m: &Module) -> String {
 
     for d in &m.declarations {
         out.push_str(&format!(
-            "  declare @f{} {:?}: {}, linkage {}",
+            "  declare @f{} \"{}\": {}, linkage {}",
             d.id.0,
-            d.name,
+            escape(&d.name),
             d.signature,
             match d.linkage {
                 crate::Linkage::Internal => "internal",
@@ -53,7 +53,7 @@ pub fn print_module(m: &Module) -> String {
             }
         ));
         if let Some(link) = &d.link_name {
-            out.push_str(&format!(", link_name {link:?}"));
+            out.push_str(&format!(", link_name \"{}\"", escape(link)));
         }
         out.push('\n');
     }
@@ -71,14 +71,14 @@ pub fn print_module(m: &Module) -> String {
 
 fn print_function(f: &Function) -> String {
     let mut out = String::new();
-    out.push_str(&format!("  fn @{}(", f.name));
+    out.push_str(&format!("  fn @f{} \"{}\"(", f.id.0, escape(&f.name)));
     for (i, p) in f.params.iter().enumerate() {
         if i != 0 {
             out.push_str(", ");
         }
-        out.push_str(&format!("{}: {}", p.name, p.ty));
+        out.push_str(&format!("{} \"{}\": {}", p.id, escape(&p.name), p.ty));
     }
-    out.push_str(&format!(") -> {}, id @f{} {{\n", f.ret_ty, f.id.0));
+    out.push_str(&format!(") -> {}, entry {} {{\n", f.ret_ty, f.entry));
 
     for b in &f.blocks {
         out.push_str(&print_block(b));
@@ -90,7 +90,7 @@ fn print_function(f: &Function) -> String {
 
 fn print_block(b: &BasicBlock) -> String {
     let mut out = String::new();
-    out.push_str(&format!("  {}:\n", b.name));
+    out.push_str(&format!("  {} \"{}\":\n", b.id, escape(&b.name)));
 
     for ins in &b.instructions {
         out.push_str("    ");
@@ -186,7 +186,7 @@ fn print_instr(i: &Instruction) -> String {
                 if i != 0 {
                     s.push_str(", ");
                 }
-                s.push_str(&format!("[ {v}, {} ]", bb.0));
+                s.push_str(&format!("[ {v}, {bb} ]"));
             }
             s
         }
@@ -322,24 +322,24 @@ pub fn print_const_expr(expr: &crate::ConstExpr) -> String {
 fn print_term(t: &Terminator) -> String {
     use Terminator::*;
     match t {
-        Br { target } => format!("br label {}", target.0),
+        Br { target } => format!("br label {target}"),
         CBr {
             cond,
             then_bb,
             else_bb,
-        } => format!("cbr bool {cond}, label {}, label {}", then_bb.0, else_bb.0),
+        } => format!("cbr bool {cond}, label {then_bb}, label {else_bb}"),
         Switch {
             ty,
             value,
             default_bb,
             cases,
         } => {
-            let mut s = format!("switch {ty} {value}, label {} [", default_bb.0);
+            let mut s = format!("switch {ty} {value}, label {default_bb} [");
             for (i, (c, bb)) in cases.iter().enumerate() {
                 if i != 0 {
                     s.push(',');
                 }
-                s.push_str(&format!(" {}: {}", fmt_const(c), bb.0));
+                s.push_str(&format!(" {}: {bb}", fmt_const(c)));
             }
             s.push_str(" ]");
             s
@@ -469,8 +469,26 @@ fn fmt_const(c: &ConstValue) -> String {
     }
 }
 
+// String fields use one syntax, independent of Rust's Debug formatting.
+// Printable Unicode is preserved; control and line-separator characters are escaped.
 fn escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::new();
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            ch if ch.is_control() || matches!(ch, '\u{2028}' | '\u{2029}') => {
+                use std::fmt::Write;
+                write!(&mut out, "\\u{{{:x}}}", ch as u32).expect("writing to a String");
+            }
+            ch => out.push(ch),
+        }
+    }
+    out
 }
 
 fn fmt_cmpop(op: &CmpOp) -> &'static str {

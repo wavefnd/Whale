@@ -23,6 +23,56 @@ fn is_float(ty: &Type) -> bool {
     matches!(ty, Type::F16 | Type::F32 | Type::F64)
 }
 
+fn integer_width(ty: &Type) -> Option<u32> {
+    match ty {
+        Type::I1 | Type::U1 => Some(1),
+        Type::I8 | Type::U8 => Some(8),
+        Type::I16 | Type::U16 => Some(16),
+        Type::I32 | Type::U32 => Some(32),
+        Type::I64 | Type::U64 => Some(64),
+        Type::I128 | Type::U128 => Some(128),
+        _ => None,
+    }
+}
+
+fn float_width(ty: &Type) -> Option<u32> {
+    match ty {
+        Type::F16 => Some(16),
+        Type::F32 => Some(32),
+        Type::F64 => Some(64),
+        _ => None,
+    }
+}
+
+fn valid_cast(op: &crate::CastOp, source: &Type, destination: &Type) -> bool {
+    use crate::CastOp::*;
+    let integer_pair = integer_width(source).zip(integer_width(destination));
+    let float_pair = float_width(source).zip(float_width(destination));
+    match op {
+        // Bool has a numerical 0/1 conversion, not signed i1's sign bit.
+        ZExt if *source == Type::Bool => is_integer(destination) && *destination != Type::I1,
+        ZExt | SExt => integer_pair.is_some_and(|(s, d)| s < d),
+        Trunc => integer_pair.is_some_and(|(s, d)| s > d),
+        FExt => float_pair.is_some_and(|(s, d)| s < d),
+        FTrunc => float_pair.is_some_and(|(s, d)| s > d),
+        IToF_S => is_signed(source) && is_float(destination),
+        IToF_U => is_unsigned(source) && is_float(destination),
+        FToI_S => is_float(source) && is_signed(destination),
+        FToI_U => is_float(source) && is_unsigned(destination),
+        Bitcast => {
+            integer_width(source)
+                .or_else(|| float_width(source))
+                .zip(integer_width(destination).or_else(|| float_width(destination)))
+                .is_some_and(|(s, d)| s == d)
+                || matches!((source, destination), (Type::Ptr(_), Type::Ptr(_)))
+        }
+        // These are type checks only. Runtime address validity and metadata
+        // cannot be established by an integer/pointer cast (see memory rules).
+        PtrToInt => matches!(source, Type::Ptr(_)) && is_integer(destination),
+        IntToPtr => is_integer(source) && matches!(destination, Type::Ptr(_)),
+    }
+}
+
 fn supports_equality(ty: &Type) -> bool {
     is_integer(ty) || matches!(ty, Type::Bool | Type::Ptr(_))
 }
@@ -193,6 +243,39 @@ fn verify_gep(
 
 pub(super) fn verify_instruction(f: &Function, ins: &Instruction) -> Result<(), VerifyError> {
     match ins {
+        Instruction::Cast {
+            dst,
+            op,
+            src_ty,
+            src,
+            dst_ty,
+        } => {
+            verify_operand(f, *src, src_ty)?;
+            if !valid_cast(op, src_ty, dst_ty) {
+                return Err(VerifyError::InvalidCast {
+                    func: f.name.clone(),
+                    value: *dst,
+                    op: op.clone(),
+                    source: src_ty.clone(),
+                    destination: dst_ty.clone(),
+                });
+            }
+        }
+        Instruction::Checked {
+            op, ty, lhs, rhs, ..
+        } => {
+            let valid = match op {
+                crate::CheckedOp::SAdd | crate::CheckedOp::SSub | crate::CheckedOp::SMul => {
+                    is_signed(ty)
+                }
+                crate::CheckedOp::UAdd | crate::CheckedOp::USub | crate::CheckedOp::UMul => {
+                    is_unsigned(ty)
+                }
+            };
+            verify_type_category(f, "checked arithmetic", ty, valid)?;
+            verify_operand(f, *lhs, ty)?;
+            verify_operand(f, *rhs, ty)?;
+        }
         Instruction::Bin {
             op, ty, lhs, rhs, ..
         } => {

@@ -11,6 +11,13 @@ mod operands;
 
 #[derive(Debug)]
 pub enum VerifyError {
+    InvalidCast {
+        func: String,
+        value: ValueId,
+        op: crate::CastOp,
+        source: Type,
+        destination: Type,
+    },
     Call {
         func: String,
         reason: crate::CallError,
@@ -388,8 +395,8 @@ pub fn verify_module(m: &Module) -> Result<(), VerifyError> {
         // misreported as a consumer's operand mismatch.
         for block in &f.blocks {
             for instruction in &block.instructions {
-                operands::verify_instruction(f, instruction)?;
                 calls::verify_instruction(m, f, instruction)?;
+                operands::verify_instruction(f, instruction)?;
             }
         }
     }

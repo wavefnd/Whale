@@ -29,7 +29,7 @@ pub use float::*;
 pub use function::*;
 
 /// Independently versioned printed typed IR and shared execution semantics.
-pub const IR_FORMAT_VERSION: u32 = 2;
+pub const IR_FORMAT_VERSION: u32 = 3;
 pub const SEMANTICS_VERSION: u32 = 1;
 pub use instr::*;
 pub use layout::*;
@@ -66,7 +66,7 @@ mod core_tests {
         verifier::verify_module(&module).unwrap();
 
         let s = printer::print_module(&module);
-        assert!(s.contains("fn @add_i32"));
+        assert!(s.contains("fn @f0 \"add_i32\""));
     }
 }
 
@@ -114,8 +114,8 @@ mod tests {
         crate::verifier::verify_module(&module).unwrap();
 
         let txt = crate::printer::print_module(&module);
-        assert!(txt.contains("global @A: i32 = const i32 123, align 4"));
-        assert!(txt.contains("fn @main"));
+        assert!(txt.contains("global @g0 \"A\": i32 = const i32 123, align 4"));
+        assert!(txt.contains("fn @f0 \"main\""));
         assert!(txt.contains("ret i32"));
     }
 
@@ -168,7 +168,7 @@ mod tests {
         verifier::verify_module(&module).unwrap();
 
         let s = printer::print_module(&module);
-        assert!(s.contains("fn @add"));
+        assert!(s.contains("fn @f0 \"add\""));
         assert!(s.contains("add i32"));
         assert!(s.contains("ret i32"));
     }
@@ -240,7 +240,7 @@ mod tests {
         verifier::verify_module(&module).unwrap();
 
         let s = printer::print_module(&module);
-        assert!(s.contains("fn @max"));
+        assert!(s.contains("fn @f0 \"max\""));
         assert!(s.contains("cmp sgt i32"));
         assert!(s.contains("cbr bool"));
         assert!(s.contains("ret i32"));
@@ -324,9 +324,9 @@ mod tests {
         verifier::verify_module(&module).unwrap();
 
         let txt = printer::print_module(&module);
-        assert!(txt.contains("while.cond:"));
-        assert!(txt.contains("while.body:"));
-        assert!(txt.contains("while.exit:"));
+        assert!(txt.contains("\"while.cond\":"));
+        assert!(txt.contains("\"while.body\":"));
+        assert!(txt.contains("\"while.exit\":"));
         assert!(txt.contains("cbr bool"));
         assert!(txt.contains("ret i32"));
     }
