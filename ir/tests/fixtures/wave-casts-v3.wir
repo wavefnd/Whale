@@ -1,0 +1,29 @@
+module {
+  format_version 3
+  semantics_version 1
+  target "x86_64-whale-linux"
+  datalayout { ptr=64, endian=little }
+
+  declare @f0 "main": whale () -> void, linkage internal
+
+  fn @f0 "main"() -> void, entry %b0 {
+  %b0 "entry":
+    %v0: i8 = const i8 7
+    %v1: ptr<i8> = alloca i8, align 1
+    store i8 %v0, ptr<i8> %v1, align 1
+    %v2: i8 = load i8, ptr<i8> %v1, align 1
+    %v3: i32 = sext i8 %v2 to i32
+    %v4: ptr<i32> = alloca i32, align 1
+    store i32 %v3, ptr<i32> %v4, align 1
+    %v5: i32 = load i32, ptr<i32> %v4, align 1
+    %v6: f64 = itof_s i32 %v5 to f64
+    %v7: ptr<f64> = alloca f64, align 1
+    store f64 %v6, ptr<f64> %v7, align 1
+    %v8: f64 = load f64, ptr<f64> %v7, align 1
+    %v9: f32 = ftrunc f64 %v8 to f32
+    %v10: ptr<f32> = alloca f32, align 1
+    store f32 %v9, ptr<f32> %v10, align 1
+    ret void
+  }
+
+}

@@ -11,6 +11,7 @@ mod operands;
 
 #[derive(Debug)]
 pub enum VerifyError {
+    ResourceLimit(crate::LimitError),
     InvalidCast {
         func: String,
         value: ValueId,
@@ -156,6 +157,11 @@ pub enum VerifyError {
 }
 
 pub fn verify_module(m: &Module) -> Result<(), VerifyError> {
+    verify_module_with_limits(m, crate::IrLimits::default())
+}
+
+pub fn verify_module_with_limits(m: &Module, limits: crate::IrLimits) -> Result<(), VerifyError> {
+    crate::limits::check_module(m, limits).map_err(VerifyError::ResourceLimit)?;
     let target = crate::Target::lookup(&m.target).map_err(VerifyError::Target)?;
     target
         .validate_layout(m.datalayout)
@@ -181,7 +187,7 @@ pub fn verify_module(m: &Module) -> Result<(), VerifyError> {
             });
         }
     }
-    let constant_globals = constants::verify_globals(m)?;
+    let constant_globals = constants::verify_globals(m, limits)?;
     let mut functions = HashSet::new();
     for f in &m.functions {
         if !functions.insert(&f.name) {
@@ -190,7 +196,7 @@ pub fn verify_module(m: &Module) -> Result<(), VerifyError> {
             });
         }
     }
-    calls::verify_declarations(m)?;
+    calls::verify_declarations(m, limits)?;
     for f in &m.functions {
         let mut blocks = HashSet::new();
         for block in &f.blocks {
@@ -388,14 +394,14 @@ pub fn verify_module(m: &Module) -> Result<(), VerifyError> {
             }
         }
         verify_value_types(f)?;
-        constants::verify_locals(f, &constant_globals)?;
+        constants::verify_locals(f, &constant_globals, limits)?;
         cfg::verify(f)?;
         // Operand checks consume the type table only after its definition/type
         // correspondence has been validated, so metadata corruption is not
         // misreported as a consumer's operand mismatch.
         for block in &f.blocks {
             for instruction in &block.instructions {
-                calls::verify_instruction(m, f, instruction)?;
+                calls::verify_instruction(m, f, instruction, limits)?;
                 operands::verify_instruction(f, instruction)?;
             }
         }

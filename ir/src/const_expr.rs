@@ -52,6 +52,7 @@ pub enum ConstExprKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConstEvalError {
+    ResourceLimit(crate::LimitError),
     InvalidLiteral,
     TypeMismatch,
     UnsupportedOperation,
@@ -90,43 +91,72 @@ impl ConstExpr {
         &self,
         resolve: &impl Fn(ConstRef) -> Option<(Type, ConstValue)>,
     ) -> Result<ConstValue, ConstEvalError> {
-        let value = match &self.kind {
-            ConstExprKind::Literal(value) => value.clone(),
-            ConstExprKind::Reference(reference) => {
-                let (ty, value) =
-                    resolve(*reference).ok_or(ConstEvalError::UnknownReference(*reference))?;
-                if ty != self.ty {
-                    return Err(ConstEvalError::TypeMismatch);
+        self.evaluate_with_limits(resolve, crate::IrLimits::default())
+    }
+
+    pub fn evaluate_with_limits(
+        &self,
+        resolve: &impl Fn(ConstRef) -> Option<(Type, ConstValue)>,
+        limits: crate::IrLimits,
+    ) -> Result<ConstValue, ConstEvalError> {
+        let mut budget =
+            crate::limits::Budget::new(limits).map_err(ConstEvalError::ResourceLimit)?;
+        budget
+            .expression(self)
+            .map_err(ConstEvalError::ResourceLimit)?;
+        // Explicit postorder evaluation preserves left-to-right evaluation and
+        // does not recurse on the caller's expression tree.
+        let mut pending = vec![(self, false)];
+        let mut values = Vec::new();
+        while let Some((expr, finish)) = pending.pop() {
+            let value = match &expr.kind {
+                ConstExprKind::Literal(value) => value.clone(),
+                ConstExprKind::Reference(reference) => {
+                    let (ty, value) =
+                        resolve(*reference).ok_or(ConstEvalError::UnknownReference(*reference))?;
+                    if let Err(error) = budget.ty(&ty) {
+                        crate::limits::discard_type(ty);
+                        return Err(ConstEvalError::ResourceLimit(error));
+                    }
+                    if ty != expr.ty {
+                        return Err(ConstEvalError::TypeMismatch);
+                    }
+                    value
                 }
-                value
-            }
-            ConstExprKind::Binary { op, left, right } => {
-                if left.ty != right.ty || self.ty != left.ty {
-                    return Err(ConstEvalError::TypeMismatch);
+                ConstExprKind::Binary { left, right, .. }
+                | ConstExprKind::Compare { left, right, .. }
+                    if !finish =>
+                {
+                    if left.ty != right.ty
+                        || match expr.kind {
+                            ConstExprKind::Compare { .. } => expr.ty != Type::Bool,
+                            _ => expr.ty != left.ty,
+                        }
+                    {
+                        return Err(ConstEvalError::TypeMismatch);
+                    }
+                    pending.push((expr, true));
+                    pending.push((right, false));
+                    pending.push((left, false));
+                    continue;
                 }
-                const_bin(
-                    *op,
-                    &left.ty,
-                    &left.evaluate(resolve)?,
-                    &right.evaluate(resolve)?,
-                )?
-            }
-            ConstExprKind::Compare { op, left, right } => {
-                if left.ty != right.ty || self.ty != Type::Bool {
-                    return Err(ConstEvalError::TypeMismatch);
+                ConstExprKind::Binary { op, left, .. } => {
+                    let right = values.pop().expect("postorder right operand");
+                    let left_value = values.pop().expect("postorder left operand");
+                    const_bin(*op, &left.ty, &left_value, &right)?
                 }
-                ConstValue::Bool(const_cmp(
-                    *op,
-                    &left.ty,
-                    &left.evaluate(resolve)?,
-                    &right.evaluate(resolve)?,
-                )?)
+                ConstExprKind::Compare { op, left, .. } => {
+                    let right = values.pop().expect("postorder right operand");
+                    let left_value = values.pop().expect("postorder left operand");
+                    ConstValue::Bool(const_cmp(*op, &left.ty, &left_value, &right)?)
+                }
+            };
+            if !crate::constant::valid_constant(&expr.ty, &value) {
+                return Err(ConstEvalError::InvalidLiteral);
             }
-        };
-        if !crate::constant::valid_constant(&self.ty, &value) {
-            return Err(ConstEvalError::InvalidLiteral);
+            values.push(value);
         }
-        Ok(value)
+        Ok(values.pop().expect("root expression result"))
     }
 }
 

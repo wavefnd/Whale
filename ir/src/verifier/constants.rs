@@ -16,6 +16,7 @@ fn evaluate(
     scope: &str,
     definitions: Vec<Definition<'_>>,
     mut values: Values,
+    limits: crate::IrLimits,
 ) -> Result<Values, VerifyError> {
     let error = |declaration, reason| VerifyError::InvalidConstExpression {
         scope: scope.into(),
@@ -58,7 +59,7 @@ fn evaluate(
         let definition = &definitions[i];
         let result = definition
             .expression
-            .evaluate(&|reference| values.get(&reference).cloned())
+            .evaluate_with_limits(&|reference| values.get(&reference).cloned(), limits)
             .map_err(|reason| error(definition.id, reason))?;
         if !crate::const_expr::same_value(&result, definition.result) {
             return Err(error(definition.id, ConstEvalError::ResultMismatch));
@@ -78,7 +79,7 @@ fn evaluate(
     Ok(values)
 }
 
-pub(super) fn verify_globals(m: &Module) -> Result<Values, VerifyError> {
+pub(super) fn verify_globals(m: &Module, limits: crate::IrLimits) -> Result<Values, VerifyError> {
     evaluate(
         "module",
         m.globals
@@ -91,10 +92,15 @@ pub(super) fn verify_globals(m: &Module) -> Result<Values, VerifyError> {
             })
             .collect(),
         Values::new(),
+        limits,
     )
 }
 
-pub(super) fn verify_locals(f: &Function, globals: &Values) -> Result<(), VerifyError> {
+pub(super) fn verify_locals(
+    f: &Function,
+    globals: &Values,
+    limits: crate::IrLimits,
+) -> Result<(), VerifyError> {
     let mut values = globals.clone();
     let mut definitions = Vec::new();
     for ins in f.blocks.iter().flat_map(|b| &b.instructions) {
@@ -116,5 +122,5 @@ pub(super) fn verify_locals(f: &Function, globals: &Values) -> Result<(), Verify
             _ => {}
         }
     }
-    evaluate(&f.name, definitions, values).map(|_| ())
+    evaluate(&f.name, definitions, values, limits).map(|_| ())
 }

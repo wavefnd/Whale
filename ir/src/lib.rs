@@ -8,6 +8,7 @@ pub mod float;
 pub mod function;
 pub mod instr;
 pub mod layout;
+pub mod limits;
 pub mod module;
 pub mod printer;
 pub mod types;
@@ -33,6 +34,7 @@ pub const IR_FORMAT_VERSION: u32 = 3;
 pub const SEMANTICS_VERSION: u32 = 1;
 pub use instr::*;
 pub use layout::*;
+pub use limits::*;
 pub use module::*;
 pub use printer::*;
 pub use types::*;
@@ -402,3 +404,8 @@ mod tests {
         assert!(s.contains("br label"));
     }
 }
+
+mod parser;
+pub use parser::{
+    parse_module, parse_module_with_limits, ParseError, ParseErrorKind, SourceLocation,
+};
