@@ -54,7 +54,8 @@ change an unrelated remote silently. Start new work from the latest upstream
 | [.github/](.github/) | Contribution templates and CI configuration |
 
 [README.md](README.md) distinguishes implemented and experimental capabilities.
-The `socket-cli` feature enables the experimental IR CLI; `--all-features` also
+The default build provides typed IR `verify` and `print`. The `socket-cli` feature
+enables AST JSON `lower`; `--all-features` also
 exercises the socket lowering tests. A host on which Whale runs is not
 necessarily an architecture for which it can generate machine code.
 

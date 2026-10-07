@@ -36,7 +36,7 @@ native compilation pipeline are still being developed.
 | Component | Available today | Status |
 | --- | --- | --- |
 | Assembler | AMD64 assembly, sections, symbols, and relocations emitted as ELF64 object files | Available |
-| IR | Typed IR construction, printing, verification, and scalar AST JSON lowering | Experimental |
+| IR | Typed IR construction, text parsing/printing, bounded verification, and scalar AST JSON lowering | Experimental |
 | Object library | Object model and ELF64 relocatable object serialization | Available |
 | Object CLI | Wrap raw input bytes in an ELF64 object with a `.text` section | Limited |
 | Linker | Initial library infrastructure; `whale link` remains a placeholder | In development |
@@ -173,14 +173,14 @@ array to `program`, and adding `convention` and `linkage` to every definition.
 Internal functions use `"Whale"` and `"Internal"`; external functions must supply
 a nonempty `link_name`. Missing versions and format 1 inputs are rejected.
 Integers and floats retain their exact string encoding. AST and printed typed IR have independent format versions and a shared
-semantics version; printed IR includes both version fields. Text parsing is still
-unavailable.
+semantics version; printed IR includes both version fields. Typed text IR format 3
+can be read and verified with `ir::parse_module`.
 
 The AST supports scalar literals, variables/constants, add/sub/mul, comparisons,
 assignment, return, if/while, break/continue, function declarations, direct calls,
 and typed function pointers with indirect calls. Aggregate expressions, variadic
 signatures, and SysV64 aggregate signatures are not supported. Unsupported forms fail explicitly.
-If the binary lacks `socket-cli`, `whale ir` exits with status 2 and prints the
+If the binary lacks `socket-cli`, `whale ir lower` exits with status 2 and prints the
 feature-enabled recovery command shown above.
 
 For a complete invalid input, save the following as `invalid.json`:
@@ -218,7 +218,47 @@ for repeated block names and IDs scoped to different functions.
 The verifier checks cast operands, opcode categories and width direction, and
 checks signed/unsigned checked arithmetic with a `tuple<T, bool>` result.
 Tuple extraction requires an existing field and its exact type. These checks do
-not implement runtime conversion traps, pointer metadata or a text IR parser.
+not implement runtime conversion traps or pointer metadata.
+
+### Reading and verifying typed text IR
+
+These commands are available in the default build:
+
+```sh
+cargo run --locked -- ir verify ir/tests/fixtures/calls-v3.wir
+cargo run --locked -- ir print ir/tests/fixtures/calls-v3.wir -o canonical.wir
+```
+
+`ir::parse_module` reads **and verifies** format 3 text. Print-parse-print
+preserves explicit scoped IDs, quoted names, entry and block order, types,
+exact integer/float payloads, constant-expression trees, alignment, signatures
+and external link names. Whitespace and `//` comments are canonicalized. It
+accepts all current printer instruction forms, including legacy `undef`; runtime
+initialization tracking remains separate work. Unknown versions, fields,
+opcodes, escapes, trailing input and inconsistent type annotations are errors.
+Diagnostics include a byte offset and one-based Unicode-scalar line/column;
+semantic errors are attached to the containing function/global when available.
+
+`IrLimits` configures input bytes, tokens, traversal nodes, type depth and
+constant-expression depth. Defaults are 8 MiB, 1,000,000 tokens/nodes, and depth
+128 (root depth 0). Nesting can be raised up to `MAX_IR_NESTING` (256), or lowered.
+Use `parse_module_with_limits`, `verify_module_with_limits`,
+`ConstExpr::evaluate_with_limits`, `validate_signature_with_limits` or
+`ModuleBuilder::declare_function_with_limits` at the appropriate boundary.
+Iterative preflight precedes recursive type helpers; constant evaluation uses
+an explicit work stack. Limit failures return structured errors. Budgets bound
+traversal, not elapsed time or allocations outside these APIs. Borrowed Rust
+inputs remain caller-owned; arbitrary unverified trees still have Rust's usual
+recursive clone/drop behavior. Checked declaration rejects and disposes its
+owned oversized signature iteratively.
+
+[Wave control flow](ir/tests/fixtures/wave-control.wave) and
+[casts](ir/tests/fixtures/wave-casts.wave) have retained format 3 outputs from
+Wave's current typed HIR adapter, tested for exact print-parse-print equality.
+Text parsing does not provide IR execution or native code generation. Format 2
+printed text requires explicit migration; it is not silently accepted. New
+syntax or semantics requires an appropriate version change, with unknown
+versions rejected.
 
 ### Typed function calls
 

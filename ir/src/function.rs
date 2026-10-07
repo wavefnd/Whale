@@ -96,6 +96,7 @@ pub struct FunctionDecl {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallError {
+    ResourceLimit(crate::LimitError),
     UnknownFunction(crate::FunctionId),
     UnknownFunctionName(String),
     ConflictingDeclaration(String),
@@ -127,42 +128,60 @@ pub enum CallError {
 }
 
 pub(crate) fn validate_signature(sig: &FunctionSignature) -> Result<(), CallError> {
-    fn valid(ty: &Type) -> bool {
-        match ty {
-            Type::Void => false,
-            Type::FnPtr(sig) => validate_signature(sig).is_ok(),
-            Type::Array(t, _) => valid(t),
-            Type::Struct(ts) | Type::Tuple(ts) => ts.iter().all(valid),
-            Type::Ptr(t) => **t == Type::Void || valid(t),
-            _ => true,
-        }
-    }
-    if sig.variadic
-        || sig.params.iter().any(|t| !valid(t))
-        || (sig.ret != Type::Void && !valid(&sig.ret))
-    {
-        return Err(CallError::InvalidSignature(
+    validate_signature_with_limits(sig, crate::IrLimits::default())
+}
+
+pub fn validate_signature_with_limits(
+    sig: &FunctionSignature,
+    limits: crate::IrLimits,
+) -> Result<(), CallError> {
+    crate::limits::Budget::new(limits)
+        .and_then(|mut b| b.signature(sig))
+        .map_err(CallError::ResourceLimit)?;
+    let invalid = || {
+        CallError::InvalidSignature(
             "void parameters, malformed types and variadic calls are unsupported".into(),
-        ));
-    }
-    // IR supports aggregate Whale calls. Foreign aggregate ABI classification
-    // is not implemented; do not silently accept it as a scalar call.
-    if sig.convention == CallingConvention::SysV64
-        && sig
-            .params
-            .iter()
-            .chain(std::iter::once(&sig.ret))
-            .any(|t| matches!(t, Type::Array(..) | Type::Struct(..) | Type::Tuple(..)))
-    {
-        return Err(CallError::InvalidSignature(
-            "SysV64 aggregate signatures are unsupported".into(),
-        ));
+        )
+    };
+    let mut signatures = vec![sig];
+    while let Some(sig) = signatures.pop() {
+        if sig.variadic {
+            return Err(invalid());
+        }
+        if sig.convention == CallingConvention::SysV64
+            && sig
+                .params
+                .iter()
+                .chain(std::iter::once(&sig.ret))
+                .any(|t| matches!(t, Type::Array(..) | Type::Struct(..) | Type::Tuple(..)))
+        {
+            return Err(CallError::InvalidSignature(
+                "SysV64 aggregate signatures are unsupported".into(),
+            ));
+        }
+        let mut types: Vec<_> = sig.params.iter().collect();
+        if sig.ret != Type::Void {
+            types.push(&sig.ret);
+        }
+        while let Some(ty) = types.pop() {
+            match ty {
+                Type::Void => return Err(invalid()),
+                Type::FnPtr(sig) => signatures.push(sig),
+                Type::Ptr(t) if **t == Type::Void => {}
+                Type::Ptr(t) | Type::Array(t, _) => types.push(t),
+                Type::Struct(ts) | Type::Tuple(ts) => types.extend(ts),
+                _ => {}
+            }
+        }
     }
     Ok(())
 }
 
-pub(crate) fn validate_decl(decl: &FunctionDecl) -> Result<(), CallError> {
-    validate_signature(&decl.signature)?;
+pub(crate) fn validate_decl_with_limits(
+    decl: &FunctionDecl,
+    limits: crate::IrLimits,
+) -> Result<(), CallError> {
+    validate_signature_with_limits(&decl.signature, limits)?;
     match (&decl.linkage, &decl.link_name) {
         (Linkage::Internal, None) => Ok(()),
         (Linkage::External, Some(name)) if !name.is_empty() && !name.contains('\0') => Ok(()),

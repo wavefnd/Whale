@@ -1,0 +1,6 @@
+fun main() {
+    var x: i8 = 7;
+    var y: i32 = x as i32;
+    var z: f64 = y as f64;
+    var a: f32 = z as f32;
+}

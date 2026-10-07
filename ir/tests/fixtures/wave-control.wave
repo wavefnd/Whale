@@ -1,0 +1,13 @@
+fun increment(x: i32) -> i32 {
+    return x + 1;
+}
+fun main() {
+    var i: i32 = 0;
+    while (i < 3) {
+        if (i == 1 || i == 2) {
+            i = increment(i);
+        } else {
+            i = i + 1;
+        }
+    }
+}

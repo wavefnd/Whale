@@ -1,0 +1,61 @@
+module {
+  format_version 3
+  semantics_version 1
+  target "x86_64-whale-linux"
+  datalayout { ptr=64, endian=little }
+
+  declare @f0 "increment": whale (i32) -> i32, linkage internal
+  declare @f1 "main": whale () -> void, linkage internal
+
+  fn @f0 "increment"(%v0 "x": i32) -> i32, entry %b0 {
+  %b0 "entry":
+    %v1: ptr<i32> = alloca i32, align 1
+    store i32 %v0, ptr<i32> %v1, align 1
+    %v2: i32 = load i32, ptr<i32> %v1, align 1
+    %v3: i32 = const i32 1
+    %v4: i32 = add i32 %v2, %v3
+    ret i32 %v4
+  }
+
+  fn @f1 "main"() -> void, entry %b0 {
+  %b0 "entry":
+    %v0: i32 = const i32 0
+    %v1: ptr<i32> = alloca i32, align 1
+    store i32 %v0, ptr<i32> %v1, align 1
+    br label %b1
+  %b1 "while.test":
+    %v2: i32 = load i32, ptr<i32> %v1, align 1
+    %v3: i32 = const i32 3
+    %v4: bool = icmp slt i32 %v2, %v3
+    cbr bool %v4, label %b2, label %b3
+  %b2 "while.body":
+    %v5: i32 = load i32, ptr<i32> %v1, align 1
+    %v6: i32 = const i32 1
+    %v7: bool = icmp eq i32 %v5, %v6
+    cbr bool %v7, label %b6, label %b5
+  %b3 "while.end":
+    ret void
+  %b4 "if.end":
+    br label %b1
+  %b5 "logical.rhs":
+    %v8: i32 = load i32, ptr<i32> %v1, align 1
+    %v9: i32 = const i32 2
+    %v10: bool = icmp eq i32 %v8, %v9
+    br label %b6
+  %b6 "logical.end":
+    %v11: bool = phi bool [ %v7, %b2 ], [ %v10, %b5 ]
+    cbr bool %v11, label %b7, label %b8
+  %b7 "if.then":
+    %v12: i32 = load i32, ptr<i32> %v1, align 1
+    %v13: i32 = call whale i32 @f0(%v12)
+    store i32 %v13, ptr<i32> %v1, align 1
+    br label %b4
+  %b8 "if.else":
+    %v14: i32 = load i32, ptr<i32> %v1, align 1
+    %v15: i32 = const i32 1
+    %v16: i32 = add i32 %v14, %v15
+    store i32 %v16, ptr<i32> %v1, align 1
+    br label %b4
+  }
+
+}

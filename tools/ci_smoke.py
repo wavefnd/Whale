@@ -114,6 +114,28 @@ def smoke(binary, socket, artifacts, emulator=None, sysroot=None):
             bad_asm.write_text("mov rax, [rbx\n", encoding="utf-8")
             rejected(["asm", "--amd64", bad_asm], root / "rejected.o", b"closing ']'")
 
+            typed_ir = root / "typed input.wir"
+            typed_ir.write_text(
+                'module {\n  format_version 3\n  semantics_version 1\n'
+                '  target "x86_64-whale-linux"\n  datalayout { ptr=64, endian=little }\n\n'
+                '  declare @f7 "answer": whale () -> i32, linkage internal\n\n'
+                '  fn @f7 "answer"() -> i32, entry %b11 {\n  %b11 "entry":\n'
+                '    %v42: i32 = const i32 42\n    ret i32 %v42\n  }\n\n}\n',
+                encoding="utf-8",
+            )
+            invoke(["ir", "verify", typed_ir])
+            printed = invoke(["ir", "print", typed_ir]).stdout
+            if printed != typed_ir.read_bytes():
+                raise AssertionError("typed IR round trip changed explicit identities")
+            typed_output = root / "canonical.wir"
+            invoke(["ir", "print", typed_ir, "-o", typed_output])
+            if typed_output.read_bytes() != printed:
+                raise AssertionError("typed IR file differs from stdout")
+            bad_ir = root / "unknown version.wir"
+            bad_ir.write_text(typed_ir.read_text(encoding="utf-8").replace(
+                "format_version 3", "format_version 99"), encoding="utf-8")
+            rejected(["ir", "print", bad_ir], root / "rejected text.wir", b"unsupported IR format version")
+
             socket_input = root / "socket input.json"
             program = {"declarations": [], "globals": [], "functions": [{"name": "answer", "convention": "Whale", "linkage": "Internal", "link_name": None, "parameters": [],
                        "return_type": {"Int": {"bits": 32, "signed": True}},

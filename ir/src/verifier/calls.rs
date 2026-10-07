@@ -9,10 +9,10 @@ fn error(name: &str, reason: CallError) -> VerifyError {
     }
 }
 
-pub(super) fn verify_declarations(m: &Module) -> Result<(), VerifyError> {
+pub(super) fn verify_declarations(m: &Module, limits: crate::IrLimits) -> Result<(), VerifyError> {
     for f in &m.functions {
         for (_, ty) in &f.value_types {
-            validate_pointer_types(ty).map_err(|e| error(&f.name, e))?;
+            validate_pointer_types(ty, limits).map_err(|e| error(&f.name, e))?;
         }
         for p in &f.params {
             if p.ty == Type::Void {
@@ -27,7 +27,8 @@ pub(super) fn verify_declarations(m: &Module) -> Result<(), VerifyError> {
     let mut names = HashSet::new();
     let mut links = HashSet::new();
     for decl in &m.declarations {
-        crate::function::validate_decl(decl).map_err(|e| error(&decl.name, e))?;
+        crate::function::validate_decl_with_limits(decl, limits)
+            .map_err(|e| error(&decl.name, e))?;
         if !ids.insert(decl.id) || !names.insert(&decl.name) {
             return Err(error(
                 &decl.name,
@@ -71,11 +72,12 @@ pub(super) fn verify_instruction(
     m: &Module,
     f: &Function,
     ins: &Instruction,
+    limits: crate::IrLimits,
 ) -> Result<(), VerifyError> {
     let check = || -> Result<(), CallError> {
         match ins {
             Instruction::NullFunction { signature, .. } => {
-                crate::function::validate_signature(signature)?
+                crate::function::validate_signature_with_limits(signature, limits)?
             }
             Instruction::FunctionAddr {
                 function,
@@ -112,7 +114,7 @@ pub(super) fn verify_instruction(
                         None => return Err(CallError::UnknownValue(*value)),
                     },
                 };
-                crate::function::validate_signature(sig)?;
+                crate::function::validate_signature_with_limits(sig, limits)?;
                 if *convention != sig.convention {
                     return Err(CallError::ConventionMismatch);
                 }
@@ -171,13 +173,13 @@ fn contains_function_pointer(ty: &Type) -> bool {
     }
 }
 
-fn validate_pointer_types(ty: &Type) -> Result<(), CallError> {
+fn validate_pointer_types(ty: &Type, limits: crate::IrLimits) -> Result<(), CallError> {
     match ty {
-        Type::FnPtr(sig) => crate::function::validate_signature(sig),
-        Type::Ptr(t) | Type::Array(t, _) => validate_pointer_types(t),
+        Type::FnPtr(sig) => crate::function::validate_signature_with_limits(sig, limits),
+        Type::Ptr(t) | Type::Array(t, _) => validate_pointer_types(t, limits),
         Type::Struct(ts) | Type::Tuple(ts) => {
             for t in ts {
-                validate_pointer_types(t)?;
+                validate_pointer_types(t, limits)?;
             }
             Ok(())
         }

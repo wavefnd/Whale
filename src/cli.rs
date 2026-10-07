@@ -34,5 +34,5 @@ fn print_help() {
     println!("  asm     Assemble source file");
     println!("  object  Generate object file from binary or IR");
     println!("  link    Link object files into an executable");
-    println!("  ir      IR tools (lower/print/verify demos)");
+    println!("  ir      IR tools (verify/print; socket-cli enables AST lower)");
 }

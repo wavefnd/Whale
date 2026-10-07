@@ -119,6 +119,23 @@ impl ModuleBuilder {
         linkage: crate::Linkage,
         link_name: Option<String>,
     ) -> Result<crate::FunctionId, crate::CallError> {
+        self.declare_function_with_limits(
+            name,
+            signature,
+            linkage,
+            link_name,
+            crate::IrLimits::default(),
+        )
+    }
+
+    pub fn declare_function_with_limits(
+        &mut self,
+        name: impl Into<String>,
+        signature: crate::FunctionSignature,
+        linkage: crate::Linkage,
+        link_name: Option<String>,
+        limits: crate::IrLimits,
+    ) -> Result<crate::FunctionId, crate::CallError> {
         let name = name.into();
         let candidate = crate::FunctionDecl {
             id: crate::FunctionId(self.module.declarations.len() as u32),
@@ -127,7 +144,10 @@ impl ModuleBuilder {
             linkage,
             link_name,
         };
-        crate::function::validate_decl(&candidate)?;
+        if let Err(error) = crate::function::validate_decl_with_limits(&candidate, limits) {
+            crate::limits::discard_signature(candidate.signature);
+            return Err(error);
+        }
         if let Some(existing) = self
             .module
             .declarations
@@ -176,8 +196,9 @@ impl ModuleBuilder {
             .declarations
             .iter()
             .find(|d| d.id == id)
-            .cloned()
             .ok_or(crate::CallError::UnknownFunction(id))?;
+        crate::function::validate_signature(&decl.signature)?;
+        let decl = decl.clone();
         if self.module.functions.iter().any(|f| f.id == id) {
             return Err(crate::CallError::DuplicateDefinition(id));
         }
@@ -456,7 +477,10 @@ impl<'a> FunctionBuilder<'a> {
         &mut self,
         signature: crate::FunctionSignature,
     ) -> Result<ValueId, crate::CallError> {
-        crate::function::validate_signature(&signature)?;
+        if let Err(error) = crate::function::validate_signature(&signature) {
+            crate::limits::discard_signature(signature);
+            return Err(error);
+        }
         let dst = self.define_value(Type::FnPtr(Box::new(signature.clone())));
         self.cur_block_mut()
             .instructions
@@ -485,21 +509,25 @@ impl<'a> FunctionBuilder<'a> {
         &self,
         callee: &Callee,
     ) -> Result<crate::FunctionSignature, crate::CallError> {
-        match callee {
-            Callee::Direct(id) => self
-                .mb
-                .module
-                .declarations
-                .iter()
-                .find(|d| d.id == *id)
-                .map(|d| d.signature.clone())
-                .ok_or(crate::CallError::UnknownFunction(*id)),
+        let signature = match callee {
+            Callee::Direct(id) => {
+                &self
+                    .mb
+                    .module
+                    .declarations
+                    .iter()
+                    .find(|d| d.id == *id)
+                    .ok_or(crate::CallError::UnknownFunction(*id))?
+                    .signature
+            }
             Callee::Indirect(value) => match self.func.value_type(*value) {
-                Some(Type::FnPtr(sig)) => Ok((**sig).clone()),
-                Some(_) => Err(crate::CallError::NotFunctionPointer(*value)),
-                None => Err(crate::CallError::UnknownValue(*value)),
+                Some(Type::FnPtr(sig)) => sig,
+                Some(_) => return Err(crate::CallError::NotFunctionPointer(*value)),
+                None => return Err(crate::CallError::UnknownValue(*value)),
             },
-        }
+        };
+        crate::function::validate_signature(signature)?;
+        Ok(signature.clone())
     }
 
     pub fn call(
