@@ -119,7 +119,11 @@ fn identities_are_explicit_scoped_and_independent_of_names_or_storage_order() {
     let m = module();
     verify_module(&m).unwrap();
     let text = print_module(&m);
-    assert_eq!(text, include_str!("fixtures/text-identities-v3.wir"));
+    assert_eq!(
+        text,
+        include_str!("fixtures/text-identities-v3.wir")
+            .replace("format_version 3", "format_version 4")
+    );
     assert_eq!(text, print_module(&m));
     // IDs are preserved, rather than renumbered by physical block order.
     assert!(text.find("%b40 \"repeat\":").unwrap() < text.find("%b10 \"repeat\":").unwrap());

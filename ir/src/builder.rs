@@ -17,6 +17,7 @@ impl<'a> FunctionBuilder<'a> {
         self.func.entry
     }
 
+    /// Legacy diagnostic construction; verification rejects this instruction.
     pub fn undef(&mut self, ty: Type) -> ValueId {
         let dst = self.define_value(ty.clone());
         self.cur_block_mut()
@@ -636,6 +637,13 @@ impl<'a> FunctionBuilder<'a> {
             align,
         });
         dst
+    }
+
+    /// Revoke initialization at this program point without zeroing storage.
+    pub fn uninit(&mut self, ty: Type, ptr: ValueId, align: u32) {
+        self.cur_block_mut()
+            .instructions
+            .push(Instruction::Uninit { ty, ptr, align });
     }
 
     pub fn store(&mut self, ty: Type, value: ValueId, ptr: ValueId, align: u32) {

@@ -36,7 +36,7 @@ native compilation pipeline are still being developed.
 | Component | Available today | Status |
 | --- | --- | --- |
 | Assembler | AMD64 assembly, sections, symbols, and relocations emitted as ELF64 object files | Available |
-| IR | Typed IR construction, text parsing/printing, bounded verification, scalar integer/control-flow interpretation, and scalar AST JSON lowering | Experimental |
+| IR | Typed IR construction, text parsing/printing, bounded verification, integer/control-flow and tracked stack-memory interpretation, and scalar AST JSON lowering | Experimental |
 | Object library | Object model and ELF64 relocatable object serialization | Available |
 | Object CLI | Wrap raw input bytes in an ELF64 object with a `.text` section | Limited |
 | Linker | Initial library infrastructure; `whale link` remains a placeholder | In development |
@@ -110,11 +110,11 @@ no external assembler is needed.
 
 ### Execute scalar integer IR
 
-Save this format 3 module as `answer.wir`:
+Save this format 4 module as `answer.wir`:
 
 ```text
 module {
-  format_version 3
+  format_version 4
   semantics_version 1
   target "x86_64-whale-linux"
   datalayout { ptr=64, endian=little }
@@ -142,11 +142,44 @@ Zero division/remainder and explicit traps return structured errors; unused
 executed operations still trap. Loops evaluate phi inputs simultaneously.
 
 This oracle supports integer constants, arithmetic, comparisons, bit casts,
-checked pairs, select and control flow. It rejects memory, floating point,
-calls, addresses and legacy `undef` in every block of the selected function,
-including unreachable blocks. Native code generation and tracked-memory
-execution remain unfinished. See the Rust `interpret_with_options` API for
+checked pairs, select and control flow. It also supports tracked stack allocations, integer/Bool/data-pointer storage,
+typed GEP, byte copies and fills, with initialization and capability checks.
+It rejects floating point, calls, function pointers and general aggregate values
+in every block of the selected function, including unreachable blocks. Native
+code generation remains unfinished. Legacy `undef` is a verification error. See the Rust `interpret_with_options` API for
 adjustable verification limits and trap IR identities.
+
+### Execute tracked stack memory
+
+Save [the complete memory fixture](ir/tests/fixtures/tracked-memory-v4.wir)
+as `tracked-memory.wir`. It copies an initialized pointer and then reads its
+pointee. Pointer bits and capability metadata travel separately.
+
+```sh
+cargo run --locked -- ir run tracked-memory.wir --function @f0
+cargo run --locked -- ir run tracked-memory.wir --function @f1
+```
+
+The first command prints `u32 42`. The second exits nonzero with
+`uninitialized byte at allocation offset 0`: physical zero bytes do not count
+as initialization. AST lowering emits `uninit` at each uninitialized declaration,
+including each execution of a loop body, without writing a value.
+
+The interpreter uses synthetic 64-bit addresses, never host address dereferences.
+Tracked access checks provenance, generation/lifetime, bounds, permissions and
+explicit alignment. One-past pointers can be formed but cannot read or write
+nonempty ranges. Address arithmetic overflow traps. Integer-to-pointer casts
+create raw addresses without recovered authority. Byte copies transfer both
+initialization state and byte fragments of pointer metadata; nonempty overlapping
+copies trap. Zero-length copy/fill succeeds without an access.
+
+`--max-memory` sets the logical allocation-byte budget (default 64 MiB).
+`InterpreterOptions::memory_limits` separately limits allocation count (16384),
+pointer metadata fragments (262144), and byte/metadata work (256 Mi units).
+Failures return IR-located `MemoryLimit` errors. Scalar/checked-pair reads exclude
+padding from initialization checks. The current frame stays alive until return;
+lexical lifetime-end instructions, globals, calls/returns carrying pointers,
+foreign-memory adapters and native shadow metadata are future work.
 
 ### Lower an AST to IR
 
@@ -213,7 +246,7 @@ array to `program`, and adding `convention` and `linkage` to every definition.
 Internal functions use `"Whale"` and `"Internal"`; external functions must supply
 a nonempty `link_name`. Missing versions and format 1 inputs are rejected.
 Integers and floats retain their exact string encoding. AST and printed typed IR have independent format versions and a shared
-semantics version; printed IR includes both version fields. Typed text IR format 3
+semantics version; printed IR includes both version fields. Typed text IR formats 3 and 4
 can be read and verified with `ir::parse_module`.
 
 The AST supports scalar literals, variables/constants, add/sub/mul, comparisons,
@@ -248,7 +281,7 @@ likewise fail before output publication.
 
 ### Typed IR output and validation
 
-The printer emits typed IR format 3 with semantics version 1. AST JSON remains
+The printer emits typed IR format 4 with semantics version 1. AST JSON remains
 format 2. Definitions and references use explicit `@fN`, `@gN`, `%vN` and `%bN`
 identities; names are quoted annotations, and each function records its entry
 block. Name/string fields escape quotes, backslashes, control characters and
@@ -257,8 +290,8 @@ for repeated block names and IDs scoped to different functions.
 
 The verifier checks cast operands, opcode categories and width direction, and
 checks signed/unsigned checked arithmetic with a `tuple<T, bool>` result.
-Tuple extraction requires an existing field and its exact type. These checks do
-not implement runtime conversion traps or pointer metadata.
+Tuple extraction requires an existing field and its exact type. These static checks are distinct from runtime conversion traps and tracked
+pointer metadata.
 
 ### Reading and verifying typed text IR
 
@@ -269,12 +302,13 @@ cargo run --locked -- ir verify ir/tests/fixtures/calls-v3.wir
 cargo run --locked -- ir print ir/tests/fixtures/calls-v3.wir -o canonical.wir
 ```
 
-`ir::parse_module` reads **and verifies** format 3 text. Print-parse-print
+`ir::parse_module` reads **and verifies** formats 3 and 4. Print-parse-print
 preserves explicit scoped IDs, quoted names, entry and block order, types,
 exact integer/float payloads, constant-expression trees, alignment, signatures
 and external link names. Whitespace and `//` comments are canonicalized. It
-accepts all current printer instruction forms, including legacy `undef`; runtime
-initialization tracking remains separate work. Unknown versions, fields,
+accepts current printer instruction forms; format 4 adds `uninit`. Format 3
+without `undef` remains readable and canonicalizes to format 4. Regenerate old
+`undef` lowering from its AST rather than replacing unspecified values with zero. Unknown versions, fields,
 opcodes, escapes, trailing input and inconsistent type annotations are errors.
 Diagnostics include a byte offset and one-based Unicode-scalar line/column;
 semantic errors are attached to the containing function/global when available.
@@ -294,7 +328,7 @@ owned oversized signature iteratively.
 
 [Wave control flow](ir/tests/fixtures/wave-control.wave) and
 [casts](ir/tests/fixtures/wave-casts.wave) have retained format 3 outputs from
-Wave's current typed HIR adapter, tested for exact print-parse-print equality.
+Wave's current typed HIR adapter, tested for canonical print-parse-print equality (format 4 output).
 Text parsing does not provide IR execution or native code generation. Format 2
 printed text requires explicit migration; it is not silently accepted. New
 syntax or semantics requires an appropriate version change, with unknown

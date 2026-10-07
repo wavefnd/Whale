@@ -424,10 +424,13 @@ fn phi_select_and_aggregate_extract_preserve_full_pointer_signature() {
 fn unused_malformed_pointer_signature_is_rejected() {
     let mut b = builder();
     let mut f = b.begin_function("bad", vec![], Type::Void);
-    f.undef(Type::FnPtr(Box::new(FunctionSignature {
-        variadic: true,
-        ..signature()
-    })));
+    f.alloca(
+        Type::FnPtr(Box::new(FunctionSignature {
+            variadic: true,
+            ..signature()
+        })),
+        8,
+    );
     f.ret(None);
     f.finish();
     assert!(matches!(

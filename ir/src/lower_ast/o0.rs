@@ -239,22 +239,28 @@ fn lower_stmt_o0(
             let decl_ty = socket_type_to_whale(ty)?;
             let align = crate::allocation_align(&decl_ty, target).map_err(LowerError::Layout)?;
 
-            let (v, vty) = if let Some(init_expr) = init.as_ref() {
-                lower_expr_o0(fb, env, global_consts, init_expr, target)?
-            } else {
-                let v = fb.undef(decl_ty.clone());
-                (v, decl_ty.clone())
-            };
-
-            if vty != decl_ty {
-                return Err(LowerError::TypeMismatch {
-                    expected: decl_ty,
-                    got: vty,
-                });
+            if let Some(init_expr) = init.as_ref() {
+                let (v, vty) = lower_expr_o0(fb, env, global_consts, init_expr, target)?;
+                if vty != decl_ty {
+                    return Err(LowerError::TypeMismatch {
+                        expected: decl_ty,
+                        got: vty,
+                    });
+                }
+                let slot = fb.alloca_in_entry(decl_ty.clone(), align);
+                fb.store(decl_ty.clone(), v, slot, align);
+                env.insert(
+                    name.clone(),
+                    Binding::Addr {
+                        ptr: slot,
+                        ty: decl_ty,
+                    },
+                );
+                return Ok(());
             }
-
             let slot = fb.alloca_in_entry(decl_ty.clone(), align);
-            fb.store(decl_ty.clone(), v, slot, align);
+            // This executes at every declaration, including loop redeclarations.
+            fb.uninit(decl_ty.clone(), slot, align);
 
             env.insert(
                 name.clone(),

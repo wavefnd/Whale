@@ -26,6 +26,7 @@ pub fn run(args: Vec<String>) {
     let mut function = None;
     let mut arguments = Vec::new();
     let mut max_steps = None;
+    let mut max_memory = None;
     let mut input = None;
     let mut output = None;
     #[cfg(feature = "socket-cli")]
@@ -73,6 +74,21 @@ pub fn run(args: Vec<String>) {
                         .ok()
                         .filter(|_| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
                         .unwrap_or_else(|| fail("--max-steps requires a decimal u64 count")),
+                );
+            }
+            "--max-memory" if command == "run" => {
+                if max_memory.is_some() {
+                    fail("duplicate --max-memory option");
+                }
+                let value = args
+                    .next()
+                    .unwrap_or_else(|| fail("--max-memory requires a u64 byte count"));
+                max_memory = Some(
+                    value
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|_| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
+                        .unwrap_or_else(|| fail("--max-memory requires a decimal u64 byte count")),
                 );
             }
             #[cfg(feature = "socket-cli")]
@@ -149,6 +165,7 @@ pub fn run(args: Vec<String>) {
             function.expect("required function"),
             &arguments,
             max_steps,
+            max_memory,
         );
         return;
     }
@@ -163,14 +180,14 @@ pub fn run(args: Vec<String>) {
 }
 fn print_help() {
     println!("Usage: whale ir <command> [options]");
-    println!("  verify <input.wir>             Read and verify format 3 typed IR");
+    println!("  verify <input.wir>             Read and verify format 3/4 typed IR");
     println!("  print <input.wir> [-o <path>]   Verify and write canonical typed IR");
-    println!("  run <input.wir> --function @fN [--arg <literal> ...] [--max-steps <u64>]");
-    println!("    Execute scalar integer/bool and control flow; default limit 1000000 steps.");
+    println!("  run <input.wir> --function @fN [--arg <literal> ...] [--max-steps <u64>] [--max-memory <u64>]");
+    println!("    Execute integer/bool, control flow and tracked stack memory; default 1000000 steps, 64 MiB storage.");
     println!("  lower <socket.json> [-o <path>] Lower AST JSON (requires socket-cli)");
     println!("  lower options: --target x86_64-whale-linux, --no-verify");
     println!("  AST envelope: format_version: 2, semantics_version: 1, features: [], program: AST");
-    println!("  Typed IR requires format_version 3 and semantics_version 1.");
+    println!("  Typed IR reads format_version 3/4, writes 4; semantics_version 1. Legacy undef is invalid.");
     println!("  Integer literals are decimal; floats use exact-width 0x storage bits.");
     println!("  Unknown fields, versions, instructions and trailing input are rejected.");
 }
@@ -181,6 +198,7 @@ fn execute(
     function: ir::FunctionId,
     literals: &[&String],
     max_steps: Option<u64>,
+    max_memory: Option<u64>,
 ) {
     let fun = module
         .functions
@@ -202,6 +220,9 @@ fn execute(
     let mut options = ir::InterpreterOptions::default();
     if let Some(limit) = max_steps {
         options.max_steps = limit;
+    }
+    if let Some(limit) = max_memory {
+        options.memory_limits.max_bytes = limit;
     }
     let result = ir::interpret_with_options(module, function, &arguments, options)
         .unwrap_or_else(|e| fail(format!("{input}: {e}")));

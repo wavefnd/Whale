@@ -22,9 +22,10 @@ fn duplicate_blocks_and_definitions_are_rejected() {
     let mut m = module();
     m.functions[0].blocks[0]
         .instructions
-        .push(Instruction::Undef {
+        .push(Instruction::Const {
             dst: ValueId(0),
             ty: Type::I32,
+            value: ir::ConstValue::I(0),
         });
     assert!(ir::verify_module(&m).is_err());
     let mut m = module();

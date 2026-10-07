@@ -278,6 +278,18 @@ impl Parser<'_> {
                 let align = self.align()?;
                 Instruction::Alloca { dst, ty, align }
             }
+            "uninit" => {
+                if self.format_version < 4 {
+                    return Err(self.error("uninit requires typed IR format 4"));
+                }
+                let ty = self.ty(0)?;
+                self.comma()?;
+                let ptr_ty = self.ty(0)?;
+                self.equal_type(&Type::ptr_to(ty.clone()), &ptr_ty)?;
+                let ptr = self.value()?;
+                let align = self.align()?;
+                Instruction::Uninit { ty, ptr, align }
+            }
             "load" | "store" => {
                 let ty = self.ty(0)?;
                 let value = if op == "store" {
