@@ -200,6 +200,10 @@ fn strict_syntax_and_semantic_failures_have_locations() {
         assert!(parse_module(text).is_err());
     }
     roundtrip(&format!("// comment\n{good}// end\n"));
+    assert_eq!(
+        print_module(&roundtrip(&good.replace("\n", "\r\n"))),
+        print_module(&roundtrip(&good))
+    );
 }
 #[test]
 fn parser_resource_limits_and_truncated_inputs_never_panic() {

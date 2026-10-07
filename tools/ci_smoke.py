@@ -121,7 +121,7 @@ def smoke(binary, socket, artifacts, emulator=None, sysroot=None):
                 '  declare @f7 "answer": whale () -> i32, linkage internal\n\n'
                 '  fn @f7 "answer"() -> i32, entry %b11 {\n  %b11 "entry":\n'
                 '    %v42: i32 = const i32 42\n    ret i32 %v42\n  }\n\n}\n',
-                encoding="utf-8",
+                encoding="utf-8", newline="\n",
             )
             invoke(["ir", "verify", typed_ir])
             printed = invoke(["ir", "print", typed_ir]).stdout
