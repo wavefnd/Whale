@@ -59,6 +59,10 @@ pub enum CastOp {
     IntToPtr,
 }
 
+/// Integer add/sub/mul wrap modulo 2^N. Division/remainder by zero trap;
+/// signed MIN / -1 wraps to MIN and MIN % -1 is zero. Shift counts are
+/// interpreted as unsigned N-bit patterns and reduced modulo N. LShr fills
+/// with zero; AShr replicates the high bit, irrespective of result signedness.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BinOp {
     // int
@@ -86,6 +90,8 @@ pub enum BinOp {
     AShr,
 }
 
+/// Produces tuple<T, bool>: wrapped result, then mathematical range overflow.
+/// Overflow is reported, not trapped; a frontend can emit explicit TrapIf.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CheckedOp {
     // returns tuple<T, bool>

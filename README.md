@@ -36,7 +36,7 @@ native compilation pipeline are still being developed.
 | Component | Available today | Status |
 | --- | --- | --- |
 | Assembler | AMD64 assembly, sections, symbols, and relocations emitted as ELF64 object files | Available |
-| IR | Typed IR construction, text parsing/printing, bounded verification, and scalar AST JSON lowering | Experimental |
+| IR | Typed IR construction, text parsing/printing, bounded verification, scalar integer/control-flow interpretation, and scalar AST JSON lowering | Experimental |
 | Object library | Object model and ELF64 relocatable object serialization | Available |
 | Object CLI | Wrap raw input bytes in an ELF64 object with a `.text` section | Limited |
 | Linker | Initial library infrastructure; `whale link` remains a placeholder | In development |
@@ -80,7 +80,7 @@ The executable is written to `target/release/whale`, or
 `target/release/whale.exe` on Windows. The examples below use `cargo run` so that
 installing Whale on your `PATH` is optional.
 
-Enable the experimental IR command when building with:
+Enable experimental AST JSON lowering when building with:
 
 ```sh
 cargo build --release --locked --features socket-cli
@@ -107,6 +107,46 @@ cargo run --release --locked -- asm --amd64 example.asm -o example.o
 
 This produces a relocatable ELF64 object. Assembly is implemented within Whale;
 no external assembler is needed.
+
+### Execute scalar integer IR
+
+Save this format 3 module as `answer.wir`:
+
+```text
+module {
+  format_version 3
+  semantics_version 1
+  target "x86_64-whale-linux"
+  datalayout { ptr=64, endian=little }
+
+  declare @f7 "answer": whale () -> i32, linkage internal
+
+  fn @f7 "answer"() -> i32, entry %b11 {
+  %b11 "entry":
+    %v42: i32 = const i32 42
+    ret i32 %v42
+  }
+
+}
+```
+
+```sh
+cargo run --locked -- ir run answer.wir --function @f7
+```
+
+The output is `i32 42`. The default build verifies the whole module and runs
+one explicit Whale-convention function with integer/bool parameters and scalar
+or void return. Use repeated `--arg` decimal literals (`true`/`false` for Bool)
+and `--max-steps` to set the instruction/terminator budget (default 1,000,000).
+Zero division/remainder and explicit traps return structured errors; unused
+executed operations still trap. Loops evaluate phi inputs simultaneously.
+
+This oracle supports integer constants, arithmetic, comparisons, bit casts,
+checked pairs, select and control flow. It rejects memory, floating point,
+calls, addresses and legacy `undef` in every block of the selected function,
+including unreachable blocks. Native code generation and tracked-memory
+execution remain unfinished. See the Rust `interpret_with_options` API for
+adjustable verification limits and trap IR identities.
 
 ### Lower an AST to IR
 
