@@ -44,6 +44,8 @@ change an unrelated remote silently. Start new work from the latest upstream
 | --- | --- |
 | [assembler/](assembler/) | Shared assembly APIs, diagnostics, symbols, and relocations |
 | [assembler/amd64/](assembler/amd64/) | AMD64 parser, encoder, and tests |
+| [assembler/aarch64/](assembler/aarch64/), [riscv64/](assembler/riscv64/), [loongarch64/](assembler/loongarch64/) | Independent fixed-width integer encoders |
+| [assembler-object/](assembler-object/) | Shared assembler-to-ELF bridge with target/relocation checks |
 | [backend-api/](backend-api/) | IR backend support checks and artifact emission |
 | [toolchain/](toolchain/) | Target, assembler, and backend registration |
 | [object/](object/) | Object model and ELF serialization |
@@ -67,6 +69,7 @@ For a focused regression, start with the affected component:
 | Component | Source and test locations | Focused command from the repository root |
 | --- | --- | --- |
 | Assembler | [assembler/src/](assembler/src/) and [assembler/amd64/](assembler/amd64/) | `cargo test -p amd64 --locked` |
+| New ISA integration | [tests/multi_isa.rs](tests/multi_isa.rs) | `cargo test --test multi_isa --locked` |
 | Object | [object/src/](object/src/) | `cargo test -p object --locked` |
 | IR | [ir/src/](ir/src/) and [ir/tests/](ir/tests/) | `cargo test -p ir --all-features --locked` |
 | Linker | [linker/src/](linker/src/) | `cargo test -p linker --locked` |

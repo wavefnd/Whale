@@ -101,6 +101,7 @@ struct Relocation<'a> {
 fn relocation_name(kind: object::RelocKind) -> &'static str {
     use object::RelocKind::*;
     match kind {
+        TargetSpecific { .. } => "TargetSpecific",
         Absolute64 => "Absolute64",
         Absolute32 => "Absolute32",
         SignedAbsolute32 => "SignedAbsolute32",

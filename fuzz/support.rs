@@ -444,7 +444,9 @@ fn assert_object_semantics(a: &object::ObjectFile, b: &object::ObjectFile) {
         let mut result = o
             .relocations
             .iter()
-            .map(|r| (r.section_index, r.offset, r.symbol.clone(), r.addend, r.kind as u8))
+            .map(|r| {
+                (r.section_index, r.offset, r.symbol.clone(), r.addend, format!("{:?}", r.kind))
+            })
             .collect::<Vec<_>>();
         result.sort();
         result

@@ -37,6 +37,7 @@ pub fn executable_layout(
     max_bytes: u64,
 ) -> Result<(Layout, Vec<Segment>), String> {
     for object in objects {
+        object.target.validate_amd64().map_err(|e| e.to_string())?;
         object.validate()?;
     }
     let has_ro =

@@ -38,6 +38,11 @@ impl assembler::extension::Assembler for AMD64 {
     fn id(&self) -> &str {
         "amd64"
     }
+
+    fn object_target(&self) -> Option<assembler::ObjectTarget> {
+        Some(assembler::ObjectTarget::elf64(assembler::Machine::X86_64))
+    }
+
     fn assemble(
         &self,
         source_name: &str,

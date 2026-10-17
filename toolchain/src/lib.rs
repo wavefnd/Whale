@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Explicit composition root. No built-in ISA, global state, or dynamic loader.
 use assembler::extension::Assembler;
+
 use backend_api::{Artifact, Backend};
+
 use diagnostic::Diagnostic;
+
 use std::collections::{btree_map::Entry, BTreeMap};
+
 use target_spec::TargetSpec;
 
 #[derive(Default)]
@@ -17,6 +21,7 @@ impl Registry {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub fn register_target(&mut self, spec: TargetSpec) -> Result<(), String> {
         spec.validate()?;
         match self.targets.entry(spec.id.clone()) {
@@ -27,6 +32,7 @@ impl Registry {
             Entry::Occupied(_) => Err("duplicate target identity".into()),
         }
     }
+
     pub fn register_assembler(
         &mut self,
         assembler: impl Assembler + 'static,
@@ -43,6 +49,7 @@ impl Registry {
             Entry::Occupied(_) => Err("duplicate assembler identity".into()),
         }
     }
+
     pub fn register_backend(&mut self, backend: impl Backend + 'static) -> Result<(), String> {
         let id = backend.target_id();
         if !self.targets.contains_key(id) {
@@ -56,18 +63,27 @@ impl Registry {
             Entry::Occupied(_) => Err("duplicate backend target".into()),
         }
     }
+
     pub fn target(&self, id: &str) -> Option<&TargetSpec> {
         self.targets.get(id)
     }
+
     pub fn target_ids(&self) -> impl Iterator<Item = &str> {
         self.targets.keys().map(String::as_str)
     }
+
+    pub fn assembler_ids(&self) -> impl Iterator<Item = &str> {
+        self.assemblers.keys().map(String::as_str)
+    }
+
     pub fn assembler(&self, id: &str) -> Option<&dyn Assembler> {
         self.assemblers.get(id).map(Box::as_ref)
     }
+
     pub fn backend(&self, id: &str) -> Option<&dyn Backend> {
         self.backends.get(id).map(Box::as_ref)
     }
+
     pub fn assemble(
         &self,
         id: &str,
@@ -85,6 +101,7 @@ impl Registry {
         }
         Ok(output)
     }
+
     pub fn compile(
         &self,
         module: &ir::Module,

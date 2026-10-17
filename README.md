@@ -35,7 +35,7 @@ native compilation pipeline are still being developed.
 
 | Component | Available today | Status |
 | --- | --- | --- |
-| Assembler | AMD64 assembly, sections, symbols, and relocations emitted as ELF64 object files | Available |
+| Assembler | AMD64 plus initial AArch64, RV64I and LoongArch64 integer subsets; sections, symbols and ELF64 relocations | Available; new ISAs are initial subsets |
 | IR | Typed IR construction, text parsing/printing, bounded verification, integer/control-flow, tracked stack-memory and bounded Whale-call interpretation, and scalar AST JSON lowering | Experimental |
 | Object library | Object model, bounded ELF64 relocatable object reading and serialization | Available |
 | Object CLI | Wrap raw input bytes in an ELF64 object with a `.text` section | Limited |
@@ -63,14 +63,18 @@ relocatable subset and preserves section, symbol and relocation semantics.
 [Shared diagnostic conversions](diagnostic/README.md) retain machine-readable
 phase/category and available source/object context alongside typed component errors.
 
-The current emitted object target is AMD64 ELF64. Object metadata records the machine,
-format, byte order, and address width; writers and linker inputs reject unsupported
-combinations. `ObjectFile::new(ObjectFormat::ELF64)` remains an AMD64 convenience
+ELF64 object output supports AMD64, AArch64, RV64I and LoongArch64 little-endian
+identities. The bounded reader, static linker and reverse tools retain their AMD64
+scope. Object metadata records machine, format, byte order and address width;
+writers and consumers check their respective supported combinations. `ObjectFile::new(ObjectFormat::ELF64)` remains an AMD64 convenience
 constructor; explicit identities use `ObjectFile::with_target`, and format access
 is now `object.target.format`. An object file is not a linked
 executable. CI runs host checks on Linux, Windows, and macOS; running Whale on a
 host does not imply support for that host's native object format or instruction
 set as an output target.
+
+See the [assembly module guide](assembler/README.md) for the new ISA instruction
+subsets, source syntax, relocation types and examples.
 
 ## Getting started
 
@@ -693,7 +697,7 @@ coverage, and scheduled maintenance. The checked-in
 
 ## AMD64 assembler limits and symbols
 
-See [the scalar instruction reference](assembler/README.md) for LEA, Jcc aliases,
+See [the scalar instruction reference](assembler/amd64/README.md) for LEA, Jcc aliases,
 shifts, division, TEST, NOT/NEG, and immediate IMUL forms and their boundaries.
 
 Materialized assembly output is limited to 64 MiB across all sections by default.

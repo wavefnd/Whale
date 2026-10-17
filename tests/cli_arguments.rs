@@ -75,7 +75,9 @@ fn help_describes_available_commands_and_object_options() {
         assert!(text.contains("raw bytes"));
         assert!(text.contains("Static Linux AMD64"));
         assert!(text.contains("run"));
-        assert!(!text.contains("--aarch64"));
+        for flag in ["--aarch64", "--riscv64", "--loongarch64"] {
+            assert!(text.contains(flag));
+        }
     }
     for args in [vec!["object"], vec!["object", "--help"]] {
         let result = Command::new(env!("CARGO_BIN_EXE_whale")).args(args).output().unwrap();

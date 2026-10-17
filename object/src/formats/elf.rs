@@ -14,8 +14,6 @@ fn output_limit() -> ObjectError {
 
 use crate::core::object::ObjectFile;
 
-use crate::core::reloc::RelocKind;
-
 use crate::core::section::SectionKind;
 
 use crate::core::symbol::{SymbolBinding, SymbolKind, SymbolVisibility};
@@ -394,7 +392,11 @@ pub fn write_elf_checked(obj: &ObjectFile, max_output_size: u64) -> Result<Vec<u
                 })?,
                 "relocation symbol index",
             )?);
-            let rtype = reloc_type(reloc.kind) as u64;
+            let rtype = reloc
+                .kind
+                .encoding(obj.target)
+                .map_err(|e| write_error(ErrorKind::InvalidRelocation, e))?
+                .0 as u64;
 
             let rela = Elf64Rela {
                 offset: reloc.offset as u64,
@@ -493,6 +495,7 @@ pub fn write_elf_checked(obj: &ObjectFile, max_output_size: u64) -> Result<Vec<u
         ident: [0x7f, b'E', b'L', b'F', 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         type_: 1, // ET_REL
         machine,
+        flags: obj.target.elf_flags(),
         version: 1,
         shoff,
         ehsize: ELF_HDR_SIZE as u16,
@@ -735,18 +738,6 @@ fn visibility_to_stv(vis: SymbolVisibility) -> u8 {
     match vis {
         SymbolVisibility::Default => 0,
         SymbolVisibility::Hidden => 2,
-    }
-}
-
-fn reloc_type(kind: RelocKind) -> u32 {
-    match kind {
-        RelocKind::Absolute64 => 1,        // R_X86_64_64
-        RelocKind::Absolute32 => 10,       // R_X86_64_32
-        RelocKind::SignedAbsolute32 => 11, // R_X86_64_32S
-        RelocKind::Relative32 => 2,        // R_X86_64_PC32
-        RelocKind::Relative8 => 15,        // R_X86_64_PC8
-        RelocKind::GOTPCREL => 9,          // R_X86_64_GOTPCREL
-        RelocKind::PLT32 => 4,             // R_X86_64_PLT32
     }
 }
 

@@ -38,11 +38,11 @@ jobs:
       - name: Run workspace tests with instrumentation
         run: python tools/ci.py run --name coverage -- cargo llvm-cov --workspace --all-features --locked --no-report
       - name: Export workspace LCOV
-        run: python tools/ci.py run --name coverage-lcov -- cargo llvm-cov report --workspace --lcov --output-path .ci-artifacts/coverage.lcov
+        run: python tools/ci.py run --name coverage-lcov -- cargo llvm-cov report --workspace --no-default-ignore-filename-regex --lcov --output-path .ci-artifacts/coverage.lcov
       - name: Render HTML without rerunning tests
-        run: python tools/ci.py run --name coverage-html -- cargo llvm-cov report --workspace --html --output-dir .ci-artifacts/coverage
+        run: python tools/ci.py run --name coverage-html -- cargo llvm-cov report --workspace --no-default-ignore-filename-regex --html --output-dir .ci-artifacts/coverage
       - name: Record per-file coverage summary
-        run: python tools/ci.py run --name coverage-summary -- cargo llvm-cov report --workspace
+        run: python tools/ci.py run --name coverage-summary -- cargo llvm-cov report --workspace --no-default-ignore-filename-regex
       - name: Summarize coverage for every workspace crate
         run: python tools/ci.py run --name coverage-crates -- python tools/ci_coverage.py .ci-artifacts/coverage.lcov
       - name: Retain command logs and reproduction evidence

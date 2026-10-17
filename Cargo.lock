@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "aarch64"
+version = "0.1.0"
+dependencies = [
+ "assembler",
+ "target-spec",
+]
+
+[[package]]
 name = "amd64"
 version = "0.1.0"
 dependencies = [
@@ -15,6 +23,15 @@ name = "assembler"
 version = "0.1.0"
 dependencies = [
  "diagnostic",
+ "target-spec",
+]
+
+[[package]]
+name = "assembler-object"
+version = "0.1.0"
+dependencies = [
+ "assembler",
+ "object",
 ]
 
 [[package]]
@@ -118,6 +135,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
+name = "loongarch64"
+version = "0.1.0"
+dependencies = [
+ "assembler",
+ "target-spec",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -169,6 +194,14 @@ dependencies = [
  "assembler",
  "object",
  "serde_json",
+]
+
+[[package]]
+name = "riscv64"
+version = "0.1.0"
+dependencies = [
+ "assembler",
+ "target-spec",
 ]
 
 [[package]]
@@ -285,12 +318,16 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 name = "whale"
 version = "0.1.0"
 dependencies = [
+ "aarch64",
  "amd64",
  "assembler",
+ "assembler-object",
  "ir",
  "linker",
+ "loongarch64",
  "object",
  "reverse",
+ "riscv64",
  "same-file",
  "serde",
  "serde_json",

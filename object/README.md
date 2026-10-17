@@ -1,7 +1,9 @@
 # Object input and diagnostics
 
-The object library reads and writes the supported AMD64 ELF64 little-endian
-relocatable subset. Reading uses only checked byte access, independent of host
+The object library reads the bounded AMD64 ELF64 little-endian relocatable subset.
+Its writer additionally serializes AArch64, RV64I and LoongArch64 little-endian
+ELF64 objects, using explicit machine identities, ABI flags and relocation namespaces.
+See the [assembler guide](../assembler/README.md) for those initial output subsets. Reading uses only checked byte access, independent of host
 alignment, struct layout or byte order. It neither loads nor executes code.
 
 ```rust

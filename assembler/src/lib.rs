@@ -17,3 +17,7 @@ pub use error::{AsmError, SourceSpan};
 mod diagnostic;
 
 pub mod extension;
+
+pub mod fixed;
+
+pub use target_spec::{Machine, ObjectTarget};

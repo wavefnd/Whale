@@ -16,12 +16,9 @@ fn amd64_identity_matches_independently_decoded_elf_header() {
 #[test]
 fn both_writer_entry_points_reject_unsupported_object_identities() {
     let amd64 = Target::X86_64WhaleLinux.object_target();
-    for target in [
-        ObjectTarget { machine: Machine::AArch64, ..amd64 },
-        ObjectTarget { machine: Machine::RiscV64, ..amd64 },
-        ObjectTarget { endian: Endian::Big, ..amd64 },
-        ObjectTarget { address_bits: 32, ..amd64 },
-    ] {
+    for target in
+        [ObjectTarget { endian: Endian::Big, ..amd64 }, ObjectTarget { address_bits: 32, ..amd64 }]
+    {
         let object = ObjectFile::with_target(target);
         assert_eq!(object.target, target);
         for result in [object.write(), object::formats::elf::write_elf(&object)] {
@@ -33,4 +30,19 @@ fn both_writer_entry_points_reject_unsupported_object_identities() {
     let mut object = ObjectFile::new(ObjectFormat::ELF64);
     object.target.endian = Endian::Big;
     assert!(object.write().is_err());
+}
+
+#[test]
+fn multi_isa_writer_preserves_machine_and_abi_without_enabling_amd64_linking() {
+    for (machine, elf, flags) in
+        [(Machine::AArch64, 183, 0), (Machine::RiscV64, 243, 0), (Machine::LoongArch64, 258, 0x41)]
+    {
+        let target = ObjectTarget::elf64(machine);
+        assert!(target.validate().is_ok());
+        assert!(target.validate_amd64().is_err());
+        let bytes = ObjectFile::with_target(target).write().unwrap();
+        assert_eq!(u16::from_le_bytes(bytes[18..20].try_into().unwrap()), elf);
+        assert_eq!(u32::from_le_bytes(bytes[48..52].try_into().unwrap()), flags);
+        assert!(ObjectFile::read(&bytes).is_err(), "AMD64 reader must reject another ISA");
+    }
 }

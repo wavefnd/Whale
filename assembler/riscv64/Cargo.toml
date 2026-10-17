@@ -1,0 +1,9 @@
+[package]
+name = "riscv64"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+
+[dependencies]
+assembler = { path = ".." }
+target-spec = { path = "../../target-spec" }

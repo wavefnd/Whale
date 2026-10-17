@@ -1,0 +1,57 @@
+# Exact bytes from LLVM llvm-mc 21.1.8; regenerate/verify with tools/check_isa_oracle.py.
+1f2003d5	nop
+c0035fd6	ret
+20015fd6	ret x9
+80011fd6	br x12
+c0033fd6	blr x30
+010000d4	svc #0
+e1ff1fd4	svc #65535
+e00020d4	brk #7
+e00301aa	mov x0,x1
+fe031f2a	mov w30,wzr
+e2030091	mov x2,sp
+7f000091	mov sp,x3
+400580d2	mov x0,#42
+01008012	mov w1,#-1
+e3ffffd2	movz x3,#65535,lsl #48
+8546a272	movk w5,#4660,lsl #16
+e600c092	movn x6,#7,lsl #32
+2000028b	add x0,x1,x2
+830c052b	adds w3,w4,w5,lsl #3
+e61048cb	sub x6,x7,x8,lsr #4
+49fd8beb	subs x9,x10,x11,asr #63
+ff830091	add sp,sp,#32
+e0ff7f91	add x0,sp,#4095,lsl #12
+ff4300f1	subs xzr,sp,#16
+1ffc3ff1	cmp x0,#4095
+1f00016b	cmp w0,w1
+7f0004ab	cmn x3,x4
+20000051	sub w0,w1,#0
+4100038a	and x1,x2,x3
+a400066a	ands w4,w5,w6
+0745c9aa	orr x7,x8,x9,ror #17
+6a7d4c4a	eor w10,w11,w12,lsr #31
+200041d3	lsl x0,x1,#63
+627c1f53	lsr w2,w3,#31
+a4fc4093	asr x4,x5,#0
+e0ff7ff9	ldr x0,[sp,#32760]
+41fc3fb9	str w1,[x2,#16380]
+83fc7f39	ldrb w3,[x4,#4095]
+c5000039	strb w5,[x6]
+07fd7f79	ldrh w7,[x8,#8190]
+490d0079	strh w9,[x10,#6]
+8b0d80b9	ldrsw x11,[x12,#12]
+cd0150f8	ldur x13,[x14,#-256]
+eff30fb8	stur w15,[sp,#255]
+02000014	b 8
+00000016	b -134217728
+ffffff95	bl 134217724
+00008054	b.eq -1048576
+e1ff7f54	b.ne 1048572
+22000054	b.hs 4
+e3ffff54	b.lo -4
+0d000054	b.le 0
+40000034	cbz w0,8
+deffffb5	cbnz x30,-8
+fdff7f70	adr x29,1048575
+00008010	adr x0,-1048576

@@ -8,20 +8,13 @@ use amd64::parser::parse;
 
 use assembler::tokens::tokenize;
 
-use assembler::AssemblerOutput;
-
-use object::{
-    ObjectFile, ObjectFormat, ObjectRelocation, ObjectSymbol, RelocKind as ObjectRelocKind,
-    SectionKind, SymbolBinding, SymbolVisibility,
-};
-
 pub fn run(args: Vec<String>) {
     if args.is_empty() {
         print_help();
         return;
     }
 
-    let mut arch = None;
+    let mut arch: Option<String> = None;
     let mut input = None;
     let mut output = None;
     let mut max_input = None;
@@ -46,12 +39,37 @@ pub fn run(args: Vec<String>) {
                 return;
             },
 
-            flag @ ("--amd64" | "--aarch64") => {
+            flag @ ("--amd64" | "--aarch64" | "--arm64" | "--riscv64" | "--loongarch64") => {
                 if arch.is_some() {
                     eprintln!("Error: architecture must be specified only once");
                     process::exit(1);
                 }
-                arch = Some(if flag == "--amd64" { "amd64" } else { "aarch64" });
+                arch = Some(
+                    match flag {
+                        "--amd64" => "amd64",
+                        "--aarch64" | "--arm64" => "aarch64",
+                        "--riscv64" => "riscv64",
+                        _ => "loongarch64",
+                    }
+                    .to_owned(),
+                );
+            },
+
+            "--arch" => {
+                if arch.is_some() {
+                    eprintln!("Error: architecture must be specified only once");
+                    process::exit(1);
+                }
+                arch = Some(
+                    args.get(i + 1)
+                        .filter(|s| !s.starts_with('-'))
+                        .unwrap_or_else(|| {
+                            eprintln!("Error: --arch requires a registered assembler identity");
+                            process::exit(1);
+                        })
+                        .clone(),
+                );
+                i += 1;
             },
 
             "-o" => {
@@ -106,12 +124,31 @@ pub fn run(args: Vec<String>) {
     }
 
     let arch = arch.unwrap_or_else(|| {
-        eprintln!("Error: architecture must be specified (--amd64)");
+        eprintln!(
+            "Error: architecture must be specified (--amd64, --aarch64, --riscv64, --loongarch64)"
+        );
         process::exit(1);
     });
 
-    if arch != "amd64" {
-        eprintln!("Error: only --amd64 is supported right now");
+    let registry = crate::builtins::registry();
+    let implementation = registry.assembler(&arch).unwrap_or_else(|| {
+        eprintln!(
+            "Error: unregistered assembler {arch:?}; available: {}",
+            registry.assembler_ids().collect::<Vec<_>>().join(", ")
+        );
+        process::exit(1);
+    });
+    let target = implementation.object_target().unwrap_or_else(|| {
+        eprintln!("Error: assembler {arch:?} does not expose a native object target");
+        process::exit(1);
+    });
+    target.validate().unwrap_or_else(|error| {
+        eprintln!("Error: {error}");
+        process::exit(1);
+    });
+
+    if arch != "amd64" && debug_mode && (show_ast || show_token) {
+        eprintln!("Error: --ast and --token expose the AMD64 parser only");
         process::exit(1);
     }
 
@@ -147,7 +184,7 @@ pub fn run(args: Vec<String>) {
     let mut token_len: Option<usize> = None;
     let mut ast_items_len: Option<usize> = None;
 
-    let need_tokens = debug_mode && (show_token || show_ast || show_stats);
+    let need_tokens = arch == "amd64" && debug_mode && (show_token || show_ast || show_stats);
     if need_tokens {
         if trace_enable {
             println!("[trace] tokenize start");
@@ -182,9 +219,8 @@ pub fn run(args: Vec<String>) {
         println!("[trace] assemble start");
     }
     let start_time = Instant::now();
-    let registry = crate::builtins::registry();
     let out = registry
-        .assemble("amd64", &input, &src, &assembler::AssemblyLimits::default())
+        .assemble(&arch, &input, &src, &assembler::AssemblyLimits::default())
         .unwrap_or_else(|e| {
             eprintln!("Assemble error: {}", e);
             process::exit(1);
@@ -194,7 +230,7 @@ pub fn run(args: Vec<String>) {
     if trace_enable {
         println!("[trace] creating object file");
     }
-    let final_bytes = build_elf_from_asm_output(&out).unwrap_or_else(|e| {
+    let final_bytes = assembler_object::write(&out, target).unwrap_or_else(|e| {
         eprintln!("ELF build error: {}", e);
         process::exit(1);
     });
@@ -211,8 +247,8 @@ pub fn run(args: Vec<String>) {
     if debug_mode && show_stats {
         println!(
             "== STATS ==\nTokens: {}\nAST nodes: {}\nObject bytes: {}\nTime: {} ms",
-            token_len.unwrap_or(0),
-            ast_items_len.unwrap_or(0),
+            token_len.map_or_else(|| "n/a".into(), |n| n.to_string()),
+            ast_items_len.map_or_else(|| "n/a".into(), |n| n.to_string()),
             final_bytes.len(),
             elapsed.as_millis()
         );
@@ -221,110 +257,11 @@ pub fn run(args: Vec<String>) {
     println!("Wrote {} bytes to {}", final_bytes.len(), output);
 }
 
-fn build_elf_from_asm_output(out: &AssemblerOutput) -> Result<Vec<u8>, String> {
-    let mut obj = ObjectFile::new(ObjectFormat::ELF64);
-    let mut section_map = Vec::with_capacity(out.sections.len());
-
-    for sec in &out.sections {
-        let kind = match sec.kind {
-            assembler::AsmSectionKind::Text => SectionKind::Text,
-            assembler::AsmSectionKind::Data => SectionKind::Data,
-            assembler::AsmSectionKind::ReadOnlyData => SectionKind::ReadOnlyData,
-            assembler::AsmSectionKind::Bss => SectionKind::Bss,
-        };
-        let align = sec.align;
-        let idx = obj.add_section(&sec.name, kind, align);
-        obj.sections[idx].data = sec.data.clone();
-        obj.sections[idx].zero_fill = sec.zero_fill;
-        section_map.push(idx);
-    }
-
-    for sym in &out.symbols {
-        let section_index = sym.section_index.and_then(|idx| section_map.get(idx).copied());
-
-        obj.symbols.push(ObjectSymbol {
-            kind: match sym.kind {
-                assembler::SymbolKind::NoType => object::SymbolKind::NoType,
-                assembler::SymbolKind::Function => object::SymbolKind::Function,
-                assembler::SymbolKind::Object => object::SymbolKind::Object,
-            },
-            name: sym.name.clone(),
-            section_index,
-            value: sym.offset,
-            size: sym.size,
-            binding: if sym.is_global { SymbolBinding::Global } else { SymbolBinding::Local },
-            visibility: match sym.visibility {
-                assembler::SymbolVisibility::Default => SymbolVisibility::Default,
-                assembler::SymbolVisibility::Hidden => SymbolVisibility::Hidden,
-            },
-        });
-    }
-
-    for (asm_sec_idx, sec) in out.sections.iter().enumerate() {
-        let Some(&obj_sec_idx) = section_map.get(asm_sec_idx) else {
-            continue;
-        };
-
-        for reloc in &sec.relocs {
-            let is_undefined_symbol = out
-                .symbols
-                .iter()
-                .find(|s| s.name == reloc.symbol)
-                .map(|s| s.section_index.is_none())
-                .unwrap_or(true);
-
-            let kind = match reloc.kind {
-                assembler::assembler::RelocKind::TargetSpecific { .. } => {
-                    return Err(
-                        "target-specific relocation cannot be written by the AMD64 ELF adapter"
-                            .into(),
-                    );
-                },
-                assembler::assembler::RelocKind::Absolute64 => ObjectRelocKind::Absolute64,
-                assembler::assembler::RelocKind::Absolute32 => ObjectRelocKind::Absolute32,
-                assembler::assembler::RelocKind::SignedAbsolute32 => {
-                    ObjectRelocKind::SignedAbsolute32
-                },
-                assembler::assembler::RelocKind::Relative32 => ObjectRelocKind::Relative32,
-                assembler::assembler::RelocKind::Branch32 => {
-                    if is_undefined_symbol {
-                        ObjectRelocKind::PLT32
-                    } else {
-                        ObjectRelocKind::Relative32
-                    }
-                },
-                assembler::assembler::RelocKind::Relative8 => ObjectRelocKind::Relative8,
-            };
-
-            obj.relocations.push(ObjectRelocation {
-                section_index: obj_sec_idx,
-                offset: reloc.offset,
-                symbol: reloc.symbol.clone(),
-                addend: reloc.addend,
-                kind,
-            });
-
-            if obj.symbols.iter().all(|s| s.name != reloc.symbol) {
-                obj.symbols.push(ObjectSymbol {
-                    kind: object::SymbolKind::NoType,
-                    name: reloc.symbol.clone(),
-                    section_index: None,
-                    value: 0,
-                    size: 0,
-                    binding: SymbolBinding::Global,
-                    visibility: SymbolVisibility::Default,
-                });
-            }
-        }
-    }
-
-    obj.write()
-}
-
 fn print_help() {
     println!("Usage:");
-    println!("  whale asm --amd64 <input> -o <output.o>");
+    println!("  whale asm --amd64|--aarch64|--arm64|--riscv64|--loongarch64 <input> -o <output.o>");
     println!();
+    println!("  whale asm --arch ID <input> -o <output.o>");
     println!("Options:");
     println!("  --max-input N   input byte limit (default 8388608 bytes)");
     println!("  --debug-whale   enable debug features");

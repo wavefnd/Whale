@@ -74,17 +74,28 @@ impl Linker {
     pub fn link_with_limit(&mut self, max_bytes: u64) -> Result<Vec<u8>, LinkError> {
         for (index, input) in self.inputs.iter().enumerate() {
             match input {
-                LinkInput::Object(o) => o.validate_diagnostic().map_err(|e| LinkError {
-                    kind: LinkErrorKind::Input,
-                    message: format!("link input {index}: {e}"),
-                    contexts: {
-                        let mut contexts = e.contexts.clone();
-                        contexts.push(diagnostic::Context::Input(index));
-                        contexts
-                    },
-                    input_cause: Some(Box::new(e)),
-                    relocation_cause: None,
-                })?,
+                LinkInput::Object(o) => o
+                    .target
+                    .validate_amd64()
+                    .map_err(|e| {
+                        object::ObjectError::new(
+                            "validate",
+                            object::ObjectErrorKind::InvalidTarget,
+                            e.to_string(),
+                        )
+                    })
+                    .and_then(|_| o.validate_diagnostic())
+                    .map_err(|e| LinkError {
+                        kind: LinkErrorKind::Input,
+                        message: format!("link input {index}: {e}"),
+                        contexts: {
+                            let mut contexts = e.contexts.clone();
+                            contexts.push(diagnostic::Context::Input(index));
+                            contexts
+                        },
+                        input_cause: Some(Box::new(e)),
+                        relocation_cause: None,
+                    })?,
                 LinkInput::Archive(members) => {
                     for m in members {
                         m.object.validate().map_err(|e| {

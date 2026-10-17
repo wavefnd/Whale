@@ -34,6 +34,7 @@ pub enum Machine {
     X86_64,
     AArch64,
     RiscV64,
+    LoongArch64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -45,8 +46,21 @@ pub struct ObjectTarget {
 }
 
 impl ObjectTarget {
-    /// Reject unsupported combinations before interpreting relocation kinds or bytes.
+    pub const fn elf64(machine: Machine) -> Self {
+        Self { format: ObjectFormat::ELF64, machine, endian: Endian::Little, address_bits: 64 }
+    }
+
+    /// Serialization support is independent of static linker/reader support.
     pub fn validate(self) -> Result<(), TargetError> {
+        if self.endian == Endian::Little && self.address_bits == 64 {
+            Ok(())
+        } else {
+            Err(TargetError::UnsupportedObjectTarget(self))
+        }
+    }
+
+    /// The static linker and its relocation/layout APIs implement AMD64 only.
+    pub fn validate_amd64(self) -> Result<(), TargetError> {
         if self == Target::X86_64WhaleLinux.object_target() {
             Ok(())
         } else {
@@ -59,7 +73,17 @@ impl ObjectTarget {
         self.validate()?;
         match self.machine {
             Machine::X86_64 => Ok(62), // EM_X86_64
-            _ => Err(TargetError::UnsupportedObjectTarget(self)),
+            Machine::AArch64 => Ok(183),
+            Machine::RiscV64 => Ok(243),
+            Machine::LoongArch64 => Ok(258),
+        }
+    }
+
+    pub const fn elf_flags(self) -> u32 {
+        // LoongArch ELF ABI v1, LP64S (soft float). RV64I uses no RVC or FP ABI flags.
+        match self.machine {
+            Machine::LoongArch64 => 0x41,
+            _ => 0,
         }
     }
 }
@@ -152,4 +176,5 @@ impl fmt::Display for TargetError {
 impl std::error::Error for TargetError {}
 
 pub mod extension;
+
 pub use extension::{MemoryModel, OutputKind, StorageLayout, TargetSpec};

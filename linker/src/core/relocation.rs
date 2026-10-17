@@ -121,7 +121,7 @@ pub fn apply_relocations(
                 RelocKind::Absolute32 | RelocKind::SignedAbsolute32 => (absolute, 4),
                 RelocKind::Relative32 | RelocKind::PLT32 => (absolute - i128::from(place), 4),
                 RelocKind::Relative8 => (absolute - i128::from(place), 1),
-                RelocKind::GOTPCREL => {
+                RelocKind::GOTPCREL | RelocKind::TargetSpecific { .. } => {
                     return Err(error(
                         RelocationErrorKind::Unsupported,
                         "GOTPCREL requires unsupported dynamic/GOT structures",
@@ -136,7 +136,7 @@ pub fn apply_relocations(
                     i32::try_from(value).is_ok()
                 },
                 RelocKind::Relative8 => i8::try_from(value).is_ok(),
-                RelocKind::GOTPCREL => false,
+                RelocKind::GOTPCREL | RelocKind::TargetSpecific { .. } => false,
             };
 
             if !fits {

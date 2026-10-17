@@ -41,7 +41,7 @@ impl Layout {
 
         let mut memory_end = base_address;
         for (object_index, obj) in objects.iter().enumerate() {
-            obj.target.validate().map_err(|e| format!("link input {object_index}: {e}"))?;
+            obj.target.validate_amd64().map_err(|e| format!("link input {object_index}: {e}"))?;
             let mut offsets = Vec::new();
             for (section_index, sec) in obj.sections.iter().enumerate() {
                 let context =

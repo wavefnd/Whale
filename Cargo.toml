@@ -3,6 +3,10 @@ members = [
     "diagnostic",
     "assembler",
     "assembler/amd64",
+    "assembler/aarch64",
+    "assembler/riscv64",
+    "assembler/loongarch64",
+    "assembler-object",
     "backend-api",
     "toolchain",
     "examples/external-target",
@@ -29,6 +33,10 @@ wave-reverse = ["reverse/wave"]
 [dependencies]
 assembler = { path = "assembler" }
 amd64 = { path = "assembler/amd64" }
+aarch64 = { path = "assembler/aarch64" }
+riscv64 = { path = "assembler/riscv64" }
+loongarch64 = { path = "assembler/loongarch64" }
+assembler-object = { path = "assembler-object" }
 toolchain = { path = "toolchain" }
 reverse = { path = "reverse" }
 linker = { path = "linker" }

@@ -1,0 +1,71 @@
+# Exact bytes from LLVM llvm-mc 21.1.8; regenerate/verify with tools/check_isa_oracle.py.
+13000000	nop
+67800000	ret
+73000000	ecall
+73001000	ebreak
+13850500	mv a0,a1
+9342f3ff	not t0,t1
+b305c040	neg a1,a2
+3b049040	negw s0,s1
+13050080	li a0,-2048
+9308f07f	li a7,2047
+67800000	jr ra
+6ff09fff	j -8
+ef008000	jal 8
+ef0f0080	jal x31,-1048576
+eff0ff7f	jal ra,1048574
+e7000180	jalr ra,sp,-2048
+e702f47f	jalr t0,2047(s0)
+e7800000	jalr ra
+63040500	beqz a0,8
+e39c05fe	bnez a1,-8
+e38f207e	beq x1,x2,4094
+63904180	bne x3,x4,-4096
+63c26200	blt x5,x6,4
+63d08300	bge x7,x8,0
+e3eea4fe	bltu x9,x10,-4
+63f8c500	bgeu x11,x12,16
+b7f0ffff	lui x1,0xfffff
+17010080	auipc x2,524288
+13850580	addi a0,a1,-2048
+9325f67f	slti a1,a2,2047
+13b6f6ff	sltiu a2,a3,-1
+9346f703	xori a3,a4,63
+13e70700	ori a4,a5,0
+93770840	andi a5,a6,1024
+1b88f8ff	addiw a6,a7,-1
+9310f103	slli x1,x2,63
+93510200	srli x3,x4,0
+93520342	srai x5,x6,32
+9b13f401	slliw x7,x8,31
+9b541500	srliw x9,x10,1
+9b550640	sraiw x11,x12,0
+b3003100	add x1,x2,x3
+33826240	sub x4,x5,x6
+b3139400	sll x7,x8,x9
+33a5c500	slt x10,x11,x12
+b336f700	sltu x13,x14,x15
+33c82801	xor x16,x17,x18
+b3595a01	srl x19,x20,x21
+33db8b41	sra x22,x23,x24
+b36cbd01	or x25,x26,x27
+33feee01	and x28,x29,x30
+3b85c500	addw a0,a1,a2
+bb05d640	subw a1,a2,a3
+3b96e600	sllw a2,a3,a4
+bb56f700	srlw a3,a4,a5
+3bd70741	sraw a4,a5,a6
+83000180	lb x1,-2048(x2)
+8311f27f	lh x3,2047(x4)
+83220300	lw x5,0(x6)
+83338400	ld x7,8(x8)
+83441500	lbu x9,1(x10)
+83552600	lhu x11,2(x12)
+83664700	lwu x13,4(x14)
+a30ff8fe	sb x15,-1(x16)
+23111901	sh x17,2(x18)
+23223a01	sw x19,4(x20)
+23345b01	sd x21,8(x22)
+0f00f00f	fence
+0f003003	fence rw,rw
+0f00f00f	fence iorw,iorw

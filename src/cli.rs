@@ -35,7 +35,8 @@ pub fn run() {
 
 fn print_help() {
     println!("Usage:");
-    println!("  whale asm --amd64 <input> -o <output.o>");
+    println!("  whale asm --amd64|--aarch64|--riscv64|--loongarch64 <input> -o <output.o>");
+    println!("  whale asm --arch ID <input> -o <output.o>");
     println!("  whale object <input> -o <output>");
     println!("  whale link <input.o|input.a>... -o <executable> [--entry NAME]");
     println!("  whale ir <subcommand> [options]");
@@ -44,7 +45,7 @@ fn print_help() {
     println!("  whale --version | -V");
     println!();
     println!("Commands:");
-    println!("  asm     Assemble AMD64 source into an ELF64 object");
+    println!("  asm     Assemble AMD64/AArch64/RV64I/LoongArch64 source into an ELF64 object");
     println!("  object  Wrap raw bytes in an AMD64 ELF64 object");
     println!("  link    Static Linux AMD64 executable linking");
     println!("  disasm  AMD64 disassembly (requires the opt-in Wave reverse core)");

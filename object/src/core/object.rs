@@ -162,15 +162,10 @@ impl ObjectFile {
                 )
                 .section(relocation.section_index));
             }
-            let width = match relocation.kind {
-                crate::RelocKind::Absolute64 => 8,
-                crate::RelocKind::Relative8 => 1,
-                crate::RelocKind::Absolute32
-                | crate::RelocKind::SignedAbsolute32
-                | crate::RelocKind::Relative32
-                | crate::RelocKind::GOTPCREL
-                | crate::RelocKind::PLT32 => 4,
-            };
+            let (_, width) = relocation
+                .kind
+                .encoding(self.target)
+                .map_err(|e| error(K::InvalidRelocation, e).section(relocation.section_index))?;
             let end = relocation.offset.checked_add(width).ok_or_else(|| {
                 error(
                     K::Overflow,

@@ -5,5 +5,8 @@ pub fn registry() -> toolchain::Registry {
         .register_target(ir::Target::X86_64WhaleLinux.specification())
         .expect("valid built-in target");
     registry.register_assembler(amd64::AMD64).expect("unique built-in assembler");
+    registry.register_assembler(aarch64::AArch64).expect("unique built-in assembler");
+    registry.register_assembler(riscv64::RiscV64).expect("unique built-in assembler");
+    registry.register_assembler(loongarch64::LoongArch64).expect("unique built-in assembler");
     registry
 }

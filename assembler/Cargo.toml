@@ -5,4 +5,5 @@ edition = "2021"
 rust-version.workspace = true
 
 [dependencies]
+target-spec = { path = "../target-spec" }
 diagnostic = { path = "../diagnostic" }

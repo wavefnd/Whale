@@ -51,6 +51,7 @@ impl SymbolTable {
         self.references.clear();
 
         for (index, obj) in objects.iter().enumerate() {
+            obj.target.validate_amd64().map_err(|e| format!("link input {index}: {e}"))?;
             obj.validate().map_err(|e| format!("link input {index}: {e}"))?;
         }
 
