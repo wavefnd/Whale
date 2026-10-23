@@ -1,0 +1,84 @@
+// SPDX-License-Identifier: MPL-2.0
+// Private borrowed records between asmobj and its caller. This is not a target
+// extension API: adding an ISA changes the owning source files and build list.
+struct AsmobjTarget {
+    format: u64;
+    machine: u64;
+    address_bits: u64;
+    endian: u64;
+}
+
+struct AsmobjSection {
+    name: ptr<u8>;
+    name_len: u64;
+    kind: u64;
+    alignment: u64;
+    data: ptr<u8>;
+    data_len: u64;
+    zero_fill: u64;
+}
+
+struct AsmobjSymbol {
+    name: ptr<u8>;
+    name_len: u64;
+    kind: u64;
+    section: u64;
+    offset: u64;
+    size: u64;
+    binding: u64;
+    visibility: u64;
+}
+
+struct AsmobjRelocation {
+    section: u64;
+    offset: u64;
+    name: ptr<u8>;
+    name_len: u64;
+    kind: u64;
+    namespace: ptr<u8>;
+    namespace_len: u64;
+    code: u64;
+    addend: i64;
+}
+
+struct AsmobjResult {
+    status: u64;
+    index: u64;
+    symbol_count: u64;
+}
+
+struct AsmobjState {
+    symbols: ptr<AsmobjSymbol>;
+    symbol_count: u64;
+    relocations: ptr<AsmobjRelocation>;
+    relocation_count: u64;
+    scratch: ptr<u64>;
+    slots: u64;
+    work: u64;
+    status: i32;
+}
+
+fun asmobj_charge(state: ptr<AsmobjState>, amount: u64) -> bool {
+    if (amount > state.work) {
+        state.status = 9;
+        return false;
+    }
+    state.work -= amount;
+    return true;
+}
+
+fun asmobj_span_valid(data: ptr<u8>, count: u64) -> bool {
+    return (count == 0 || data != null) && count <= 9223372036854775807
+        && count <= 18446744073709551615 - (data as u64);
+}
+
+fun asmobj_array_valid(data: ptr<u8>, count: u64, width: u64) -> bool {
+    return count <= 9223372036854775807 / width
+        && asmobj_span_valid(data, count * width);
+}
+
+fun asmobj_target_valid(target: ptr<AsmobjTarget>) -> bool {
+    return target != null && target.format <= 2 && target.machine <= 3
+        && target.address_bits == 64 && target.endian == 0
+        && (target.format == 0 || target.machine <= 1);
+}

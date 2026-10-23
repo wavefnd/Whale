@@ -5,25 +5,14 @@ function pointers, scoped and sparse IDs, repeated names and entry blocks stored
 out of execution order. Their corresponding builder/lowering tests specify the
 expected canonical output.
 
-`wave-control.wave` and `wave-casts.wave` are complete Wave programs.
-`wave-control-v3.wir` and `wave-casts-v3.wir` were produced by Wave's typed HIR
-adapter from working-tree revision `13a406d0fe2802ccc234264baab113c19249c7a9`.
-The frontend crates and adapter were copied into a temporary workspace, with
-only that copy's Whale dependency pointed at this IR implementation. The source
-Wave checkout was not changed. No LLVM backend or external assembler was used.
-The control-flow case includes a loop, branches, short-circuit phi and direct
-calls; the cast case includes signed extension, integer-to-float and float
-truncation with memory loads/stores.
+`wave-control-v3.wir` and `wave-casts-v3.wir` are retained historical text
+IR outputs from Wave's typed HIR adapter. Only the language-independent IR
+fixtures remain here; the old Wave source examples have been removed.
+They exercise control flow, scoped IDs, calls and numeric conversions.
 
-`text_parser.rs` reads every retained output, verifies it and requires canonical
-print-parse-print equality, upgrading the header to format 8. These tests do not require a Wave checkout
-or claim native execution. To regenerate with a matching Wave checkout and a
-Whale dependency containing this reader/printer, run from the Wave root:
-
-```sh
-cargo run -- --whale build /path/to/wave-control.wave --emit=ir
-cargo run -- --whale build /path/to/wave-casts.wave --emit=ir
-```
+`text_parser.rs` verifies these outputs and requires canonical print-parse-print
+equality, upgrading the header to format 8. These tests run the Rust IR module
+and do not require a Wave compiler.
 
 Legacy AST JSON formats 2/3/4 remain readable; canonical AST JSON is format 5.
 Canonical typed text IR is format 8 (the reader also accepts 3/4/5/6/7). Readers reject

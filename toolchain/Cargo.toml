@@ -10,3 +10,4 @@ backend-api = { path = "../backend-api" }
 target-spec = { path = "../target-spec" }
 ir = { path = "../ir" }
 diagnostic = { path = "../diagnostic" }
+object = { path = "../object" }

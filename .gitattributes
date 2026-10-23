@@ -1,4 +1,4 @@
-*.wave linguist-language=Wave
+*.wave text eol=lf linguist-language=Wave
 *.ps1 linguist-vendored
 *.sh linguist-vendored
 Makefile linguist-vendored

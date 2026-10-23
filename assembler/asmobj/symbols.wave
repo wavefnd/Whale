@@ -1,0 +1,98 @@
+// SPDX-License-Identifier: MPL-2.0
+// Each hash slot is {source kind, source index, undefined flag, byte hash}.
+// Source kind 1 borrows an input symbol, 2 the first relocation needing a symbol.
+fun asmobj_name_hash(state: ptr<AsmobjState>, name: ptr<u8>, count: u64,
+    output: ptr<u64>) -> bool {
+    if (!asmobj_charge(state, count)) { return false; }
+    var hash: u64 = 14695981039346656037;
+    var index: u64 = 0;
+    while (index < count) {
+        hash = (hash ^ (name[index] as u64)) * 1099511628211;
+        index += 1;
+    }
+    output[0] = hash;
+    return true;
+}
+
+fun asmobj_names_equal(state: ptr<AsmobjState>, left: ptr<u8>, left_len: u64,
+    right: ptr<u8>, right_len: u64) -> bool {
+    if (left_len != right_len) { return false; }
+    if (!asmobj_charge(state, left_len)) { return false; }
+    var index: u64 = 0;
+    while (index < left_len) {
+        if (left[index] != right[index]) { return false; }
+        index += 1;
+    }
+    return true;
+}
+
+fun asmobj_find_name(state: ptr<AsmobjState>, name: ptr<u8>, count: u64,
+    output: ptr<u64>) -> bool {
+    var hash: u64 = 0;
+    if (!asmobj_name_hash(state, name, count, &hash)) { return false; }
+    var slot: u64 = hash & (state.slots - 1);
+    var probes: u64 = 0;
+    while (probes < state.slots) {
+        if (!asmobj_charge(state, 1)) { return false; }
+        var start: u64 = slot * 4;
+        var source: u64 = state.scratch[start];
+        if (source == 0) {
+            state.scratch[start + 3] = hash;
+            output[0] = start;
+            return true;
+        }
+        if (state.scratch[start + 3] == hash) {
+            var other: ptr<u8> = null;
+            var other_len: u64 = 0;
+            var index: u64 = state.scratch[start + 1];
+            if (source == 1 && index < state.symbol_count) {
+                other = state.symbols[index].name;
+                other_len = state.symbols[index].name_len;
+            } else if (source == 2 && index < state.relocation_count) {
+                other = state.relocations[index].name;
+                other_len = state.relocations[index].name_len;
+            } else {
+                state.status = 8;
+                return false;
+            }
+            if (asmobj_names_equal(state, name, count, other, other_len)) {
+                output[0] = start;
+                return true;
+            }
+            if (state.status != 0) { return false; }
+        }
+        slot = (slot + 1) & (state.slots - 1);
+        probes += 1;
+    }
+    state.status = 7;
+    return false;
+}
+
+fun asmobj_symbol_valid(symbol: ptr<AsmobjSymbol>) -> bool {
+    return symbol.kind <= 2 && symbol.binding <= 1 && symbol.visibility <= 1
+        && asmobj_span_valid(symbol.name, symbol.name_len);
+}
+
+fun asmobj_register_symbol(state: ptr<AsmobjState>, index: u64) -> bool {
+    var symbol: ptr<AsmobjSymbol> = &state.symbols[index];
+    var slot: u64 = 0;
+    if (!asmobj_find_name(state, symbol.name, symbol.name_len, &slot)) { return false; }
+    // Preserve every original symbol. Last definition controls branch relocation
+    // selection, as in the previous map; ObjectFile owns duplicate validation.
+    state.scratch[slot] = 1;
+    state.scratch[slot + 1] = index;
+    state.scratch[slot + 2] = 0;
+    if (symbol.section == 18446744073709551615) { state.scratch[slot + 2] = 1; }
+    return true;
+}
+
+fun asmobj_emit_undefined(relocation: ptr<AsmobjRelocation>, output: ptr<AsmobjSymbol>) {
+    output.name = relocation.name;
+    output.name_len = relocation.name_len;
+    output.kind = 0;
+    output.section = 18446744073709551615;
+    output.offset = 0;
+    output.size = 0;
+    output.binding = 1;
+    output.visibility = 0;
+}

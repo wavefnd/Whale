@@ -1,0 +1,105 @@
+name: Build complete Wave asmobj module
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        description: Exact Whale source to build; defaults to the caller commit
+        type: string
+        required: false
+        default: ''
+    outputs:
+      artifact_name:
+        description: Exact archive artifact published by this prerequisite job
+        value: ${{ jobs.archives.outputs.artifact_name }}
+
+permissions:
+  contents: read
+
+jobs:
+  archives:
+    name: Wave asmobj archives and Linux conformance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    outputs:
+      artifact_name: asmobj-${{ github.run_id }}-${{ github.run_attempt }}
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ inputs.source || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: wavefnd/Wave
+          ref: e0952ed65d07e14c6ed0aa64f3c9a5532dd7533b
+          path: .asmobj-bootstrap-source
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - name: Install pinned compiler prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y wget software-properties-common ninja-build
+          wget --tries=3 --timeout=30 https://apt.llvm.org/llvm.sh -O "$RUNNER_TEMP/llvm.sh"
+          sudo bash "$RUNNER_TEMP/llvm.sh" 21
+          sudo apt-get install --no-install-recommends -y llvm-21-dev lld-21
+          printf '%s\n' \
+            'LLVM_SYS_211_PREFIX=/usr/lib/llvm-21' \
+            'LLVM_CONFIG_PATH=/usr/lib/llvm-21/bin/llvm-config' \
+            'AR=/usr/lib/llvm-21/bin/llvm-ar' >> "$GITHUB_ENV"
+          echo "/usr/lib/llvm-21/bin" >> "$GITHUB_PATH"
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup toolchain install stable --profile minimal
+      - name: Build each archive from the same complete source module
+        run: |
+          for target in \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu \
+            riscv64gc-unknown-linux-gnu \
+            x86_64-pc-windows-msvc \
+            aarch64-pc-windows-msvc \
+            x86_64-apple-darwin \
+            aarch64-apple-darwin; do
+            python3 tools/build_asmobj.py --wave-source .asmobj-bootstrap-source \
+              --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
+              --out-dir ".ci-asmobj/$target" --target "$target" --allow-network
+          done
+      - name: Compare native Linux O0 and O2 with the independent oracle
+        run: |
+          python3 tools/build_asmobj.py --wave-source .asmobj-bootstrap-source \
+            --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
+            --out-dir "$RUNNER_TEMP/asmobj-o0" --opt-level 0
+          cc -shared -Wl,--whole-archive "$RUNNER_TEMP/asmobj-o0/libwhale_asmobj.a" \
+            -Wl,--no-whole-archive -o "$RUNNER_TEMP/asmobj-o0.so"
+          cc -shared -Wl,--whole-archive .ci-asmobj/x86_64-unknown-linux-gnu/libwhale_asmobj.a \
+            -Wl,--no-whole-archive -o "$RUNNER_TEMP/asmobj-o2.so"
+          asmobj_python="$(python3 -c 'import sys; print(sys.executable)')"
+          for optimization in 0 2; do
+            timeout 120s python3 tools/fuzz_limits.py --memory-mib 512 -- \
+              "$asmobj_python" tools/check_asmobj.py \
+              --library "$RUNNER_TEMP/asmobj-o$optimization.so" --cases 10000
+          done
+      - name: Build, test and install the Meson source product
+        run: |
+          python3 -m pip install --disable-pip-version-check meson==1.8.5
+          cargo fetch --locked
+          meson setup "$RUNNER_TEMP/whale-meson" \
+            -Dwave-source="$GITHUB_WORKSPACE/.asmobj-bootstrap-source" \
+            -Dwave-bootstrap-dir="$RUNNER_TEMP/asmobj-bootstrap" -Dsocket-cli=true
+          meson compile -C "$RUNNER_TEMP/whale-meson"
+          meson test -C "$RUNNER_TEMP/whale-meson" --print-errorlogs
+          DESTDIR="$RUNNER_TEMP/whale-meson-install" meson install -C "$RUNNER_TEMP/whale-meson"
+          "$RUNNER_TEMP/whale-meson-install/usr/local/bin/whale" --version
+      - name: Retain target-specific archives and provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: asmobj-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-asmobj/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7

@@ -20,6 +20,10 @@ env:
   RUSTUP_TOOLCHAIN: stable
 
 jobs:
+  asmobj:
+    name: Build Wave asmobj prerequisites
+    uses: ./.github/workflows/asmobj.yml
+
   format:
     name: Rust formatting
     runs-on: ubuntu-24.04
@@ -45,6 +49,7 @@ jobs:
           retention-days: 7
 
   clippy:
+    needs: asmobj
     name: Clippy / ${{ matrix.features }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -53,11 +58,17 @@ jobs:
       matrix:
         features: [default, all]
     env:
+      WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
       FEATURE_FLAGS: ${{ matrix.features == 'all' && '--all-features' || '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Download complete Wave asmobj module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.artifact_name }}
+          path: .ci-asmobj
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -76,15 +87,22 @@ jobs:
           retention-days: 7
 
   docs:
+    needs: asmobj
     name: Public crate documentation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
+      WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
       RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Download complete Wave asmobj module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.artifact_name }}
+          path: .ci-asmobj
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -121,6 +139,8 @@ jobs:
         run: python tools/ci.py run --name actionlint -- /tmp/actionlint -color
       - name: Check CI helper failure handling
         run: python tools/ci.py run --name runner-tests -- python -m unittest discover -s tools -p test_*.py -v
+      - name: Check core module dependency direction
+        run: python tools/ci.py run --name module-layers -- python tools/check_module_layers.py
       - name: Retain command logs and reproduction evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -132,15 +152,22 @@ jobs:
           retention-days: 7
 
   bounded-validation:
+    needs: asmobj
     name: Bounded fuzz, memory model and AST schemas
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
+      WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
       WHALE_FUZZ_ARTIFACT_DIR: .ci-artifacts/fuzz
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Download complete Wave asmobj module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.artifact_name }}
+          path: .ci-asmobj
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'

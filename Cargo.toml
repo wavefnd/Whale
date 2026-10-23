@@ -6,7 +6,6 @@ members = [
     "assembler/aarch64",
     "assembler/riscv64",
     "assembler/loongarch64",
-    "assembler/asmobj",
     "backend-api",
     "toolchain",
     "examples/external-target",
@@ -26,17 +25,20 @@ edition = "2021"
 rust-version.workspace = true
 
 [features]
-default = []
+default = ["builtin-assemblers"]
+builtin-assemblers = ["asm-amd64", "asm-aarch64", "asm-riscv64", "asm-loongarch64"]
+asm-amd64 = ["dep:amd64"]
+asm-aarch64 = ["dep:aarch64"]
+asm-riscv64 = ["dep:riscv64"]
+asm-loongarch64 = ["dep:loongarch64"]
 socket-cli = ["ir/socket"]
-wave-reverse = ["reverse/wave"]
 
 [dependencies]
 assembler = { path = "assembler" }
-amd64 = { path = "assembler/amd64" }
-aarch64 = { path = "assembler/aarch64" }
-riscv64 = { path = "assembler/riscv64" }
-loongarch64 = { path = "assembler/loongarch64" }
-asmobj = { path = "assembler/asmobj" }
+amd64 = { path = "assembler/amd64", optional = true }
+aarch64 = { path = "assembler/aarch64", optional = true }
+riscv64 = { path = "assembler/riscv64", optional = true }
+loongarch64 = { path = "assembler/loongarch64", optional = true }
 toolchain = { path = "toolchain" }
 reverse = { path = "reverse" }
 linker = { path = "linker" }
@@ -46,3 +48,11 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 same-file = "1"
 tempfile = "3"
+
+[[example]]
+name = "benchmark_probe"
+required-features = ["asm-amd64"]
+
+[[example]]
+name = "fuzz_boundaries"
+required-features = ["asm-amd64"]

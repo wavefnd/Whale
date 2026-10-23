@@ -20,7 +20,12 @@ env:
   RUSTUP_TOOLCHAIN: stable
 
 jobs:
+  asmobj:
+    name: Build Wave asmobj prerequisites
+    uses: ./.github/workflows/asmobj.yml
+
   native:
+    needs: asmobj
     name: Native ${{ matrix.platform }} / ${{ matrix.features }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -55,12 +60,18 @@ jobs:
             host: x86_64-apple-darwin
             binary: target/debug/whale
     env:
+      WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/${{ matrix.host }}
       RUSTUP_TOOLCHAIN: stable-${{ matrix.host }}
       FEATURE_FLAGS: ${{ matrix.features == 'all' && '--all-features' || '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Download complete Wave asmobj module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.artifact_name }}
+          path: .ci-asmobj
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -93,6 +104,7 @@ jobs:
           retention-days: 7
 
   msrv:
+    needs: asmobj
     name: Rust 1.86 / ${{ matrix.features }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -101,12 +113,18 @@ jobs:
       matrix:
         features: [default, all]
     env:
+      WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
       RUSTUP_TOOLCHAIN: '1.86.0'
       FEATURE_FLAGS: ${{ matrix.features == 'all' && '--all-features' || '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Download complete Wave asmobj module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.artifact_name }}
+          path: .ci-asmobj
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -129,13 +147,21 @@ jobs:
           retention-days: 7
 
   release-tests:
+    needs: asmobj
     name: Optimized regression tests
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    env:
+      WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Download complete Wave asmobj module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.artifact_name }}
+          path: .ci-asmobj
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -154,15 +180,22 @@ jobs:
           retention-days: 7
 
   riscv:
+    needs: asmobj
     name: RISC-V Linux host / QEMU smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:
+      WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/riscv64gc-unknown-linux-gnu
       CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER: riscv64-linux-gnu-gcc
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Download complete Wave asmobj module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.artifact_name }}
+          path: .ci-asmobj
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'

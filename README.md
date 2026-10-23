@@ -7,7 +7,9 @@
 Whale brings together an intermediate representation, assembler, object-file
 library, and linker infrastructure. Developed within the
 [Wave ecosystem](https://github.com/wavefnd/Wave), its components are intended to
-serve language implementations and compiler tooling as reusable Rust libraries.
+serve language implementations and compiler tooling through separately owned source
+modules. Most components are Rust; the complete assembly-to-object `asmobj`
+module is Wave.
 
 Whale is in active, early development. APIs and IR formats are evolving; the
 current capabilities are listed below.
@@ -25,8 +27,8 @@ current capabilities are listed below.
   Explicit constant declarations retain their typed initializer expressions and
   evaluated values, including unused local declarations. Their compile-time
   evaluation does not introduce runtime arithmetic instructions.
-- **Reusable components:** expose the IR, assembler, object model, and linker as
-  separate crates.
+- **Reusable components:** separate IR, assembler, assembly-to-object mapping,
+  object formats and linking by responsibility.
 
 These are project goals. Complete memory-safety semantics and an end-to-end
 native compilation pipeline are still being developed.
@@ -35,11 +37,11 @@ native compilation pipeline are still being developed.
 
 | Component | Available today | Status |
 | --- | --- | --- |
-| Assembler | AMD64 plus initial AArch64, RV64I and LoongArch64 integer subsets; sections, symbols, ELF64 and initial AMD64/AArch64 COFF and Mach-O output | Available; new ISAs are initial subsets |
+| Assembler | AMD64 plus initial AArch64, RV64I and LoongArch64 integer subsets; sections, symbols, ELF64 and initial AMD64/AArch64 COFF and Mach-O output | Object emission requires the complete Wave `asmobj` module; initial linked host Linux x86_64 GNU |
 | IR | Typed IR construction, text parsing/printing, bounded verification, integer/control-flow, tracked stack-memory and bounded Whale-call interpretation, and scalar AST JSON lowering | Experimental |
 | Object library | Object model, bounded ELF64 reading and ELF64/COFF/Mach-O relocatable serialization | Available |
 | Object CLI | Wrap raw input bytes in an ELF64 object with a `.text` section | Limited |
-| Reverse | ELF inspection plus opt-in Wave AMD64 disassembly and CFG/xrefs | Experimental |
+| Reverse | Bounded ELF/raw image inspection and typed result records | Inspection available; decoder and CFG/xrefs unavailable |
 | Linker | Static Linux AMD64 ELF executables from objects and ordinary archives, checked relocations and explicit entry | Initial subset |
 
 The IR target selector accepts only `x86_64-whale-linux`; unknown targets fail
@@ -65,9 +67,12 @@ phase/category and available source/object context alongside typed component err
 
 [COFF object output](assembler/README.md#coff-leaf-objects) supports AMD64 and
 AArch64 with `whale asm --arch ID --format coff source.s -o leaf.obj`.
-The bridge is the `asmobj` crate under `assembler/asmobj`. Output has a checked
-256 MiB default file budget, sparse BSS and explicit format-specific relocations;
-Windows native CI gates cross-object calls/data references using the system linker.
+Assembly-to-object mapping is implemented entirely in Wave under
+`assembler/asmobj/`. Rust buffer conversion lives outside that module in
+`toolchain`; the Rust `object` module serializes the result. Output has a checked
+256 MiB default file budget, sparse BSS and explicit format-specific relocations.
+The initial linked module host is Linux x86_64 GNU; emitting a COFF object does
+not establish native Windows execution support for this module.
 
 ELF64 object output supports AMD64, AArch64, RV64I and LoongArch64 little-endian
 identities. The bounded reader, static linker and reverse tools retain their AMD64
@@ -84,24 +89,39 @@ subsets, source syntax, relocation types and examples.
 
 ## Getting started
 
-You need Git and **Rust 1.86.0 or newer**, including Cargo. Stable Rust is
-recommended for development.
+Use Meson for the complete product build. It builds the Wave `asmobj` module
+and the Rust components in dependency order. See [BUILDING.md](BUILDING.md) for
+LLVM 21, the pinned Wave compiler, Rust toolchains and archive reuse.
+
+On the initial Linux x86_64 GNU host:
 
 ```sh
 git clone https://github.com/wavefnd/Whale.git
 cd Whale
+cargo fetch --locked
+export LLVM_SYS_211_PREFIX=/usr/lib64/llvm21
+meson setup /tmp/whale-build --buildtype=release \
+  -Dwave-source=/absolute/path/to/Wave
+meson compile -C /tmp/whale-build
+meson test -C /tmp/whale-build --print-errorlogs
+/tmp/whale-build/whale --version
+```
+
+Rust components require **Rust 1.86.0 or newer**. Cargo remains available for
+Rust development. To run the `cargo run` assembly examples below, first build
+and select the complete Wave module:
+
+```sh
+python3 tools/build_asmobj.py --wave-source /absolute/path/to/Wave \
+  --out-dir /tmp/whale-asmobj
+export WHALE_ASMOBJ_DIR=/tmp/whale-asmobj
 cargo build --release --locked
 ```
 
-The executable is written to `target/release/whale`, or
-`target/release/whale.exe` on Windows. The examples below use `cargo run` so that
-installing Whale on your `PATH` is optional.
-
-Enable experimental AST JSON lowering when building with:
-
-```sh
-cargo build --release --locked --features socket-cli
-```
+Without that module, Cargo still builds the Rust components and IR commands;
+assembly-to-object commands return an explicit unavailable error. The executable
+is written to `target/release/whale` on Linux. Enable experimental AST JSON
+lowering with `-Dsocket-cli=true` in Meson or `--features socket-cli` in Cargo.
 
 ## Usage
 
@@ -166,8 +186,7 @@ CLI stdout writes are fallible: a closed pipe does not cause a panic, and other
 write errors exit with status 1 and a diagnostic. Assembly, object and link
 reporting continues after a closed pipe, preserving completed artifacts and
 real command failures. Successful IR output also treats a closed pipe as success. Canonical IR and scalar results
-retain their normal stdout format. `-o` still publishes atomically. The optional
-Wave bootstrap likewise replaces its archive only after successful creation,
+retain their normal stdout format. `-o` still publishes atomically. The Wave module build likewise replaces its archive only after successful creation,
 preserving the previous archive on an archiver failure.
 
 ### Execute scalar integer IR
@@ -589,10 +608,10 @@ writing additionally preflights all payloads, names, synthesized symbols, string
 tables, metadata tables and alignment against the output budget before copying
 payloads or names. The default remains 256 MiB; `write_with_limit` overrides it.
 
-[Wave control flow](ir/tests/fixtures/wave-control.wave) and
-[casts](ir/tests/fixtures/wave-casts.wave) have retained format 3 outputs from
-Wave's current typed HIR adapter, tested for canonical print-parse-print equality (legacy format 7 inputs, canonical format 8 output).
-Text parsing does not provide IR execution or native code generation. Format 2
+IR construction, parsing, printing, verification, lowering and interpretation
+remain Rust implementations. Canonical text regressions check retained IR
+fixtures independently of a Wave compiler. Text parsing does not provide native
+code generation. Format 2
 printed text requires explicit migration; it is not silently accepted. New
 syntax or semantics requires an appropriate version change, with unknown
 versions rejected.
@@ -660,35 +679,20 @@ This places the input bytes in an ELF64 `.text` section and defines a global
 `start` symbol at offset zero. It does not compile textual IR or disassemble
 existing object files.
 
-### Optional Wave ELF record implementation
+### Complete Wave assembly-to-object module
 
-The default Rust path needs no Wave compiler. An explicit build can use Wave for
-ELF64 header, section, symbol and RELA record serialization. Layout, validation,
-allocation and symbol resolution remain in Rust. This bootstrap supports a Linux
-x86_64 host building a Linux x86_64 Whale binary; it does not add an output target.
+`assembler/asmobj/` contains the complete Wave implementation of assembly-to-object
+validation and mapping, split into model, section, symbol, relocation and entry
+files. It replaces the former Rust `asmobj` crate. The external Rust data boundary
+in `toolchain/src/assembly_object.rs` supplies buffers and converts the returned
+records; object-file layout and serialization remain the separate Rust `object`
+module's responsibility.
 
-With Rust, LLVM 21 development libraries, a C linker and `ar` installed:
-
-```sh
-git clone https://github.com/wavefnd/Wave.git /tmp/whale-wave-bootstrap
-git -C /tmp/whale-wave-bootstrap checkout --detach 8a465e30aeea4b817d925cdd0e8d08c1bb029c9a
-python3 tools/build_wave_elf.py --wave-source /tmp/whale-wave-bootstrap --out-dir /tmp/whale-wave-elf
-WHALE_WAVE_ELF_DIR=/tmp/whale-wave-elf cargo build --locked --all-features
-WHALE_WAVE_ELF_DIR=/tmp/whale-wave-elf cargo test --locked --workspace --all-features
-```
-
-The script verifies the source revision and tracked modifications, builds the
-bootstrap compiler with its lockfile, then compiles `object/wave/elf_records.wave`
-with its LLVM backend. The Wave object is linked statically; the resulting Whale
-needs no `wavec` at runtime. An invalid requested archive/host is a build error,
-not an automatic fallback. Unset `WHALE_WAVE_ELF_DIR` to build the Rust path.
-`object::formats::elf::WAVE_ELF_ENABLED` reports the selected build path.
-
-The ABI uses u64 field arrays and caller-owned output buffers with explicit
-counts/capacity. No allocator ownership crosses the boundary. The Wave routine
-rejects unsupported records, short buffers and field overflow before writing.
-Dedicated tests compare complete ELF output with the Rust path. This is the
-first partial Wave implementation, not a self-hosted Whale build.
+[Meson](BUILDING.md) compiles and links this module as part of the product.
+Cargo development builds select a prebuilt archive with `WHALE_ASMOBJ_DIR`.
+There is one implementation of its policies: an absent module returns an explicit
+unavailable error. The former partial Wave ELF-record and reverse-analysis
+implementations have been removed. IR remains Rust.
 
 ### Assembly symbol metadata and library resolution
 
@@ -849,27 +853,20 @@ Outputs publish atomically after validation and protect every input alias. Unix
 executables receive mode 0755 without copying setuid/setgid bits. The produced
 artifact targets Linux AMD64 regardless of the machine running Whale.
 
-## Wave reverse tools
+## Reverse image inspection
 
-The reusable [reverse module](reverse/README.md) uses a Wave decoding/analysis core
-with Rust file/ELF/CLI adapters. The initial linked core supports Linux AMD64
-hosts and decodes AMD64 bytes; these are separate host and decoded-ISA contracts.
-Normal Cargo builds need no Wave compiler and retain ELF inspection; disassembly
-reports an explicit unavailable capability until the core is built and linked.
+The reusable [reverse module](reverse/README.md) provides bounded AMD64 ELF/raw
+image inspection and typed result records. Inspection works in ordinary Cargo
+builds:
 
 ```sh
-python3 tools/build_wave_reverse.py --wave-source /path/to/Wave --out-dir /tmp/whale-wave-reverse
-WHALE_WAVE_REVERSE_DIR=/tmp/whale-wave-reverse cargo build --locked --features wave-reverse
-whale disasm --amd64 app.o --json
-whale reverse inspect app --json
+cargo run --locked -- reverse inspect app --json
 ```
 
-The explicit bootstrap uses pinned official Wave sources, matching standard
-library, Rust 1.89.0 and LLVM 21. It reads committed sources without modifying the
-Wave checkout; ordinary Cargo never downloads or bootstraps a compiler. See the
-module guide for byte, encoding, unsupported-instruction and build contracts.
-The supported decoding scope is integer/scalar-SSE AMD64 long mode, not complete
-x86 coverage or recovery of original source code.
+Instruction decoding and CFG/xrefs currently report an explicit unavailable
+capability. The former partial Wave decoder/CFG implementation and archive
+integration have been removed. Existing output files are preserved on these
+failures. Image inspection does not infer source code or program reachability.
 
 Numeric cast legality, rounding and trap rules: [IR casts](ir/CASTS.md).
 

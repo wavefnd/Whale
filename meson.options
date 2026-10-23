@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: MPL-2.0
+option('asm-amd64', type: 'boolean', value: true,
+       description: 'Include the AMD64 assembler output module')
+option('asm-aarch64', type: 'boolean', value: true,
+       description: 'Include the AArch64 assembler output module')
+option('asm-riscv64', type: 'boolean', value: true,
+       description: 'Include the RV64I assembler output module')
+option('asm-loongarch64', type: 'boolean', value: true,
+       description: 'Include the LoongArch64 assembler output module')
+option('socket-cli', type: 'boolean', value: false,
+       description: 'Include experimental AST JSON lowering commands')
+option('asmobj-dir', type: 'string', value: '',
+       description: 'Absolute directory of the complete prebuilt Wave asmobj module for the executable host')
+option('wave-source', type: 'string', value: '',
+       description: 'Read-only Wave Git checkout containing the pinned bootstrap revision')
+option('wave-bootstrap-dir', type: 'string', value: '',
+       description: 'Optional absolute compiler/std cache directory; default is private to this build')
+option('wave-rust-toolchain', type: 'string', value: '1.89.0',
+       description: 'Installed Rust toolchain alias reporting the pinned Rust 1.89.0 compiler')
+option('wave-allow-network', type: 'boolean', value: false,
+       description: 'Explicitly allow locked dependency downloads for the Wave bootstrap build')
+option('cargo-host-target', type: 'string', value: '',
+       description: 'Rust target triple for the Whale executable host; required for cross builds')
+option('cargo-offline', type: 'boolean', value: true,
+       description: 'Forbid Cargo dependency downloads during the build')
+option('cargo-jobs', type: 'integer', min: 1, value: 2,
+       description: 'Maximum parallel Cargo compilation jobs')
+option('host-runner', type: 'array', value: [],
+       description: 'Explicit wrapper and arguments for host runtime smoke tests, such as QEMU; never a shell command')

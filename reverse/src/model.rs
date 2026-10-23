@@ -103,60 +103,6 @@ impl Opcode {
             Self::Divsd => "divsd",
         }
     }
-
-    #[cfg(whale_wave_reverse)]
-    pub(crate) fn from_code(code: u64) -> Option<Self> {
-        Some(match code {
-            1 => Self::Mov,
-            2 => Self::Add,
-            3 => Self::Or,
-            4 => Self::Adc,
-            5 => Self::Sbb,
-            6 => Self::And,
-            7 => Self::Sub,
-            8 => Self::Xor,
-            9 => Self::Cmp,
-            10 => Self::Imul,
-            11 => Self::Push,
-            12 => Self::Pop,
-            13 => Self::Jmp,
-            14 => Self::Jcc,
-            15 => Self::Loop,
-            16 => Self::Call,
-            17 => Self::Ret,
-            18 => Self::Nop,
-            19 => Self::Syscall,
-            20 => Self::Int3,
-            21 => Self::Lea,
-            22 => Self::Test,
-            23 => Self::Not,
-            24 => Self::Neg,
-            25 => Self::Div,
-            26 => Self::Idiv,
-            27 => Self::Shl,
-            28 => Self::Shr,
-            29 => Self::Sar,
-            30 => Self::Cwd,
-            31 => Self::Cdq,
-            32 => Self::Cqo,
-            33 => Self::Movzx,
-            34 => Self::Movsx,
-            35 => Self::Movsxd,
-            36 => Self::Setcc,
-            37 => Self::Cmovcc,
-            38 => Self::Movss,
-            39 => Self::Movsd,
-            40 => Self::Addss,
-            41 => Self::Addsd,
-            42 => Self::Subss,
-            43 => Self::Subsd,
-            44 => Self::Mulss,
-            45 => Self::Mulsd,
-            46 => Self::Divss,
-            47 => Self::Divsd,
-            _ => return None,
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,29 +130,6 @@ impl Condition {
     pub fn suffix(self) -> &'static str {
         ["o", "no", "b", "ae", "e", "ne", "be", "a", "s", "ns", "p", "np", "l", "ge", "le", "g"]
             [self as usize]
-    }
-
-    #[cfg(whale_wave_reverse)]
-    pub(crate) fn from_code(code: u64) -> Option<Self> {
-        Some(match code {
-            0 => Self::O,
-            1 => Self::No,
-            2 => Self::B,
-            3 => Self::Ae,
-            4 => Self::E,
-            5 => Self::Ne,
-            6 => Self::Be,
-            7 => Self::A,
-            8 => Self::S,
-            9 => Self::Ns,
-            10 => Self::P,
-            11 => Self::Np,
-            12 => Self::L,
-            13 => Self::Ge,
-            14 => Self::Le,
-            15 => Self::G,
-            _ => return None,
-        })
     }
 }
 

@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MPL-2.0
+// Section order is the object section map. Byte payloads remain borrowed until
+// the caller reconstructs its ObjectFile; sparse BSS is never materialized.
+fun asmobj_section_valid(section: ptr<AsmobjSection>) -> bool {
+    return section.kind <= 3 && asmobj_span_valid(section.name, section.name_len)
+        && asmobj_span_valid(section.data, section.data_len);
+}
+
+fun asmobj_section_kind(kind: u64) -> u64 {
+    if (kind == 2) { return 3; }
+    if (kind == 3) { return 2; }
+    return kind;
+}
+
+fun asmobj_emit_section(source: ptr<AsmobjSection>, output: ptr<AsmobjSection>) {
+    output[0] = deref source;
+    output.kind = asmobj_section_kind(source.kind);
+}

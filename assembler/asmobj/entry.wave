@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: MPL-2.0
+// Whole-module entry. Input and output records cannot alias, inputs remain
+// immutable during the call, and only scratch/result may change on failure.
+// Status: 1 target, 2 symbol section, 3 namespace, 4 namespace mismatch,
+// 5 AArch64 COFF code, 6 format, 7 capacity, 8 transport, 9 bounded work.
+export(c) fun whale_asmobj(target: ptr<AsmobjTarget>, sections: ptr<AsmobjSection>,
+    section_count: u64, symbols: ptr<AsmobjSymbol>, symbol_count: u64,
+    relocations: ptr<AsmobjRelocation>, relocation_count: u64,
+    output_sections: ptr<AsmobjSection>, section_capacity: u64,
+    output_symbols: ptr<AsmobjSymbol>, symbol_capacity: u64,
+    output_relocations: ptr<AsmobjRelocation>, relocation_capacity: u64,
+    scratch: ptr<u64>, scratch_words: u64, result: ptr<AsmobjResult>) -> i32 {
+    if (result == null) { return 8; }
+    result.status = 0;
+    result.index = 0;
+    result.symbol_count = 0;
+    if (!asmobj_target_valid(target)) { result.status = 1; return 1; }
+    if (!asmobj_array_valid(sections as ptr<u8>, section_count, 56)
+        || !asmobj_array_valid(symbols as ptr<u8>, symbol_count, 64)
+        || !asmobj_array_valid(relocations as ptr<u8>, relocation_count, 72)
+        || !asmobj_array_valid(scratch as ptr<u8>, scratch_words, 8)
+        || symbol_count > 18446744073709551615 - relocation_count) {
+        result.status = 8; return 8;
+    }
+    var total: u64 = symbol_count + relocation_count;
+    var slots: u64 = scratch_words / 4;
+    if (total != 0 && (scratch_words % 4 != 0 || slots == 0
+        || (slots & (slots - 1)) != 0 || total > slots / 2)) {
+        result.status = 7; return 7;
+    }
+    if (section_count > section_capacity || symbol_count > symbol_capacity
+        || relocation_count > relocation_capacity) {
+        result.status = 7; return 7;
+    }
+    if (!asmobj_array_valid(output_sections as ptr<u8>, section_count, 56)
+        || !asmobj_array_valid(output_symbols as ptr<u8>, symbol_count, 64)
+        || !asmobj_array_valid(output_relocations as ptr<u8>, relocation_count, 72)) {
+        result.status = 8; return 8;
+    }
+    var state: AsmobjState;
+    state.symbols = symbols;
+    state.symbol_count = symbol_count;
+    state.relocations = relocations;
+    state.relocation_count = relocation_count;
+    state.scratch = scratch;
+    state.slots = slots;
+    state.work = 67108864;
+    state.status = 0;
+    if (!asmobj_charge(&state, scratch_words)) { result.status = 9; return 9; }
+    var index: u64 = 0;
+    while (index < scratch_words) { scratch[index] = 0; index += 1; }
+    index = 0;
+    while (index < section_count) {
+        result.index = index;
+        if (!asmobj_charge(&state, 1)) { result.status = 9; return 9; }
+        if (!asmobj_section_valid(&sections[index])) { result.status = 8; return 8; }
+        index += 1;
+    }
+    index = 0;
+    while (index < symbol_count) {
+        result.index = index;
+        if (!asmobj_charge(&state, 1)) { result.status = 9; return 9; }
+        if (!asmobj_symbol_valid(&symbols[index])) { result.status = 8; return 8; }
+        if (symbols[index].section != 18446744073709551615 && symbols[index].section >= section_count) {
+            result.status = 2; return 2;
+        }
+        if (!asmobj_register_symbol(&state, index)) {
+            result.status = state.status as u64; return state.status;
+        }
+        index += 1;
+    }
+    var missing: u64 = 0;
+    index = 0;
+    while (index < relocation_count) {
+        result.index = index;
+        if (!asmobj_charge(&state, 1)) { result.status = 9; return 9; }
+        var relocation: ptr<AsmobjRelocation> = &relocations[index];
+        if (!asmobj_relocation_valid(relocation, section_count)) { result.status = 8; return 8; }
+        var slot: u64 = 0;
+        if (!asmobj_find_name(&state, relocation.name, relocation.name_len, &slot)) {
+            result.status = state.status as u64; return state.status;
+        }
+        var undefined: u64 = 1;
+        if (scratch[slot] != 0) { undefined = scratch[slot + 2]; }
+        var kind: u64 = 0;
+        var code: u64 = 0;
+        var status: i32 = asmobj_relocation_kind(&state, target, relocation, undefined, &kind, &code);
+        if (status != 0) { result.status = status as u64; return status; }
+        if (scratch[slot] == 0) {
+            // Emission will find this slot occupied and compare the complete
+            // name. Preflight stopped at an empty slot, so reserve that extra
+            // equality now as well as the hash/probes already charged above.
+            if (!asmobj_charge(&state, relocation.name_len)) { result.status = 9; return 9; }
+            scratch[slot] = 2;
+            scratch[slot + 1] = index;
+            scratch[slot + 2] = 1;
+            missing += 1;
+        }
+        index += 1;
+    }
+    var needed: u64 = symbol_count + missing;
+    if (needed > symbol_capacity) { result.status = 7; return 7; }
+    if (!asmobj_array_valid(output_symbols as ptr<u8>, needed, 64)) {
+        result.status = 8; return 8;
+    }
+    // Emission repeats only relocation lookups/mapping plus linear copies. Hash
+    // slots never move. Existing names already paid equality in preflight;
+    // first missing names paid their future equality when inserted above.
+    // Each emission lookup therefore costs no more than its preflight charge.
+    // The entire preflight is a conservative bound on all remaining work; reserve
+    // it before publishing any record, leaving emission infallible.
+    var spent: u64 = 67108864 - state.work;
+    if (spent > state.work) { result.status = 9; return 9; }
+    index = 0;
+    while (index < section_count) {
+        asmobj_emit_section(&sections[index], &output_sections[index]);
+        index += 1;
+    }
+    index = 0;
+    while (index < symbol_count) { output_symbols[index] = symbols[index]; index += 1; }
+    var next_symbol: u64 = symbol_count;
+    index = 0;
+    while (index < relocation_count) {
+        var relocation: ptr<AsmobjRelocation> = &relocations[index];
+        var slot: u64 = 0;
+        asmobj_find_name(&state, relocation.name, relocation.name_len, &slot);
+        var kind: u64 = 0;
+        var code: u64 = 0;
+        asmobj_relocation_kind(&state, target, relocation, scratch[slot + 2], &kind, &code);
+        asmobj_emit_relocation(relocation, kind, code, &output_relocations[index]);
+        if (scratch[slot] == 2 && scratch[slot + 1] == index) {
+            asmobj_emit_undefined(relocation, &output_symbols[next_symbol]);
+            next_symbol += 1;
+        }
+        index += 1;
+    }
+    result.index = 0;
+    result.symbol_count = needed;
+    return 0;
+}

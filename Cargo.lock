@@ -19,14 +19,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "asmobj"
-version = "0.1.0"
-dependencies = [
- "assembler",
- "object",
-]
-
-[[package]]
 name = "assembler"
 version = "0.1.0"
 dependencies = [
@@ -190,8 +182,6 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 name = "reverse"
 version = "0.1.0"
 dependencies = [
- "amd64",
- "assembler",
  "object",
  "serde_json",
 ]
@@ -305,6 +295,7 @@ dependencies = [
  "backend-api",
  "diagnostic",
  "ir",
+ "object",
  "target-spec",
 ]
 
@@ -320,7 +311,6 @@ version = "0.1.0"
 dependencies = [
  "aarch64",
  "amd64",
- "asmobj",
  "assembler",
  "ir",
  "linker",

@@ -6,10 +6,6 @@ use std::time::Instant;
 
 use super::debug::dump_bytes;
 
-use amd64::parser::parse;
-
-use assembler::tokens::tokenize;
-
 pub fn run(args: Vec<String>) {
     if args.is_empty() {
         print_help();
@@ -207,39 +203,12 @@ pub fn run(args: Vec<String>) {
         process::exit(1);
     });
 
-    let mut token_len: Option<usize> = None;
-    let mut ast_items_len: Option<usize> = None;
-
     let need_tokens = arch == "amd64" && debug_mode && (show_token || show_ast || show_stats);
-    if need_tokens {
-        if trace_enable {
-            println!("[trace] tokenize start");
-        }
-        let tokens = tokenize(&src).unwrap_or_else(|e| {
-            eprintln!("Tokenize error: {}", e.with_source_name(&input));
-            process::exit(1);
-        });
-        token_len = Some(tokens.len());
-
-        if show_token {
-            dbg!(&tokens);
-        }
-
-        if show_ast || show_stats {
-            if trace_enable {
-                println!("[trace] parse start");
-            }
-            let ast = parse(&tokens).unwrap_or_else(|e| {
-                eprintln!("Parse error: {}", e.with_source_name(&input));
-                process::exit(1);
-            });
-            ast_items_len = Some(ast.items.len());
-
-            if show_ast {
-                println!("{:#?}", ast);
-            }
-        }
-    }
+    let (token_len, ast_items_len) = if need_tokens {
+        parser_debug(&input, &src, show_token, show_ast, show_stats, trace_enable)
+    } else {
+        (None, None)
+    };
 
     if trace_enable {
         println!("[trace] assemble start");
@@ -256,7 +225,7 @@ pub fn run(args: Vec<String>) {
     if trace_enable {
         println!("[trace] creating object file");
     }
-    let final_bytes = asmobj::write(&out, target).unwrap_or_else(|e| {
+    let final_bytes = toolchain::assembly_object::write(&out, target).unwrap_or_else(|e| {
         eprintln!("Object build error: {}", e);
         process::exit(1);
     });
@@ -281,6 +250,56 @@ pub fn run(args: Vec<String>) {
     }
 
     println!("Wrote {} bytes to {}", final_bytes.len(), output);
+}
+
+#[cfg(feature = "asm-amd64")]
+fn parser_debug(
+    input: &str,
+    source: &str,
+    show_token: bool,
+    show_ast: bool,
+    show_stats: bool,
+    trace: bool,
+) -> (Option<usize>, Option<usize>) {
+    if trace {
+        println!("[trace] tokenize start");
+    }
+    let tokens = assembler::tokens::tokenize(source).unwrap_or_else(|e| {
+        eprintln!("Tokenize error: {}", e.with_source_name(input));
+        process::exit(1);
+    });
+    if show_token {
+        dbg!(&tokens);
+    }
+    let ast_items = if show_ast || show_stats {
+        if trace {
+            println!("[trace] parse start");
+        }
+        let ast = amd64::parser::parse(&tokens).unwrap_or_else(|e| {
+            eprintln!("Parse error: {}", e.with_source_name(input));
+            process::exit(1);
+        });
+        let count = ast.items.len();
+        if show_ast {
+            println!("{:#?}", ast);
+        }
+        Some(count)
+    } else {
+        None
+    };
+    (Some(tokens.len()), ast_items)
+}
+
+#[cfg(not(feature = "asm-amd64"))]
+fn parser_debug(
+    _: &str,
+    _: &str,
+    _: bool,
+    _: bool,
+    _: bool,
+    _: bool,
+) -> (Option<usize>, Option<usize>) {
+    (None, None)
 }
 
 fn print_help() {

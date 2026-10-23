@@ -28,10 +28,18 @@ live beside their implementations. Root integration tests cover registration,
 CLI behavior and the assembly-to-object boundary.
 
 `Assembler::object_target()` identifies native output. The
-[`asmobj`](asmobj/) crate under this directory converts assembly metadata into
-checked ELF64 objects and validates relocation namespaces against that identity.
-`asmobj::to_object` builds the object model; `asmobj::write` serializes it. The CLI
-composes these pieces through `toolchain::Registry` in `src/builtins.rs`.
+[`asmobj`](asmobj/) module under this directory is implemented entirely in Wave.
+Its model, section, symbol, relocation and entry files validate assembly metadata
+and map relocation namespaces to the selected object identity. Rust-owned buffer
+conversion lives outside the module in `toolchain/src/assembly_object.rs`; the
+separate Rust `object` module serializes its result. The CLI composes assemblers
+through `toolchain::Registry` in `src/builtins.rs`.
+
+Build the complete product with [Meson](../BUILDING.md). For Cargo development,
+set `WHALE_ASMOBJ_DIR` to an archive built by `tools/build_asmobj.py` before the
+assembly-to-object examples and integration tests below. Without the module,
+these commands return an explicit unavailable error. The initial linked module
+host is Linux x86_64 GNU; assembler output architectures remain independent.
 
 ```sh
 cargo run -- asm --aarch64 examples/isa/aarch64.s -o /tmp/aarch64.o
@@ -115,9 +123,10 @@ at 8 MiB, output at 256 MiB, records at 262,144, symbols/globals at 65,536 and
 sections at 4,096. Alignment/reservation sizes are checked before allocation.
 
 The object writer supports the four output identities. The bounded object reader,
-Whale static linker and Wave reverse core continue to accept their documented
-AMD64 subset. Passing another machine to them fails explicitly; serializing an
-object does not enable a native IR backend or static linker for that machine.
+Whale static linker and reverse image inspection retain their documented AMD64
+subset. Instruction decoding and CFG/xrefs are currently unavailable. Serializing
+another machine's object does not enable a native IR backend, decoder or static
+linker for that machine.
 
 ## Verification
 
@@ -149,9 +158,8 @@ and [LoongArch ABI](https://github.com/loongson/la-abi-specs).
 
 ## COFF leaf objects
 
-`asmobj` is the assembler-to-object bridge under `assembler/asmobj`; its package
-and Rust crate name are both `asmobj`. `asmobj::to_object` validates metadata and
-`asmobj::write` serializes the selected identity. Select `ObjectTarget::coff`
+The Wave `asmobj` module validates metadata and maps the selected object
+identity; the Rust object writer serializes it. Select `ObjectTarget::coff`
 with AMD64 or AArch64, or use `whale asm --arch aarch64 --format coff source.s
 -o leaf.obj`. ELF remains the default for all four assemblers.
 
@@ -171,8 +179,9 @@ The format follows the [Microsoft PE/COFF specification](https://learn.microsoft
 Ordinary tests inspect independent field fixtures without external tools. Optional
 `tools/check_object_oracle.py --binary target/debug/whale --format coff --readobj
 /path/to/llvm-readobj --linker /path/to/lld-link` checks generated objects with
-LLVM and cross-links both CPU identities. Windows native CI runs the same
-cross-object call/data fixture using MSVC and requires exit 42 on x64 and ARM64.
+LLVM and cross-links both CPU identities. COFF object generation and cross-link
+inspection are distinct from executing Whale's linked Wave module on Windows;
+the initial linked module host remains Linux x86_64 GNU.
 
 ## Mach-O leaf objects
 
@@ -210,7 +219,7 @@ written in-place; original object bytes are preserved on success/failure.
 The binary layout and numeric IDs follow the primary
 [LLVM Mach-O definitions](https://github.com/llvm/llvm-project/blob/llvmorg-21.1.0/llvm/include/llvm/BinaryFormat/MachO.h).
 Optional interoperability uses `tools/check_object_oracle.py --format macho` with
-LLVM inspection/ld64.lld cross-linking. Native macOS Intel/ARM64 CI system-links a
-C driver and two Whale objects, executes the cross-object call and dereferences
-the relocated data pointer; both must produce 42. Normal Cargo tests use
-independent field expectations and require no external assembler or linker.
+LLVM inspection/ld64.lld cross-linking. The initial linked Wave module host is
+Linux x86_64 GNU; cross-object inspection does not establish native macOS module
+execution. Object-format tests use independent field expectations and require no
+external assembler or linker. Full assembly-to-object integration links `asmobj`.

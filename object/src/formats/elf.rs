@@ -67,29 +67,6 @@ struct Elf64Header {
 
 impl Elf64Header {
     fn to_bytes(&self) -> [u8; 64] {
-        #[cfg(whale_wave_elf)]
-        if wave_selected() {
-            return wave_record::<64>(
-                1,
-                &[
-                    u64::from_le_bytes(self.ident[..8].try_into().unwrap()),
-                    u64::from_le_bytes(self.ident[8..].try_into().unwrap()),
-                    self.type_ as u64,
-                    self.machine as u64,
-                    self.version as u64,
-                    self.entry,
-                    self.phoff,
-                    self.shoff,
-                    self.flags as u64,
-                    self.ehsize as u64,
-                    self.phentsize as u64,
-                    self.phnum as u64,
-                    self.shentsize as u64,
-                    self.shnum as u64,
-                    self.shstrndx as u64,
-                ],
-            );
-        }
         let mut out = [0u8; 64];
         out[0..16].copy_from_slice(&self.ident);
         out[16..18].copy_from_slice(&self.type_.to_le_bytes());
@@ -126,24 +103,6 @@ struct Elf64Shdr {
 
 impl Elf64Shdr {
     fn to_bytes(self) -> [u8; 64] {
-        #[cfg(whale_wave_elf)]
-        if wave_selected() {
-            return wave_record::<64>(
-                2,
-                &[
-                    self.name as u64,
-                    self.type_ as u64,
-                    self.flags,
-                    self.addr,
-                    self.offset,
-                    self.size,
-                    self.link as u64,
-                    self.info as u64,
-                    self.addralign,
-                    self.entsize,
-                ],
-            );
-        }
         let mut out = [0u8; 64];
         out[0..4].copy_from_slice(&self.name.to_le_bytes());
         out[4..8].copy_from_slice(&self.type_.to_le_bytes());
@@ -172,20 +131,6 @@ struct Elf64Sym {
 
 impl Elf64Sym {
     fn to_bytes(self) -> [u8; 24] {
-        #[cfg(whale_wave_elf)]
-        if wave_selected() {
-            return wave_record::<24>(
-                3,
-                &[
-                    self.name as u64,
-                    self.info as u64,
-                    self.other as u64,
-                    self.shndx as u64,
-                    self.value,
-                    self.size,
-                ],
-            );
-        }
         let mut out = [0u8; 24];
         out[0..4].copy_from_slice(&self.name.to_le_bytes());
         out[4] = self.info;
@@ -207,10 +152,6 @@ struct Elf64Rela {
 
 impl Elf64Rela {
     fn to_bytes(self) -> [u8; 24] {
-        #[cfg(whale_wave_elf)]
-        if wave_selected() {
-            return wave_record::<24>(4, &[self.offset, self.info, self.addend as u64]);
-        }
         let mut out = [0u8; 24];
         out[0..8].copy_from_slice(&self.offset.to_le_bytes());
         out[8..16].copy_from_slice(&self.info.to_le_bytes());
@@ -919,135 +860,5 @@ mod layout_boundary_tests {
         assert!(align_up(u64::MAX, 8).is_err());
         assert!(align_up(1, 3).is_err());
         assert!(align_up(1, 0).is_err());
-    }
-}
-
-/// Whether the explicitly requested Wave implementation was linked into this build.
-pub const WAVE_ELF_ENABLED: bool = cfg!(whale_wave_elf);
-
-#[cfg(whale_wave_elf)]
-unsafe extern "C" {
-    fn whale_wave_elf_record(
-        kind: u32,
-        fields: *const u64,
-        count: u64,
-        dest: *mut u8,
-        capacity: u64,
-    ) -> i32;
-}
-
-#[cfg(all(whale_wave_elf, test))]
-thread_local! { static USE_WAVE: std::cell::Cell<bool> = const { std::cell::Cell::new(true) }; }
-
-#[cfg(whale_wave_elf)]
-fn wave_selected() -> bool {
-    #[cfg(test)]
-    {
-        USE_WAVE.with(|enabled| enabled.get())
-    }
-    #[cfg(not(test))]
-    {
-        true
-    }
-}
-
-#[cfg(whale_wave_elf)]
-fn wave_record<const N: usize>(kind: u32, fields: &[u64]) -> [u8; N] {
-    let mut result = [0; N];
-    // The Wave routine checks count/width/capacity before writing. Both buffers
-    // are live, non-overlapping and caller-owned for the duration of this call.
-    let status = unsafe {
-        whale_wave_elf_record(
-            kind,
-            fields.as_ptr(),
-            fields.len() as u64,
-            result.as_mut_ptr(),
-            N as u64,
-        )
-    };
-    assert_eq!(status, 0, "internal Wave ELF record contract mismatch");
-    result
-}
-
-#[cfg(all(test, whale_wave_elf))]
-mod wave_tests {
-    use super::*;
-
-    use crate::RelocKind;
-
-    #[test]
-    fn whole_objects_match_rust_with_bss_symbols_and_signed_relocations() {
-        for seed in [0u64, 1, 127, 65535, u32::MAX as u64] {
-            let mut object = ObjectFile::new(crate::ObjectFormat::ELF64);
-            let text = object.add_section(".text", SectionKind::Text, 16);
-            object.sections[text].data = vec![0; 8];
-            let bss = object.add_section(".bss", SectionKind::Bss, 32);
-            object.sections[bss].zero_fill = (1 << 40) + seed;
-            object.symbols.push(crate::ObjectSymbol {
-                kind: crate::SymbolKind::NoType,
-                name: "end".into(),
-                section_index: Some(bss),
-                value: (1 << 40) + seed,
-                size: 0,
-                binding: SymbolBinding::Global,
-                visibility: SymbolVisibility::Hidden,
-            });
-            object.relocations.push(crate::ObjectRelocation {
-                section_index: text,
-                offset: 0,
-                symbol: "external".into(),
-                kind: RelocKind::Absolute64,
-                addend: -(seed as i64),
-            });
-            USE_WAVE.with(|v| v.set(true));
-            let wave = object.write().unwrap();
-            USE_WAVE.with(|v| v.set(false));
-            let rust = object.write().unwrap();
-            USE_WAVE.with(|v| v.set(true));
-            assert_eq!(wave, rust);
-            let exact = wave.len() as u64;
-            for enabled in [true, false] {
-                USE_WAVE.with(|v| v.set(enabled));
-                assert_eq!(object.write_with_limit(exact).unwrap(), wave);
-                assert!(object.write_with_limit(exact - 1).unwrap_err().contains("size limit"));
-            }
-            USE_WAVE.with(|v| v.set(true));
-        }
-    }
-
-    #[test]
-    fn bad_ffi_arguments_do_not_publish_partial_records() {
-        let mut buffer = [0xa5; 64];
-        let fields = [0u64; 15];
-        for (kind, count, capacity) in [(0, 15, 64), (1, 14, 64), (1, 15, 63)] {
-            assert_eq!(
-                unsafe {
-                    whale_wave_elf_record(
-                        kind,
-                        fields.as_ptr(),
-                        count,
-                        buffer.as_mut_ptr(),
-                        capacity,
-                    )
-                },
-                1
-            );
-            assert_eq!(buffer, [0xa5; 64]);
-        }
-        assert_eq!(
-            unsafe { whale_wave_elf_record(1, std::ptr::null(), 15, buffer.as_mut_ptr(), 64) },
-            1
-        );
-        assert_eq!(
-            unsafe { whale_wave_elf_record(1, fields.as_ptr(), 15, std::ptr::null_mut(), 64) },
-            1
-        );
-        let mut overflow = fields;
-        overflow[2] = 65536;
-        assert_eq!(
-            unsafe { whale_wave_elf_record(1, overflow.as_ptr(), 15, buffer.as_mut_ptr(), 64) },
-            2
-        );
-        assert_eq!(buffer, [0xa5; 64]);
     }
 }

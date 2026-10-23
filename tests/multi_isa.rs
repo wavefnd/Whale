@@ -140,7 +140,7 @@ fn elf_identity_symbol_relocations_and_sparse_bss_are_preserved() {
         let source=format!(".text\n.global entry\n.extern external\nentry: {call} external+4\nret\n.data\npayload: .quad entry+8\n.word external-4\n.bss\n.balign 4096\nstorage: .zero 1099511627776\n");
         let output = assemble(arch, &source);
         let target = ObjectTarget::elf64(machine);
-        let object = asmobj::to_object(&output, target).unwrap();
+        let object = toolchain::assembly_object::to_object(&output, target).unwrap();
         assert_eq!(object.relocations[0].kind, RelocKind::TargetSpecific { machine, code });
         let bytes = object.write().unwrap();
         assert_eq!(&bytes[..7], b"\x7fELF\x02\x01\x01");
@@ -345,13 +345,13 @@ fn shared_directives_limits_diagnostics_and_symbol_validation() {
 #[test]
 fn mismatched_relocation_namespaces_and_symbol_sections_never_serialize() {
     let mut out = assemble("aarch64", ".extern x\nbl x");
-    assert!(asmobj::write(&out, ObjectTarget::elf64(Machine::RiscV64)).is_err());
+    assert!(toolchain::assembly_object::write(&out, ObjectTarget::elf64(Machine::RiscV64)).is_err());
     out.sections[0].relocs[0].kind =
         assembler::RelocKind::TargetSpecific { namespace: "unknown".into(), code: 283 };
-    assert!(asmobj::write(&out, ObjectTarget::elf64(Machine::AArch64)).is_err());
+    assert!(toolchain::assembly_object::write(&out, ObjectTarget::elf64(Machine::AArch64)).is_err());
     out.sections[0].relocs.clear();
     out.symbols[0].section_index = Some(999);
-    assert!(asmobj::write(&out, ObjectTarget::elf64(Machine::AArch64)).is_err());
+    assert!(toolchain::assembly_object::write(&out, ObjectTarget::elf64(Machine::AArch64)).is_err());
 }
 
 #[test]

@@ -50,7 +50,7 @@ fn print_help() {
     println!("  asm     Assemble AMD64/AArch64/RV64I/LoongArch64 source into an ELF64 object");
     println!("  object  Wrap raw bytes in an AMD64 ELF64 object");
     println!("  link    Static Linux AMD64 executable linking");
-    println!("  disasm  AMD64 disassembly (requires the opt-in Wave reverse core)");
-    println!("  reverse ELF inspection and Wave CFG/xref analysis");
+    println!("  disasm  Disassembly entry point (core currently unavailable)");
+    println!("  reverse ELF inspection; CFG/xrefs core currently unavailable");
     println!("  ir      IR tools (verify/print/run; socket-cli enables AST lower)");
 }

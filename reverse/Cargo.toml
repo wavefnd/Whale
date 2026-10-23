@@ -4,14 +4,6 @@ version = "0.1.0"
 edition = "2021"
 rust-version.workspace = true
 
-[features]
-default = []
-wave = []
-
-[dev-dependencies]
-assembler = { path = "../assembler" }
-amd64 = { path = "../assembler/amd64" }
-
 [dependencies]
 object = { path = "../object" }
 serde_json = "1"

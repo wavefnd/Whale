@@ -1,9 +1,0 @@
-[package]
-name = "asmobj"
-version = "0.1.0"
-edition = "2021"
-rust-version.workspace = true
-
-[dependencies]
-assembler = { path = ".." }
-object = { path = "../../object" }
