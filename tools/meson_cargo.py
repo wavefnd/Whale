@@ -130,7 +130,9 @@ def cargo_dependencies(path):
 
 def source_dependencies(source, features):
     """Explicit source-tree components, with directories tracking new files."""
-    dependencies = {source, source / "Cargo.toml", source / "Cargo.lock", Path(__file__).resolve()}
+    # The repository root also receives unrelated tool state (for example
+    # .git and editor directories). Tracking it makes every warm build dirty.
+    dependencies = {source / "Cargo.toml", source / "Cargo.lock", Path(__file__).resolve()}
     components = [*COMPONENTS, *("assembler/" + arch for arch in ASSEMBLERS if "asm-" + arch in features)]
     for component in ["", *components]:
         root = source / component
@@ -201,20 +203,37 @@ def build(arguments):
     contents = make_escape(output) + ": " + " ".join(make_escape(path) for path in sorted(dependencies)) + "\n"
     candidate = None
     candidate_depfile = None
+    previous_depfile = None
     try:
         candidate = _temporary_copy(binary, output)
         with tempfile.NamedTemporaryFile(prefix=".whale-deps-", dir=depfile.parent, delete=False) as temporary:
             candidate_depfile = Path(temporary.name)
             temporary.write(contents.encode("utf-8"))
-        # Prepare both before publishing. Dependency output failure cannot
-        # replace the last-good executable.
-        os.replace(candidate_depfile, depfile)
-        os.replace(candidate, output)
+        # Keep the old depfile until the executable has also been published.
+        # A failed second replacement must not leave new dependencies paired
+        # with the last-good executable.
+        if depfile.exists():
+            with tempfile.NamedTemporaryFile(prefix=".whale-old-deps-", dir=depfile.parent,
+                                             delete=False) as temporary:
+                previous_depfile = Path(temporary.name)
+            os.replace(depfile, previous_depfile)
+        try:
+            os.replace(candidate_depfile, depfile)
+            os.replace(candidate, output)
+        except OSError:
+            if previous_depfile is None:
+                depfile.unlink(missing_ok=True)
+            else:
+                os.replace(previous_depfile, depfile)
+                previous_depfile = None
+            raise
     finally:
         if candidate is not None:
             candidate.unlink(missing_ok=True)
         if candidate_depfile is not None:
             candidate_depfile.unlink(missing_ok=True)
+        if previous_depfile is not None:
+            previous_depfile.unlink(missing_ok=True)
 
 
 def smoke(arguments):

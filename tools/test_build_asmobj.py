@@ -128,16 +128,22 @@ class PublicationTests(unittest.TestCase):
             if not failure:
                 self.assertEqual(len(calls), 2)
                 source_bytes = helper.source_bytes(ROOT)
+                abi_bytes = (ROOT / helper.ABI_SOURCE).read_bytes()
+                provenance_bytes = (output / "provenance.json").read_bytes()
                 self.assertEqual((output / "asmobj.meta").read_text(),
-                                 helper.metadata(source_bytes, b"new archive", target))
+                                 helper.metadata(source_bytes, abi_bytes, b"new archive",
+                                                 provenance_bytes, target, "0"))
                 provenance = json.loads((output / "provenance.json").read_text())
                 self.assertEqual(provenance, {
                     "wave_revision": helper.WAVE_REVISION,
                     "target": target,
                     "opt_level": "0",
                     "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+                    "abi_sha256": hashlib.sha256(abi_bytes).hexdigest(),
                     "archive_sha256": hashlib.sha256(b"new archive").hexdigest(),
                     "compiler_sha256": hashlib.sha256(b"pinned compiler").hexdigest(),
+                    "bootstrap_rust_version": helper.RUST_VERSION,
+                    "required_llvm_major": 21,
                     "std_sha256": "1" * 64,
                     "bootstrap_provenance": str(bootstrap.provenance),
                 })
@@ -207,6 +213,8 @@ class BuildGuardTests(unittest.TestCase):
     def make_project(root, target=NATIVE):
         manifest = root / "toolchain"
         manifest.mkdir()
+        (manifest / "src").mkdir()
+        (manifest / "src/assembly_object.rs").write_bytes(b"asmobj ffi boundary")
         sources = root / "assembler/asmobj"
         sources.mkdir(parents=True)
         for index, name in enumerate(helper.SOURCES):
@@ -216,8 +224,11 @@ class BuildGuardTests(unittest.TestCase):
         archive = archive_dir / ("whale_asmobj.lib" if "msvc" in target else "libwhale_asmobj.a")
         archive.write_bytes(b"archive")
         source_bytes = b"\n".join((sources / name).read_bytes() for name in helper.SOURCES)
+        provenance = archive_dir / "provenance.json"
+        provenance.write_bytes(b'{"wave_revision":"pinned"}\n')
         metadata = archive_dir / "asmobj.meta"
-        metadata.write_text(helper.metadata(source_bytes, b"archive", target))
+        metadata.write_text(helper.metadata(source_bytes, b"asmobj ffi boundary", b"archive",
+                                            provenance.read_bytes(), target, "2"))
         return manifest, sources, archive_dir, archive, metadata
 
     def run_guard(self, corruption=None, *, enabled=True, target=NATIVE):
@@ -227,6 +238,12 @@ class BuildGuardTests(unittest.TestCase):
                 (sources / helper.SOURCES[2]).write_bytes(b"changed source")
             elif corruption == "archive":
                 archive.write_bytes(b"changed archive")
+            elif corruption == "abi":
+                (manifest / "src/assembly_object.rs").write_bytes(b"changed ffi boundary")
+            elif corruption == "provenance":
+                (archive_dir / "provenance.json").write_bytes(b"changed provenance")
+            elif corruption == "oversized-provenance":
+                (archive_dir / "provenance.json").write_bytes(b"x" * 16385)
             elif corruption == "missing-archive":
                 archive.unlink()
             elif corruption == "missing-source":
@@ -246,7 +263,9 @@ class BuildGuardTests(unittest.TestCase):
             elif corruption == "invalid-utf8":
                 metadata.write_bytes(b"\xff")
             elif corruption == "schema":
-                metadata.write_text(metadata.read_text().replace("schema=1", "schema=2"))
+                metadata.write_text(metadata.read_text().replace("schema=2", "schema=3"))
+            elif corruption == "revision":
+                metadata.write_text(metadata.read_text().replace(helper.WAVE_REVISION, "0" * 40))
             elif corruption == "target":
                 metadata.write_text(metadata.read_text().replace("target=" + target, "target=aarch64-unknown-linux-gnu"))
             environment = os.environ.copy()
@@ -259,7 +278,8 @@ class BuildGuardTests(unittest.TestCase):
     def test_matching_guard_watches_all_five_sources_and_published_artifacts(self):
         result = self.run_guard()
         self.assertEqual(result.returncode, 0, result.stderr)
-        for name in (*helper.SOURCES, "asmobj.meta", "libwhale_asmobj.a"):
+        for name in (*helper.SOURCES, "asmobj.meta", "provenance.json", "libwhale_asmobj.a",
+                     "assembly_object.rs"):
             self.assertIn(name, result.stdout)
         self.assertIn("cargo:rustc-cfg=whale_asmobj", result.stdout)
         self.assertIn("cargo:rustc-link-lib=static=whale_asmobj", result.stdout)
@@ -267,7 +287,10 @@ class BuildGuardTests(unittest.TestCase):
     def test_mismatched_or_invalid_artifacts_fail_before_link_selection(self):
         expectations = {
             "source": "stale asmobj", "archive": "corrupt asmobj",
+            "abi": "stale asmobj ABI", "provenance": "corrupt asmobj provenance",
+            "oversized-provenance": "oversized asmobj provenance",
             "target": "target mismatch", "oversized": "oversized",
+            "revision": "compiler revision mismatch",
             "duplicate": "metadata fields", "unknown": "metadata fields",
             "incomplete": "incomplete", "malformed": "malformed",
             "invalid-utf8": "invalid asmobj metadata", "schema": "unsupported",
@@ -305,7 +328,6 @@ class BuildGuardTests(unittest.TestCase):
         self.assertEqual(len(hosts), 1)
         with tempfile.TemporaryDirectory() as temporary:
             manifest, sources, archive_dir, archive, metadata = self.make_project(Path(temporary).resolve(), hosts[0])
-            (manifest / "src").mkdir()
             (manifest / "src/lib.rs").write_text("pub fn marker() {}\n")
             (manifest / "Cargo.toml").write_text(
                 '[package]\nname="asmobj-guard-probe"\nversion="0.0.0"\nedition="2021"\n')
@@ -333,8 +355,18 @@ class BuildGuardTests(unittest.TestCase):
             check(False, "corrupt asmobj archive")
             archive.write_bytes(b"archive")
             check(True)
+            abi = manifest / "src/assembly_object.rs"
+            abi.write_bytes(b"changed ffi boundary")
+            check(False, "stale asmobj ABI")
+            abi.write_bytes(b"asmobj ffi boundary")
+            check(True)
+            provenance = archive_dir / "provenance.json"
+            provenance.write_bytes(b"changed provenance")
+            check(False, "corrupt asmobj provenance")
+            provenance.write_bytes(b'{"wave_revision":"pinned"}\n')
+            check(True)
             original_metadata = metadata.read_text()
-            metadata.write_text(original_metadata.replace("schema=1", "schema=2"))
+            metadata.write_text(original_metadata.replace("schema=2", "schema=3"))
             check(False, "unsupported asmobj metadata")
             metadata.write_text(original_metadata)
             check(True)
@@ -348,27 +380,34 @@ class SourceStructureTests(unittest.TestCase):
             root = Path(temporary).resolve()
             sources = root / "assembler/asmobj"
             sources.mkdir(parents=True)
+            abi = root / helper.ABI_SOURCE
+            abi.parent.mkdir(parents=True)
             shutil.copyfile(ROOT / ".gitattributes", root / ".gitattributes")
             for name in helper.SOURCES:
                 shutil.copyfile(ROOT / "assembler/asmobj" / name, sources / name)
+            shutil.copyfile(ROOT / helper.ABI_SOURCE, abi)
             original = helper.source_bytes(root)
+            original_abi = abi.read_bytes()
             environment = {key: value for key, value in os.environ.items()
                            if not key.startswith("GIT_")}
             environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
             git = shutil.which("git") or "git"
             for arguments in (["init", "--quiet"],
                               ["config", "core.autocrlf", "true"],
-                              ["add", ".gitattributes", "assembler/asmobj"]):
+                              ["add", ".gitattributes", "assembler/asmobj", helper.ABI_SOURCE]):
                 subprocess.run([git, *arguments], cwd=root, env=environment,
                                check=True, capture_output=True)
             for name in helper.SOURCES:
                 (sources / name).unlink()
+            abi.unlink()
             subprocess.run([git, "checkout-index", "--all", "--force"], cwd=root,
                            env=environment, check=True, capture_output=True)
             checked_out = helper.source_bytes(root)
             self.assertNotIn(b"\r\n", checked_out)
             self.assertEqual(checked_out, original)
             self.assertEqual(helper.fnv64(checked_out), helper.fnv64(original))
+            self.assertNotIn(b"\r\n", abi.read_bytes())
+            self.assertEqual(abi.read_bytes(), original_abi)
 
     def test_asmobj_is_a_complete_wave_module_with_five_role_files(self):
         module = ROOT / "assembler/asmobj"

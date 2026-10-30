@@ -1,4 +1,5 @@
 *.wave text eol=lf linguist-language=Wave
+toolchain/src/assembly_object.rs text eol=lf
 *.ps1 linguist-vendored
 *.sh linguist-vendored
 Makefile linguist-vendored

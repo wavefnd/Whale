@@ -92,9 +92,44 @@ jobs:
             -Dwave-source="$GITHUB_WORKSPACE/.asmobj-bootstrap-source" \
             -Dwave-bootstrap-dir="$RUNNER_TEMP/asmobj-bootstrap" -Dsocket-cli=true
           meson compile -C "$RUNNER_TEMP/whale-meson"
+          warm_build="$(meson compile -C "$RUNNER_TEMP/whale-meson")"
+          printf '%s\n' "$warm_build"
+          printf '%s\n' "$warm_build" | grep -F 'ninja: no work to do.'
           meson test -C "$RUNNER_TEMP/whale-meson" --print-errorlogs
           DESTDIR="$RUNNER_TEMP/whale-meson-install" meson install -C "$RUNNER_TEMP/whale-meson"
           "$RUNNER_TEMP/whale-meson-install/usr/local/bin/whale" --version
+      - name: Verify isolated minimal and single-ISA Meson products
+        run: |
+          meson setup "$RUNNER_TEMP/whale-minimal" \
+            -Dasmobj-dir="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu" \
+            -Dasm-amd64=false -Dasm-aarch64=false -Dasm-riscv64=false -Dasm-loongarch64=false
+          meson compile -C "$RUNNER_TEMP/whale-minimal"
+          meson test -C "$RUNNER_TEMP/whale-minimal" --print-errorlogs
+          meson setup "$RUNNER_TEMP/whale-aarch64-output" \
+            -Dasmobj-dir="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu" \
+            -Dasm-amd64=false -Dasm-riscv64=false -Dasm-loongarch64=false
+          meson compile -C "$RUNNER_TEMP/whale-aarch64-output"
+          meson test -C "$RUNNER_TEMP/whale-aarch64-output" --print-errorlogs
+      - name: Check cross host test registration without executing foreign code
+        run: |
+          cat > "$RUNNER_TEMP/aarch64-cross.ini" <<'EOF'
+          [host_machine]
+          system = 'linux'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          EOF
+          meson setup "$RUNNER_TEMP/whale-cross" --cross-file "$RUNNER_TEMP/aarch64-cross.ini" \
+            -Dcargo-host-target=aarch64-unknown-linux-gnu \
+            -Dasmobj-dir="$GITHUB_WORKSPACE/.ci-asmobj/aarch64-unknown-linux-gnu"
+          meson introspect --tests "$RUNNER_TEMP/whale-cross" | \
+            python3 -c 'import json,sys; assert {t["name"] for t in json.load(sys.stdin)} == {"build-helper"}'
+          meson setup "$RUNNER_TEMP/whale-cross-runner" --cross-file "$RUNNER_TEMP/aarch64-cross.ini" \
+            -Dcargo-host-target=aarch64-unknown-linux-gnu \
+            -Dasmobj-dir="$GITHUB_WORKSPACE/.ci-asmobj/aarch64-unknown-linux-gnu" \
+            '-Dhost-runner=["/bin/true"]'
+          meson introspect --tests "$RUNNER_TEMP/whale-cross-runner" | \
+            python3 -c 'import json,sys; tests={t["name"]:t for t in json.load(sys.stdin)}; assert set(tests)=={"build-helper","cli-smoke"}; assert "--runner-arg=/bin/true" in tests["cli-smoke"]["cmd"]'
       - name: Retain target-specific archives and provenance
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

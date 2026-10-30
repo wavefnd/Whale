@@ -108,15 +108,18 @@ class DependencyTests(unittest.TestCase):
     def test_source_dirs_and_manifests_track_additions_without_disabled_isas(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary).resolve()
-            for name in ["src", "assembler/amd64/src", "assembler/aarch64/src"]:
+            for name in ["src", "toolchain/src", "assembler/amd64/src", "assembler/aarch64/src"]:
                 (source / name).mkdir(parents=True)
                 (source / name / "lib.rs").write_text("// source")
+            (source / "toolchain/src/assembly_object.rs").write_text("// ffi boundary")
             (source / "Cargo.toml").write_text("manifest")
             dependencies = source_dependencies(source, ["asm-aarch64"])
+            self.assertNotIn(source, dependencies)
             self.assertIn(source / "assembler/aarch64/src", dependencies)
             self.assertIn(source / "assembler/aarch64/src/lib.rs", dependencies)
             self.assertNotIn(source / "assembler/amd64/src/lib.rs", dependencies)
             self.assertIn(source / "Cargo.toml", dependencies)
+            self.assertIn(source / "toolchain/src/assembly_object.rs", dependencies)
 
 
 class PublicationTests(unittest.TestCase):
@@ -191,6 +194,7 @@ class PublicationTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 build(self.arguments)
         self.assertEqual(self.output.read_bytes(), b"previous")
+        self.assertEqual(self.depfile.read_bytes(), b"previous dependencies")
         self.assertEqual(list(self.root.glob(".whale-*")), [])
 
     def test_root_cargo_target_dir_is_rejected_before_running_cargo(self):

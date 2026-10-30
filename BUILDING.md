@@ -65,8 +65,9 @@ meson test -C /tmp/whale-prebuilt --print-errorlogs
 
 Meson requires either `wave-source` or `asmobj-dir`; `asmobj` is part of the
 product. Explicit archive metadata is checked before linking. The helper records
-the pinned compiler, std, source and archive hashes. Failed compilation or
-archiving preserves the previous complete publication. Ambient environment
+the pinned compiler, std, Rust/LLVM bootstrap requirements, ABI, source and archive
+hashes. Changing the Rust/Wave boundary requires rebuilding the archive. Failed
+compilation or archiving preserves the previous complete publication. Ambient environment
 variables cannot select a different module for a Meson product.
 
 For work confined to Rust components, ordinary Cargo builds remain available:
