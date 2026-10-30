@@ -51,6 +51,23 @@ fn operation_identity_roundtrip_includes_store_unused_constant_and_terminator() 
 }
 
 #[test]
+fn original_location_escapes_controls_without_changing_source_metadata() {
+    let span = SourceSpan { file: 0, line: 3, column: 4, end_line: 3, end_column: 9 };
+    for control in ['\n', '\r', '\t', '\x1b'] {
+        let name = format!("경로/{control}file.wave");
+        let location = OriginalLocation { original: 7, source: Some((name.clone(), span.clone())) };
+        let rendered = location.to_string();
+        assert!(!rendered.contains(control), "{rendered:?}");
+        assert!(rendered.contains(&control.escape_debug().to_string()));
+        assert!(rendered.contains(":3:4 original @n7"));
+        assert_eq!(location.source.as_ref().unwrap().0, name);
+    }
+    let location =
+        OriginalLocation { original: 7, source: Some(("경로/파일.wave".into(), span)) };
+    assert_eq!(location.to_string(), "경로/파일.wave:3:4 original @n7");
+}
+
+#[test]
 fn required_operation_splitting_preserves_original_ids() {
     let mut m = module();
     m.sources.copy_mapping(target(2), target(1)).unwrap();
@@ -109,6 +126,30 @@ mod frontend {
     use super::*;
 
     use ir::lower_ast::{frontend as ast, interchange};
+
+    #[test]
+    fn located_lower_error_escapes_filename_but_retains_annotation() {
+        use ir::lower_ast::LowerError;
+        for control in ['\n', '\r', '\t', '\x1b'] {
+            let name = format!("경로/{control}file.wave");
+            let annotation = SourceAnnotation {
+                id: 7,
+                source: Some(FrontendSource {
+                    file: name.clone(),
+                    line: 3,
+                    column: 4,
+                    end_line: 3,
+                    end_column: 9,
+                }),
+            };
+            let error = LowerError::UnknownVariable("missing".into()).at(&annotation);
+            let rendered = error.to_string();
+            assert!(!rendered.contains(control), "{rendered:?}");
+            assert!(rendered.contains(&control.escape_debug().to_string()));
+            assert!(rendered.contains(":3:4: original @n7"));
+            assert_eq!(error.annotation(), Some(&annotation));
+        }
+    }
 
     fn annotation(id: u64) -> SourceAnnotation {
         SourceAnnotation {
