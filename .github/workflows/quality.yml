@@ -95,11 +95,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, flags: '' }
-          - { name: amd64, flags: '--features asm-amd64' }
-          - { name: aarch64, flags: '--features asm-aarch64' }
-          - { name: riscv64, flags: '--features asm-riscv64' }
-          - { name: loongarch64, flags: '--features asm-loongarch64' }
+          - { name: none, flags: '', graph_flags: '' }
+          - { name: amd64, flags: '--features asm-amd64', graph_flags: '--isa amd64' }
+          - { name: aarch64, flags: '--features asm-aarch64', graph_flags: '--isa aarch64' }
+          - { name: riscv64, flags: '--features asm-riscv64', graph_flags: '--isa riscv64' }
+          - { name: loongarch64, flags: '--features asm-loongarch64', graph_flags: '--isa loongarch64' }
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
     steps:
@@ -114,6 +114,8 @@ jobs:
       - run: rustup toolchain install stable --profile minimal
       - name: Check selected assembler registration and integration
         run: python tools/ci.py run --name reduced-isa -- cargo test -p whale --no-default-features ${{ matrix.flags }} --locked
+      - name: Check selected production dependency graph
+        run: python tools/ci.py run --name product-graph -- python tools/check_product_graph.py ${{ matrix.graph_flags }}
       - name: Retain command logs and reproduction evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

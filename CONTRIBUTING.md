@@ -41,7 +41,9 @@ IR remains Rust.
 
 Official and contributed architectures follow the same process. Central enum,
 dispatch and build-list edits are expected. Run `python3 tools/check_module_layers.py`
-to check dependency direction. See [BUILDING.md](BUILDING.md#select-assembler-outputs-and-host-machines)
+to check dependency direction, and `python3 tools/check_product_graph.py --isa amd64`
+to check that a selected product links only the requested ISA crate. Omit `--isa`
+for a product without assemblers. See [BUILDING.md](BUILDING.md#select-assembler-outputs-and-host-machines)
 for product selection and executable-host versus output-target settings.
 
 ## 3. Submit a contribution
