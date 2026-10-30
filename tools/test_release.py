@@ -1,5 +1,6 @@
 """Release identity, reproducibility, archive integrity and exact-set regressions."""
 
+import gzip
 import io
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+import sys
 
 import release
 
@@ -179,6 +181,58 @@ class ReleaseTests(unittest.TestCase):
                                 writer.addfile(info, io.BytesIO(data))
                     with self.assertRaises(ValueError):
                         release.validate(broken, VERSION, target, SOURCE, execute=False)
+
+    def test_manifest_requires_an_object_and_exact_field_types(self):
+        target = "x86_64-pc-windows-msvc"
+        original = self.package(target, "manifest-control")
+        self.assertEqual(release.validate(original, VERSION, target, SOURCE, execute=False)["format_version"], 1)
+        with zipfile.ZipFile(original) as reader:
+            entries = [(info, reader.read(info)) for info in reader.infolist()]
+        for mutation in (None, True, {"format_version": True}, {"format_version": 1.0}):
+            with self.subTest(mutation=mutation):
+                broken = self.root / "bad-manifest.zip"
+                with zipfile.ZipFile(broken, "w") as writer:
+                    for info, data in entries:
+                        if info.filename.endswith("/manifest.json"):
+                            manifest = json.loads(data)
+                            data = json.dumps(mutation if not isinstance(mutation, dict)
+                                              else {**manifest, **mutation}).encode()
+                        writer.writestr(info, data)
+                with self.assertRaisesRegex(ValueError, "manifest identity"):
+                    release.validate(broken, VERSION, target, SOURCE, execute=False)
+
+    def test_pax_metadata_is_rejected_before_large_allocation(self):
+        target = "x86_64-unknown-linux-gnu"
+        archive = self.root / "pax.tar.gz"
+        size = 384 * 1024 * 1024
+        header = tarfile.TarInfo("pax_global_header")
+        header.type = tarfile.XGLTYPE
+        header.size = size
+        prefix = f"{size} comment=".encode()
+        remaining = size - len(prefix) - 1
+        chunk = b"A" * 65536
+        with gzip.open(archive, "wb", compresslevel=1) as stream:
+            stream.write(header.tobuf(format=tarfile.USTAR_FORMAT))
+            stream.write(prefix)
+            while remaining:
+                count = min(remaining, len(chunk))
+                stream.write(chunk[:count])
+                remaining -= count
+            stream.write(b"\n")
+            stream.write(bytes((-size) % 512 + 1024))
+        self.assertLess(archive.stat().st_size, size // 100)
+        with self.assertRaisesRegex(ValueError, "USTAR"):
+            release.validate(archive, VERSION, target, SOURCE, execute=False)
+        if sys.platform.startswith("linux"):
+            code = ("import resource,sys; from pathlib import Path; "
+                    "sys.path.insert(0,sys.argv[1]); import release; "
+                    "resource.setrlimit(resource.RLIMIT_AS,(512*1024*1024,)*2); "
+                    "release.validate(Path(sys.argv[2]),'0.1.0',"
+                    "'x86_64-unknown-linux-gnu','a'*40,execute=False)")
+            child = subprocess.run([sys.executable, "-c", code, str(Path(release.__file__).parent), str(archive)],
+                                   capture_output=True, text=True, timeout=20)
+            self.assertNotEqual(child.returncode, 0)
+            self.assertIn("ValueError: release tar requires regular USTAR members", child.stderr)
 
 
 if __name__ == "__main__":
