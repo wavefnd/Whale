@@ -8,7 +8,12 @@ fn coff_cli_uses_explicit_machine_and_preserves_output_on_invalid_options() {
     for (arch, source, machine) in [
         ("amd64", "global entry\nentry: ret\n", 0x8664u16),
         ("aarch64", ".global entry\nentry: ret\n", 0xaa64),
-    ] {
+    ]
+    .into_iter()
+    .filter(|(arch, _, _)| {
+        (cfg!(feature = "asm-amd64") && *arch == "amd64")
+            || (cfg!(feature = "asm-aarch64") && *arch == "aarch64")
+    }) {
         fs::write(&input, source).unwrap();
         let result = Command::new(env!("CARGO_BIN_EXE_whale"))
             .args(["asm", "--arch", arch, "--format", "coff"])

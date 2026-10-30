@@ -86,6 +86,44 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  reduced-isa:
+    needs: asmobj
+    name: Selected ISA / ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: none, flags: '' }
+          - { name: amd64, flags: '--features asm-amd64' }
+          - { name: aarch64, flags: '--features asm-aarch64' }
+          - { name: riscv64, flags: '--features asm-riscv64' }
+          - { name: loongarch64, flags: '--features asm-loongarch64' }
+    env:
+      WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Download complete Wave asmobj module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.artifact_name }}
+          path: .ci-asmobj
+      - run: rustup toolchain install stable --profile minimal
+      - name: Check selected assembler registration and integration
+        run: python tools/ci.py run --name reduced-isa -- cargo test -p whale --no-default-features ${{ matrix.flags }} --locked
+      - name: Retain command logs and reproduction evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: reduced-isa-${{ matrix.name }}
+          path: .ci-artifacts/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
   docs:
     needs: asmobj
     name: Public crate documentation

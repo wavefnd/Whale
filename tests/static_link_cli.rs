@@ -1,3 +1,5 @@
+#![cfg(feature = "asm-amd64")]
+
 use std::{fs, path::Path, process::Command};
 
 fn whale() -> Command {
