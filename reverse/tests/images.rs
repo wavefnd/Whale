@@ -200,6 +200,113 @@ fn high_half_symbol_file_mapping_uses_checked_relative_offsets() {
 }
 
 #[test]
+fn inactive_executable_sections_ignore_undefined_header_fields() {
+    let mut bytes = executable();
+    bytes.resize(256, 0);
+    write64(&mut bytes, 40, 128);
+    bytes[58..60].copy_from_slice(&64u16.to_le_bytes());
+    bytes[60..62].copy_from_slice(&2u16.to_le_bytes());
+    assert!(Image::elf(&bytes, ObjectReadLimits::default()).is_ok());
+    bytes[192..196].copy_from_slice(&u32::MAX.to_le_bytes());
+    write64(&mut bytes, 192 + 24, u64::MAX);
+    write64(&mut bytes, 192 + 48, 3);
+    assert!(Image::elf(&bytes, ObjectReadLimits::default()).is_ok());
+    bytes[128] = 1;
+    assert!(Image::elf(&bytes, ObjectReadLimits::default()).unwrap_err().contains("section zero"));
+
+    let mut inactive_owner = symbol_executable(1);
+    inactive_owner[128 + 64 + 4..128 + 64 + 8].copy_from_slice(&0u32.to_le_bytes());
+    inactive_owner[128 + 64 + 48..128 + 64 + 56].copy_from_slice(&3u64.to_le_bytes());
+    let image = Image::elf(&inactive_owner, ObjectReadLimits::default()).unwrap();
+    assert_eq!(image.symbols[0].region, None);
+}
+
+#[test]
+fn executable_string_tables_require_nul_boundaries_even_for_unused_bytes() {
+    let original = symbol_executable(1);
+    assert!(Image::elf(&original, ObjectReadLimits::default()).is_ok());
+    let mut prefix = original.clone();
+    prefix[0x1040] = b'X';
+    assert!(Image::elf(&prefix, ObjectReadLimits::default())
+        .unwrap_err()
+        .contains("symbol-name string table"));
+    let mut tail = original.clone();
+    tail.push(b'X');
+    write64(&mut tail, 128 + 3 * 64 + 32, 4);
+    assert!(Image::elf(&tail, ObjectReadLimits::default()).is_err());
+    *tail.last_mut().unwrap() = 0;
+    assert!(Image::elf(&tail, ObjectReadLimits::default()).is_ok());
+    write64(&mut tail, 128 + 3 * 64 + 32, 0);
+    assert!(Image::elf(&tail, ObjectReadLimits::default()).is_err());
+
+    let mut named = original;
+    named[62..64].copy_from_slice(&3u16.to_le_bytes());
+    assert!(Image::elf(&named, ObjectReadLimits::default()).is_ok());
+    named[0x1040] = b'X';
+    assert!(Image::elf(&named, ObjectReadLimits::default())
+        .unwrap_err()
+        .contains("section-name string table"));
+}
+
+#[test]
+fn executable_symtab_checks_null_record_and_local_global_boundary() {
+    let original = symbol_executable(1);
+    assert_eq!(Image::elf(&original, ObjectReadLimits::default()).unwrap().symbols.len(), 1);
+    let mut null = original.clone();
+    null[0x1018] = 123;
+    assert!(Image::elf(&null, ObjectReadLimits::default()).unwrap_err().contains("symbol zero"));
+    for info in [0, 3, u32::MAX] {
+        let mut invalid = original.clone();
+        invalid[128 + 2 * 64 + 44..128 + 2 * 64 + 48].copy_from_slice(&info.to_le_bytes());
+        assert!(Image::elf(&invalid, ObjectReadLimits::default()).is_err(), "info {info}");
+    }
+    let mut wrong_order = original.clone();
+    wrong_order[128 + 2 * 64 + 44..128 + 2 * 64 + 48].copy_from_slice(&1u32.to_le_bytes());
+    assert!(Image::elf(&wrong_order, ObjectReadLimits::default())
+        .unwrap_err()
+        .contains("local/global"));
+    for binding in [1u8, 2] {
+        wrong_order[0x102c] = (binding << 4) | 2;
+        assert!(Image::elf(&wrong_order, ObjectReadLimits::default()).is_ok());
+    }
+}
+
+#[test]
+fn empty_load_ranges_do_not_overlap_real_mappings() {
+    let mut bytes = executable();
+    bytes.resize(177, 0);
+    bytes[176] = 0xc3;
+    bytes[56..58].copy_from_slice(&2u16.to_le_bytes());
+    write64(&mut bytes, 24, 0x4000b0);
+    write64(&mut bytes, 96, 177);
+    write64(&mut bytes, 104, 177);
+    bytes[120..124].copy_from_slice(&1u32.to_le_bytes());
+    bytes[124..128].copy_from_slice(&4u32.to_le_bytes());
+    write64(&mut bytes, 128, 0);
+    write64(&mut bytes, 136, 0x400001);
+    write64(&mut bytes, 144, 0x400001);
+    write64(&mut bytes, 152, 0);
+    write64(&mut bytes, 160, 0);
+    write64(&mut bytes, 168, 1);
+    for address in [0x400001, 0x4000b1] {
+        write64(&mut bytes, 136, address);
+        let image = Image::elf(&bytes, ObjectReadLimits::default()).unwrap();
+        assert_eq!(image.regions.len(), 1);
+    }
+    write64(&mut bytes, 136, 0x400001);
+    write64(&mut bytes, 160, 1);
+    assert!(Image::elf(&bytes, ObjectReadLimits::default())
+        .unwrap_err()
+        .contains("overlapping PT_LOAD"));
+    write64(&mut bytes, 160, 0);
+    write64(&mut bytes, 152, 1);
+    assert!(Image::elf(&bytes, ObjectReadLimits::default()).is_err());
+    write64(&mut bytes, 152, 0);
+    write64(&mut bytes, 168, 3);
+    assert!(Image::elf(&bytes, ObjectReadLimits::default()).is_err());
+}
+
+#[test]
 fn relocatable_inspection_shares_actual_reader_work_instead_of_reserving_half() {
     let mut object = ObjectFile::new(ObjectFormat::ELF64);
     object.add_section(".text", SectionKind::Text, 1);

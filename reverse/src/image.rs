@@ -181,11 +181,13 @@ impl<'a> Image<'a> {
             } else {
                 view.range(p.offset, p.file_size).map_err(|e| e.to_string())?
             };
-            charge(&mut work, mappings.len())?;
-            if mappings.iter().any(|&(start, stop)| p.virtual_address < stop && start < end) {
-                return Err("overlapping PT_LOAD virtual ranges are unsupported".into());
+            if p.memory_size != 0 {
+                charge(&mut work, mappings.len())?;
+                if mappings.iter().any(|&(start, stop)| p.virtual_address < stop && start < end) {
+                    return Err("overlapping PT_LOAD virtual ranges are unsupported".into());
+                }
+                mappings.push((p.virtual_address, end));
             }
-            mappings.push((p.virtual_address, end));
             if p.flags & 1 != 0 && !bytes.is_empty() {
                 image.regions.push(CodeRegion {
                     id: image.regions.len(),
@@ -220,7 +222,7 @@ impl<'a> Image<'a> {
                 return Err("section names require a string table".into());
             }
             let names = view.range(table.offset, table.size).map_err(|e| e.to_string())?;
-            if names.first() != Some(&0) {
+            if !valid_string_table(names) {
                 return Err("invalid section-name string table".into());
             }
             Some(names)
@@ -230,6 +232,9 @@ impl<'a> Image<'a> {
         for index in 1..view.header.section_count {
             charge(&mut work, 1)?;
             let s = view.section(index).map_err(|e| e.to_string())?;
+            if s.kind == 0 {
+                continue;
+            }
             if s.name != 0 {
                 let names = section_names.ok_or("section name without string table")?;
                 let tail =
@@ -260,7 +265,10 @@ impl<'a> Image<'a> {
             }
             if s.entry_size != 24
                 || s.size % 24 != 0
+                || s.size == 0
                 || s.size / 24 > limits.max_symbols as u64
+                || s.info == 0
+                || u64::from(s.info) > s.size / 24
                 || s.link as usize >= view.header.section_count
             {
                 return Err("invalid executable symbol table".into());
@@ -274,9 +282,19 @@ impl<'a> Image<'a> {
                 return Err("symbol names require a string table".into());
             }
             let names = view.range(strings.offset, strings.size).map_err(|e| e.to_string())?;
+            if !valid_string_table(names) {
+                return Err("invalid symbol-name string table".into());
+            }
+            if view.range(s.offset, 24).map_err(|e| e.to_string())?.iter().any(|byte| *byte != 0) {
+                return Err("executable symbol zero is not null".into());
+            }
             for n in 1..s.size / 24 {
                 charge(&mut work, 1)?;
                 let at = s.offset + n * 24;
+                let binding = view.range(at + 4, 1).map_err(|e| e.to_string())?[0] >> 4;
+                if (n < u64::from(s.info)) != (binding == 0) {
+                    return Err("executable local/global symbol order contradicts sh_info".into());
+                }
                 let name_offset = view.u32(at).map_err(|e| e.to_string())? as usize;
                 let remaining = limits.max_string_bytes.saturating_sub(string_work);
                 let tail = names.get(name_offset..).ok_or("symbol name offset outside table")?;
@@ -386,4 +404,8 @@ impl<'a> Image<'a> {
 fn charge(work: &mut usize, count: usize) -> Result<(), String> {
     *work = work.checked_sub(count).ok_or("ELF inspection work limit exceeded")?;
     Ok(())
+}
+
+fn valid_string_table(bytes: &[u8]) -> bool {
+    bytes.first() == Some(&0) && bytes.last() == Some(&0)
 }
