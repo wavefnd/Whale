@@ -4,6 +4,35 @@ fn whale() -> Command {
     Command::new(env!("CARGO_BIN_EXE_whale"))
 }
 
+#[test]
+fn help_reports_the_actual_reverse_capability() {
+    assert!(!reverse::backend_available());
+    for args in [vec!["disasm", "--help"], vec!["reverse", "--help"]] {
+        let result = whale().args(args).output().unwrap();
+        assert!(result.status.success());
+        let help = String::from_utf8(result.stdout).unwrap();
+        assert!(help.contains("whale reverse inspect"));
+        assert!(help.contains("ELF/raw AMD64 inspection is available"));
+        assert!(help.contains("Disassembly, CFG and xrefs are currently unavailable"));
+        assert!(!help.contains("Unknown listing bytes are data records"));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn closed_reverse_help_stdout_exits_without_panicking() {
+    use std::{os::fd::OwnedFd, os::unix::net::UnixStream, process::Stdio};
+    for args in [vec!["disasm", "--help"], vec!["reverse", "--help"]] {
+        let (reader, writer) = UnixStream::pair().unwrap();
+        drop(reader);
+        let result =
+            whale().args(args).stdout(Stdio::from(OwnedFd::from(writer))).output().unwrap();
+        assert_eq!(result.status.code(), Some(0), "{result:?}");
+        assert!(!String::from_utf8_lossy(&result.stderr).contains("panicked"));
+    }
+    assert!(whale().args(["reverse", "--help"]).output().unwrap().status.success());
+}
+
 fn object() -> Vec<u8> {
     use object::*;
     let mut o = ObjectFile::new(ObjectFormat::ELF64);

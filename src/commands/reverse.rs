@@ -1,3 +1,5 @@
+use super::report::println;
+
 use reverse::image::Image;
 
 use std::{path::Path, process};
@@ -324,5 +326,5 @@ fn graph(image: &Image<'_>, options: &Options, mode: &str) -> Result<String, Str
 }
 
 fn help() {
-    println!("Usage:\n  whale disasm [--amd64] <file.o|executable> [--json] [-o PATH]\n  whale disasm --raw --amd64 --base ADDRESS <bytes>\n  whale reverse inspect <file.o|executable> [--json]\n  whale reverse cfg|xrefs <file> [--entry NAME|ADDRESS] [--json]\n\nAMD64 long mode, supported integer/scalar SSE forms only.\n--max-input N          input bytes (default 8388608; cap 268435456)\n--max-output N         output bytes (default 16777216; cap 268435456)\n--max-instructions N   records (listing 100000; CFG 16384; cap 1000000)\n--max-work N           CFG shared work (default 67108864; cap 1073741824)\n--max-workspace N      CFG bytes (default 134217728; cap 536870912)\nUnknown listing bytes are data records; CFG stops at unknown encodings.\nCFG/xrefs analyze one region from ELF entry, raw base or _start; --entry overrides.\nET_REL without _start requires --entry. Relocations retain symbolic targets.\nExecutable listing starts at its entry in the containing executable file range.");
+    println!("Usage:\n  whale reverse inspect <file.o|executable> [--json] [-o PATH]\n  whale reverse inspect --raw --amd64 --base ADDRESS <bytes> [--json]\n  whale disasm <file> [--json] [-o PATH]\n  whale reverse cfg|xrefs <file> [--entry NAME|ADDRESS] [--json]\n\nELF/raw AMD64 inspection is available without a decoder.\nDisassembly, CFG and xrefs are currently unavailable in this build.\n--max-input N          input bytes (default 8388608; cap 268435456)\n--max-output N         output bytes (default 16777216; cap 268435456)\n--max-instructions N   records (listing 100000; CFG 16384; cap 1000000)\n--max-work N           CFG shared work (default 67108864; cap 1073741824)\n--max-workspace N      CFG bytes (default 134217728; cap 536870912)");
 }

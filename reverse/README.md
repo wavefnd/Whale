@@ -39,3 +39,8 @@ unavailable capability and preserve an existing output file. The retained
 record/rendering APIs describe supplied typed facts; they do not implement
 instruction decoding or establish reachability. Source recovery, decompilation
 and IR lifting remain outside the current scope.
+
+`Instruction::original_bytes`, `format::instruction_text` and
+`format::instruction_json` return `Result` so caller-supplied records with a
+length outside 1..=15 fail before presentation. Valid records keep the same
+text and JSON output.

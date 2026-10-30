@@ -100,9 +100,9 @@ fn relocatable_code_regions_and_symbolic_call_annotations_preserve_identity() {
     assert!(image.annotations(0, 5, 1).is_empty());
     if reverse::backend_available() {
         let inst = reverse::decode(image.regions[0].bytes, 0).unwrap();
-        let structured = reverse::format::instruction_json(&inst, 0, &a);
+        let structured = reverse::format::instruction_json(&inst, 0, &a).unwrap();
         assert!(structured["target"].is_null());
-        let text = reverse::format::instruction_text(&inst, 0, &a);
+        let text = reverse::format::instruction_text(&inst, 0, &a).unwrap();
         assert!(text.contains("reloc(external-4)"));
         assert!(!text.contains("call 0x5"));
     }

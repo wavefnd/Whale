@@ -246,7 +246,8 @@ impl Serialize for InstructionView<'_, '_> {
         // Decoded instructions have at most three operands and fifteen bytes.
         // Their fixed-size facts can use the existing formatter; potentially
         // large relocation names/counts remain borrowed and stream separately.
-        let facts = reverse::format::instruction_json(instruction, self.base, &[]);
+        let facts = reverse::format::instruction_json(instruction, self.base, &[])
+            .map_err(serde::ser::Error::custom)?;
         let facts = facts.as_object().expect("instruction formatter returns a map");
         let mut map = serializer.serialize_map(Some(facts.len()))?;
         for (key, value) in facts {
@@ -364,7 +365,9 @@ impl ListingOutput {
         } else {
             self.bytes(b"overflow  ")?;
         }
-        for (index, byte) in instruction.original_bytes().iter().enumerate() {
+        for (index, byte) in
+            instruction.original_bytes().map_err(|e| e.to_string())?.iter().enumerate()
+        {
             if index != 0 {
                 self.bytes(b" ")?;
             }
@@ -508,16 +511,14 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(
             parsed["records"][0]["instruction"],
-            reverse::format::instruction_json(&instruction, 0x1000, &annotations)
+            reverse::format::instruction_json(&instruction, 0x1000, &annotations).unwrap()
         );
         assert_eq!(parsed["records"][1]["byte"], 0x0f);
         assert_eq!(parsed["records"][1]["code"], false);
         let text = render_listing(&image, &instruction, false, 10000).unwrap();
-        assert!(text.contains(&reverse::format::instruction_text(
-            &instruction,
-            0x1000,
-            &annotations
-        )));
+        assert!(text.contains(
+            &reverse::format::instruction_text(&instruction, 0x1000, &annotations).unwrap()
+        ));
         for (structured, expected) in [(true, json), (false, text)] {
             assert_eq!(
                 render_listing(&image, &instruction, structured, expected.len()).unwrap(),
