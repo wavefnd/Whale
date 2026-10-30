@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: MPL-2.0
+// Versioned IR header parser. Token text is borrowed from the caller and the
+// payload is published only after every required field has been checked.
+struct IrTextToken {
+    data: ptr<u8>;
+    length: u64;
+    kind: u64; // 0 word, 1 decoded string, 2 mark, 3 EOF
+}
+
+struct IrHeaderResult {
+    status: u64; // 0 success, 1 expected token, 2 decimal, 3 range,
+                 // 4 format, 5 semantics, 6 string, 7 byte order, 8 transport,
+                 // 9 word
+    at: u64;
+    expected: u64;
+    version: u64;
+    ptr_bits: u64;
+    endian: u64; // 0 little, 1 big
+    target_index: u64;
+    next: u64;
+}
+
+// Pack expected ASCII bytes into three u64 words. Exact byte comparison avoids
+// both hash collisions and the pinned compiler's exported string-literal
+// symbols, which would collide with independently linked Wave modules.
+fun ir_header_equal(token: ptr<IrTextToken>, expected: u64) -> bool {
+    var length: u64 = 0;
+    var first: u64 = 0;
+    var second: u64 = 0;
+    var third: u64 = 0;
+    if (expected == 0) { length = 6; first = 111516500389741; }
+    else if (expected == 1 || expected == 9) { length = 1; first = 123; }
+    else if (expected == 2) { length = 14; first = 8529664181059874662; second = 121424789598821; }
+    else if (expected == 4) { length = 17; first = 7163384699739268467; second = 8028074745930342259; third = 110; }
+    else if (expected == 6) { length = 6; first = 127978876068212; }
+    else if (expected == 8) { length = 10; first = 8032558528511369572; second = 29813; }
+    else if (expected == 10) { length = 3; first = 7500912; }
+    else if (expected == 11 || expected == 15) { length = 1; first = 61; }
+    else if (expected == 13) { length = 1; first = 44; }
+    else if (expected == 14) { length = 6; first = 121364659072613; }
+    else if (expected == 16) { length = 6; first = 111516484659564; }
+    else if (expected == 18) { length = 3; first = 6777186; }
+    else if (expected == 17) { length = 1; first = 125; }
+    else { return false; }
+    if (token.kind == 1 || token.kind == 3 || token.length != length) { return false; }
+    var i: u64 = 0;
+    while (i < length) {
+        var word: u64 = first;
+        if (i >= 16) { word = third; }
+        else if (i >= 8) { word = second; }
+        if (token.data[i] as u64 != ((word >> ((i & 7) * 8)) & 255)) { return false; }
+        i += 1;
+    }
+    return true;
+}
+
+fun ir_header_number(token: ptr<IrTextToken>, value: ptr<u64>) -> u64 {
+    if (token.kind != 0 || token.length == 0) { return 2; }
+    var n: u64 = 0;
+    var i: u64 = 0;
+    var overflow: bool = false;
+    var b: u64 = 0;
+    var digit: u64 = 0;
+    while (i < token.length) {
+        b = token.data[i] as u64;
+        if (b < 48 || b > 57) { return 2; }
+        digit = b - 48;
+        if (n > (4294967295 - digit) / 10) { overflow = true; }
+        if (!overflow) { n = n * 10 + digit; }
+        i += 1;
+    }
+    if (overflow) { return 3; }
+    value[0] = n;
+    return 0;
+}
+
+fun ir_header_expect(tokens: ptr<IrTextToken>, count: u64, at: ptr<u64>,
+    expected: u64, result: ptr<IrHeaderResult>) -> bool {
+    if (at[0] >= count || !ir_header_equal(&tokens[at[0]], expected)) {
+        result.status = 1; result.at = at[0]; result.expected = expected;
+        return false;
+    }
+    at[0] += 1;
+    return true;
+}
+
+export(c) fun whale_ir_header(tokens: ptr<IrTextToken>, count: u64,
+    max_format: u64, semantics: u64, result: ptr<IrHeaderResult>) -> i32 {
+    if (result == null) { return 8; }
+    result.status = 8; result.at = 0; result.expected = 0;
+    result.version = 0; result.ptr_bits = 0; result.endian = 0;
+    result.target_index = 0; result.next = 0;
+    if (!ir_span_valid(tokens as ptr<u8>, count, 24) || count == 0) { return 8; }
+    // The Rust bridge supplies UTF-8 spans from the Wave lexer. Validate the
+    // borrow before touching it, including tokens selected on error paths.
+    var i: u64 = 0;
+    while (i < count && i < 18) {
+        if (tokens[i].kind > 3 || !ir_span_valid(tokens[i].data, tokens[i].length, 1)) {
+            return 8;
+        }
+        i += 1;
+    }
+    var at: u64 = 0;
+    var version: u64 = 0;
+    var ptr_bits: u64 = 0;
+    var endian: u64 = 0;
+    var target_index: u64 = 0;
+    if (!ir_header_expect(tokens, count, &at, 0, result)
+        || !ir_header_expect(tokens, count, &at, 1, result)
+        || !ir_header_expect(tokens, count, &at, 2, result)) {
+        return result.status as i32;
+    }
+    result.at = at;
+    if (at >= count) { result.status = 2; return 2; }
+    result.status = ir_header_number(&tokens[at], &version);
+    if (result.status != 0) { return result.status as i32; }
+    at += 1;
+    if (version < 3 || version > max_format) {
+        result.status = 4; result.at = at - 1; return 4;
+    }
+    if (!ir_header_expect(tokens, count, &at, 4, result)) {
+        return 1;
+    }
+    result.at = at;
+    if (at >= count) { result.status = 2; return 2; }
+    result.status = ir_header_number(&tokens[at], &i);
+    if (result.status != 0) { return result.status as i32; }
+    at += 1;
+    if (i != semantics) { result.status = 5; result.at = at - 1; return 5; }
+    if (!ir_header_expect(tokens, count, &at, 6, result)) { return 1; }
+    if (at >= count) { result.status = 6; result.at = at; return 6; }
+    if (tokens[at].kind != 1) { result.status = 6; result.at = at; return 6; }
+    target_index = at; at += 1;
+    if (!ir_header_expect(tokens, count, &at, 8, result)
+        || !ir_header_expect(tokens, count, &at, 9, result)
+        || !ir_header_expect(tokens, count, &at, 10, result)
+        || !ir_header_expect(tokens, count, &at, 11, result)) {
+        return 1;
+    }
+    result.at = at;
+    if (at >= count) { result.status = 2; return 2; }
+    result.status = ir_header_number(&tokens[at], &ptr_bits);
+    if (result.status != 0) { return result.status as i32; }
+    at += 1;
+    if (!ir_header_expect(tokens, count, &at, 13, result)
+        || !ir_header_expect(tokens, count, &at, 14, result)
+        || !ir_header_expect(tokens, count, &at, 15, result)) {
+        return 1;
+    }
+    if (at >= count) { result.status = 9; result.at = at; return 9; }
+    if (tokens[at].kind != 0) { result.status = 9; result.at = at; return 9; }
+    if (ir_header_equal(&tokens[at], 16)) { endian = 0; }
+    else if (ir_header_equal(&tokens[at], 18)) { endian = 1; }
+    else { result.status = 7; result.at = at; return 7; }
+    at += 1;
+    if (!ir_header_expect(tokens, count, &at, 17, result)) { return 1; }
+    result.version = version; result.ptr_bits = ptr_bits; result.endian = endian;
+    result.target_index = target_index; result.next = at; result.status = 0;
+    return 0;
+}

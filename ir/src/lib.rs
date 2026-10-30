@@ -24,6 +24,9 @@ mod interpreter;
 
 pub mod layout;
 
+#[cfg(whale_wave_ir)]
+mod wave_layout;
+
 pub mod limits;
 
 pub mod module;
@@ -31,6 +34,9 @@ pub mod module;
 pub mod printer;
 
 pub mod source;
+
+#[cfg(whale_wave_ir)]
+mod source_wave;
 
 pub mod types;
 
@@ -63,6 +69,9 @@ pub use global_storage::*;
 pub const IR_FORMAT_VERSION: u32 = 8;
 
 pub const SEMANTICS_VERSION: u32 = 1;
+
+/// True when this IR crate is linked to the pinned Wave source module.
+pub const IR_WAVE_ENABLED: bool = cfg!(whale_wave_ir);
 
 pub use instr::*;
 

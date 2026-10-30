@@ -5,6 +5,7 @@ use crate::{BlockId, FunctionId, GlobalId, Module};
 
 use diagnostic::EscapedName;
 
+#[cfg(any(not(whale_wave_ir), test))]
 use std::collections::{HashMap, HashSet};
 
 #[cfg_attr(feature = "socket", derive(serde::Serialize, serde::Deserialize))]
@@ -137,6 +138,23 @@ impl SourceMetadata {
     }
 
     pub fn validate(&self, module: &Module) -> Result<(), SourceMetadataError> {
+        #[cfg(whale_wave_ir)]
+        {
+            crate::source_wave::validate(self, module, crate::IrLimits::default().max_analysis_work)
+                .map(|_| ())
+                .map_err(|error| match error {
+                    crate::source_wave::ValidationError::Invalid(error) => error,
+                    crate::source_wave::ValidationError::Work => {
+                        SourceMetadataError("source metadata work limit exceeded")
+                    },
+                })
+        }
+        #[cfg(not(whale_wave_ir))]
+        self.validate_reference(module)
+    }
+
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn validate_reference(&self, module: &Module) -> Result<(), SourceMetadataError> {
         if self.files.is_empty() && self.originals.is_empty() && self.mappings.is_empty() {
             return Ok(());
         }
@@ -221,5 +239,93 @@ impl SourceMetadata {
         }
         self.mappings.push(SourceMapping { target: to, original: id });
         Ok(())
+    }
+}
+
+#[cfg(all(test, whale_wave_ir))]
+mod wave_tests {
+    use super::*;
+
+    use crate::*;
+
+    #[test]
+    fn wave_metadata_matches_reference_identity_span_and_mapping_rules() {
+        let mut module = Module::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+        let mut block = BasicBlock::new(BlockId(17), "body");
+        block.instructions.push(Instruction::Const {
+            dst: ValueId(0),
+            ty: Type::U8,
+            value: ConstValue::U(1),
+        });
+        block.terminator = Some(Terminator::Ret { ty: Type::Void, value: None });
+        module.functions.push(Function {
+            id: FunctionId(91),
+            name: "probe".into(),
+            params: vec![],
+            ret_ty: Type::Void,
+            blocks: vec![block],
+            entry: BlockId(17),
+            value_types: vec![],
+        });
+        let valid = SourceMetadata {
+            files: vec![SourceFile { id: u32::MAX, name: "경로/source.wave".into() }],
+            originals: vec![OriginalNode {
+                id: u64::MAX,
+                span: Some(SourceSpan {
+                    file: u32::MAX,
+                    line: 9,
+                    column: 4,
+                    end_line: 9,
+                    end_column: 7,
+                }),
+            }],
+            mappings: vec![SourceMapping {
+                original: u64::MAX,
+                target: SourceTarget::Instruction {
+                    function: FunctionId(91),
+                    block: BlockId(17),
+                    index: 0,
+                },
+            }],
+        };
+        for defect in 0..16 {
+            let mut m = valid.clone();
+            match defect {
+                0 => {},
+                1 => m.files[0].name.clear(),
+                2 => m.files[0].name.push('\0'),
+                3 => m.files.push(m.files[0].clone()),
+                4 => m.originals.push(m.originals[0].clone()),
+                5 => m.originals[0].span.as_mut().unwrap().file = 7,
+                6 => m.originals[0].span.as_mut().unwrap().line = 0,
+                7 => m.originals[0].span.as_mut().unwrap().column = 0,
+                8 => m.originals[0].span.as_mut().unwrap().end_line = 8,
+                9 => m.originals[0].span.as_mut().unwrap().end_column = 3,
+                10 => m.mappings[0].original = 0,
+                11 => m.mappings.push(m.mappings[0].clone()),
+                12 => {
+                    m.mappings[0].target = SourceTarget::Instruction {
+                        function: FunctionId(91),
+                        block: BlockId(17),
+                        index: 1,
+                    }
+                },
+                13 => {
+                    m.mappings[0].target =
+                        SourceTarget::Terminator { function: FunctionId(91), block: BlockId(17) }
+                },
+                14 => {
+                    m.mappings[0].target =
+                        SourceTarget::Terminator { function: FunctionId(0), block: BlockId(17) }
+                },
+                _ => m.mappings[0].target = SourceTarget::Global(GlobalId(0)),
+            }
+            assert_eq!(m.validate(&module), m.validate_reference(&module), "defect {defect}");
+        }
+        let budget = 1;
+        assert!(matches!(
+            crate::source_wave::validate(&valid, &module, budget),
+            Err(crate::source_wave::ValidationError::Work)
+        ));
     }
 }

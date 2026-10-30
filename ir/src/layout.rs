@@ -61,9 +61,13 @@ pub fn layout_for_target(
     max_depth: usize,
 ) -> Result<TypeLayout, LayoutError> {
     target.validate().map_err(|_| LayoutError::InvalidTarget)?;
+    #[cfg(whale_wave_ir)]
+    return crate::wave_layout::layout(ty, &target.storage, max_depth).map(|(layout, _)| layout);
+    #[cfg(not(whale_wave_ir))]
     layout_storage(ty, &target.storage, max_depth.min(crate::MAX_IR_NESTING))
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn layout_storage(
     ty: &Type,
     storage: &target_spec::StorageLayout,
@@ -114,6 +118,7 @@ fn layout_storage(
     Ok(result)
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn align_up(size: u64, align: u32) -> Result<u64, LayoutError> {
     let mask = u64::from(align) - 1;
     let padding = size.wrapping_neg() & mask;
@@ -130,13 +135,23 @@ pub fn allocation_align_for_target(
     ty: &Type,
     target: &target_spec::TargetSpec,
 ) -> Result<u32, LayoutError> {
-    let layout = layout_for_target(ty, target, 128)?;
-    Ok(match target.storage.large_array {
-        Some((threshold, align)) if matches!(ty, Type::Array(..)) && layout.size >= threshold => {
-            layout.align.max(align)
-        },
-        _ => layout.align,
-    })
+    #[cfg(whale_wave_ir)]
+    {
+        target.validate().map_err(|_| LayoutError::InvalidTarget)?;
+        crate::wave_layout::layout(ty, &target.storage, 128).map(|(_, align)| align)
+    }
+    #[cfg(not(whale_wave_ir))]
+    {
+        let layout = layout_for_target(ty, target, 128)?;
+        Ok(match target.storage.large_array {
+            Some((threshold, align))
+                if matches!(ty, Type::Array(..)) && layout.size >= threshold =>
+            {
+                layout.align.max(align)
+            },
+            _ => layout.align,
+        })
+    }
 }
 
 /// Scale for the first native GEP index; a zero-sized pointee cannot be stepped.
@@ -146,5 +161,57 @@ pub fn pointer_stride(pointee: &Type, target: Target) -> Result<u64, LayoutError
         Err(LayoutError::ZeroSizedPointerArithmetic)
     } else {
         Ok(size)
+    }
+}
+
+#[cfg(all(test, whale_wave_ir))]
+mod wave_reference_tests {
+    use super::*;
+
+    fn next(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    fn ty(state: &mut u64, depth: u8) -> Type {
+        let choice = if depth == 0 { next(state) % 7 } else { next(state) % 12 };
+        match choice {
+            0 => Type::Void,
+            1 => Type::U8,
+            2 => Type::I16,
+            3 => Type::F32,
+            4 => Type::U64,
+            5 => Type::I128,
+            6 => Type::Ptr(Box::new(Type::Void)),
+            7 => Type::Array(Box::new(ty(state, depth - 1)), next(state) % 8),
+            8 => Type::Array(Box::new(ty(state, depth - 1)), u64::MAX),
+            9 | 10 => {
+                let count = next(state) % 4;
+                let fields = (0..count).map(|_| ty(state, depth - 1)).collect();
+                Type::Struct(fields)
+            },
+            _ => Type::Tuple(vec![ty(state, depth - 1), ty(state, depth - 1)]),
+        }
+    }
+
+    #[test]
+    fn wave_layout_agrees_with_reference_on_nested_types_and_limits() {
+        let target = Target::X86_64WhaleLinux.specification();
+        let mut state = 0x149_350_256_u64;
+        for _ in 0..4000 {
+            let ty = ty(&mut state, 5);
+            let depth = (next(&mut state) % 8) as usize;
+            let reference = layout_storage(&ty, &target.storage, depth);
+            let wave = layout_for_target(&ty, &target, depth);
+            assert_eq!(wave, reference, "type {ty:?}, depth {depth}");
+        }
+        let mut deep = Type::U8;
+        for _ in 0..20_000 {
+            deep = Type::Array(Box::new(deep), 1);
+        }
+        let first_error = Box::leak(Box::new(Type::Struct(vec![Type::Void, deep])));
+        assert_eq!(layout_for_target(first_error, &target, 256), Err(LayoutError::Void));
     }
 }

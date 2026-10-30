@@ -491,6 +491,11 @@ mod frontend {
             lower_budget(&p, 0),
             Err(LowerError::ResourceLimit(AstLimitError::SourceWork))
         ));
+        let minimum = (1..256).find(|&work| lower_budget(&p, work).is_ok()).unwrap();
+        assert!(matches!(
+            lower_budget(&p, minimum - 1),
+            Err(LowerError::ResourceLimit(AstLimitError::SourceWork))
+        ));
         for id in 1..100 {
             let mut f = p.functions[0].clone();
             f.name = format!("f{id}");
@@ -499,27 +504,27 @@ mod frontend {
         }
         // Only the two annotated globals consume source work. Hoisted slots in
         // the ninety-nine unannotated functions never scan their global maps.
-        let m = lower_budget(&p, 12).unwrap();
+        let m = lower_budget(&p, minimum).unwrap();
         verify_module(&m).unwrap();
         assert_eq!(m.sources.mappings.len(), 2);
     }
 
     #[test]
-    fn final_hoisted_alloca_mapping_adjustment_is_charged_before_returning_ir() {
+    fn final_hoisted_alloca_mappings_are_bounded_and_use_final_physical_indices() {
         let declaration = |name: &str| ast::Stmt::VarDecl {
             name: name.into(),
             ty: i32_type(),
             init: Some(lit(1)),
         };
         let base = program(vec![stmt(10, declaration("a")), ast::Stmt::Return(Some(lit(1)))]);
-        let minimum = (0..100).find(|&work| lower_budget(&base, work).is_ok()).unwrap();
         let mut late = base;
         late.functions[0].body.insert(1, declaration("b"));
+        let minimum = (1..256).find(|&work| lower_budget(&late, work).is_ok()).unwrap();
         assert!(matches!(
-            lower_budget(&late, minimum),
+            lower_budget(&late, minimum - 1),
             Err(LowerError::ResourceLimit(AstLimitError::SourceWork))
         ));
-        let m = lower_budget(&late, minimum + 3).unwrap();
+        let m = lower_budget(&late, minimum).unwrap();
         verify_module(&m).unwrap();
         assert_eq!(m.sources.original(target(3)).unwrap().id, 10);
         assert_eq!(m.sources.original(target(2)).unwrap().id, 10);

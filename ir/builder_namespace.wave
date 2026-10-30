@@ -1,0 +1,432 @@
+// SPDX-License-Identifier: MPL-2.0
+// Module-owned function/global namespaces. String/type memory stays in the
+// caller's immutable arena; Wave owns identity, equality and collision rules.
+struct IrBuilderNamespace {
+    kind: u64; id: u64; flags: u64;
+    name: ptr<u8>; name_count: u64;
+    link: ptr<u8>; link_count: u64;
+    types: ptr<IrBuilderType>; type_count: u64;
+    defined: u64; align: u64; initializer: u64; low: u64; high: u64;
+}
+
+fun ir_builder_namespace_bytes_equal(a: ptr<u8>, an: u64, b: ptr<u8>, bn: u64,
+    result: ptr<IrBuilderResult>, work: u64) -> bool {
+    if (result.work >= work) { result.status = 4; return false; }
+    result.work += 1;
+    if (an != bn) { return false; }
+    var index: u64 = 0;
+    while (index < an) {
+        if (result.work >= work) { result.status = 4; return false; }
+        result.work += 1;
+        if (a[index] != b[index]) { return false; }
+        index += 1;
+    }
+    return true;
+}
+
+fun ir_builder_namespace_signature(types: ptr<IrBuilderType>, count: u64) -> i32 {
+    // A void root return, or ptr<void>, is valid; every other occurrence is
+    // invalid. Function-pointer nodes identify their immediate return child.
+    var parents: array<u64, 258>;
+    var indices: array<u64, 258>;
+    var child_number: array<u64, 258>;
+    var index: u64 = 0;
+    while (index < count) {
+        var depth: u64 = types[index].depth;
+        var kind: u64 = types[index].kind;
+        if (depth > 257) { return 17; }
+        if (kind == 18 && types[index].auxiliary >= 2) { return 17; }
+        if (index != 0) {
+            var parent: u64 = parents[depth - 1];
+            var ordinal: u64 = child_number[depth - 1];
+            child_number[depth - 1] += 1;
+            if (kind == 0 && parent != 17 && !(parent == 18 && ordinal == 0)) { return 17; }
+            if (parent == 18 && (types[indices[depth - 1]].auxiliary & 1) != 0
+                && (kind == 19 || kind == 20 || kind == 21)) { return 18; }
+        } else { if (kind != 18 && kind == 0) { return 17; } }
+        parents[depth] = kind;
+        indices[depth] = index;
+        child_number[depth] = 0;
+        index += 1;
+    }
+    return 0;
+}
+
+// Namespace errors: 10 duplicate global name, 11 link collision, 12 conflicting
+// function declaration, 16 link-name contract, 17 malformed callable signature,
+// 18 unsupported SysV64 aggregate signature. detail=1 means existing declaration.
+export(c) fun whale_ir_builder_namespace(state: ptr<IrBuilderState>,
+    entries: ptr<IrBuilderNamespace>, entry_count: u64, candidate: ptr<IrBuilderNamespace>,
+    mode: u64, legacy: u64, depth_limit: u64, node_limit: u64, byte_limit: u64,
+    work_limit: u64, output: ptr<IrBuilderNamespace>, output_capacity: u64,
+    result: ptr<IrBuilderResult>) -> i32 {
+    if (result == null) { return 1; }
+    result.status = 0; result.detail = 0; result.value = 0; result.work = 0;
+    if (state == null || candidate == null || mode > 1 || legacy > 1 || candidate.kind > 2
+        || !ir_span_valid(entries as ptr<u8>, entry_count, 112)
+        || !ir_span_valid(candidate.name, candidate.name_count, 1)
+        || !ir_span_valid(candidate.link, candidate.link_count, 1)
+        ) { result.status = 1; return 1; }
+    if (state.work > work_limit) { result.status = 4; return 4; }
+    if (state.namespace_nodes > node_limit) { result.status = 3; return 3; }
+    if (state.namespace_bytes > byte_limit) { result.status = 19; return 19; }
+    var available: u64 = work_limit - state.work;
+    var type_result: IrBuilderResult;
+    var status: i32 = ir_builder_type_check(candidate.types, candidate.type_count,
+        depth_limit, node_limit, available, &type_result);
+    if (status != 0) { result.status = status as u64; return status; }
+    result.work = type_result.work;
+    if (legacy == 0) {
+        var kind: u64 = candidate.types[0].kind;
+        if (candidate.kind == 0 && kind != 18) { result.status = 17; return 17; }
+        if (candidate.kind == 2 && (kind == 0 || kind > 18)) { result.status = 24; return 24; }
+        if (candidate.type_count > available - result.work) { result.status = 4; return 4; }
+        result.work += candidate.type_count;
+        status = ir_builder_namespace_signature(candidate.types, candidate.type_count);
+        if (status != 0) { result.status = status as u64; return status; }
+        if (candidate.kind == 2) {
+            if (!ir_power_two(candidate.align)) { result.status = 25; return 25; }
+            if (candidate.initializer == 0 && (candidate.flags & 4) != 0) { result.status = 26; return 26; }
+            if (candidate.initializer != 0 && !ir_builder_namespace_literal(kind,
+                candidate.initializer, candidate.low, candidate.high)) { result.status = 27; return 27; }
+        }
+        var has_link: bool = (candidate.flags & 2) != 0;
+        var external: bool = (candidate.flags & 1) != 0;
+        if ((external && (!has_link || candidate.link_count == 0)) || (!external && has_link)) {
+            result.status = 16; return 16;
+        }
+        var link_index: u64 = 0;
+        while (link_index < candidate.link_count) {
+            if (result.work >= available) { result.status = 4; return 4; }
+            result.work += 1;
+            if (candidate.link[link_index] == 0) { result.status = 16; return 16; }
+            link_index += 1;
+        }
+    }
+    var index: u64 = 0;
+    while (index < entry_count) {
+        if (result.work >= available) { result.status = 4; return 4; }
+        result.work += 1;
+        var existing: ptr<IrBuilderNamespace> = &entries[index];
+        if (!ir_span_valid(existing.name, existing.name_count, 1)
+            || !ir_span_valid(existing.link, existing.link_count, 1)
+            || !ir_span_valid(existing.types as ptr<u8>, existing.type_count, 32)) {
+            result.status = 1; return 1;
+        }
+        if (legacy == 0 && ((candidate.kind == 0 && existing.kind == 0)
+            || (candidate.kind != 0 && existing.kind != 0))) {
+            var same_name: bool = ir_builder_namespace_bytes_equal(candidate.name, candidate.name_count,
+                existing.name, existing.name_count, result, available);
+            if (result.status != 0) { return result.status as i32; }
+            if (same_name) {
+                if (candidate.kind != 0) { result.status = 10; return 10; }
+                var same: bool = candidate.flags == existing.flags
+                    && candidate.type_count == existing.type_count;
+                if (same) {
+                    same = ir_builder_namespace_bytes_equal(candidate.link, candidate.link_count,
+                        existing.link, existing.link_count, result, available);
+                    if (result.status != 0) { return result.status as i32; }
+                }
+                var node: u64 = 0;
+                while (same && node < candidate.type_count) {
+                    if (result.work >= available) { result.status = 4; return 4; }
+                    result.work += 1;
+                    if (candidate.types[node].kind != existing.types[node].kind
+                        || candidate.types[node].depth != existing.types[node].depth
+                        || candidate.types[node].children != existing.types[node].children
+                        || candidate.types[node].auxiliary != existing.types[node].auxiliary) { same = false; }
+                    node += 1;
+                }
+                if (!same) { result.status = 12; return 12; }
+                result.value = existing.id; result.detail = 1;
+                if (mode == 1) { state.work += result.work; }
+                return 0;
+            }
+        }
+        if (legacy == 0 && (candidate.flags & 2) != 0 && (existing.flags & 2) != 0) {
+            var same_link: bool = ir_builder_namespace_bytes_equal(candidate.link, candidate.link_count,
+                existing.link, existing.link_count, result, available);
+            if (result.status != 0) { return result.status as i32; }
+            if (same_link) { result.status = 11; return 11; }
+        }
+        index += 1;
+    }
+    var used: u64 = state.type_count;
+    if (used > node_limit || state.next_value > node_limit - used) { result.status = 3; return 3; }
+    used += state.next_value;
+    if (state.next_block > node_limit - used) { result.status = 3; return 3; }
+    used += state.next_block;
+    if (state.instruction_count > node_limit - used) { result.status = 3; return 3; }
+    used += state.instruction_count;
+    if (state.namespace_nodes >= node_limit - used) { result.status = 3; return 3; }
+    used += state.namespace_nodes + 1;
+    if (candidate.type_count > node_limit - used) { result.status = 3; return 3; }
+    if (candidate.name_count > byte_limit - state.namespace_bytes
+        || candidate.link_count > byte_limit - state.namespace_bytes - candidate.name_count) { result.status = 19; return 19; }
+    var copy: u64 = candidate.name_count + candidate.link_count;
+    if (candidate.type_count >= available || copy > available - candidate.type_count - 1) { result.status = 4; return 4; }
+    copy += candidate.type_count + 1;
+    if (result.work > available - copy) { result.status = 4; return 4; }
+    result.work += copy;
+    if (candidate.kind == 0) {
+        if (state.next_function >= 4294967295) { result.status = 5; return 5; }
+        result.value = state.next_function;
+    } else {
+        if (state.next_global >= 4294967295) { result.status = 5; return 5; }
+        result.value = state.next_global;
+    }
+    if (mode == 0) { return 0; }
+    if (entry_count >= output_capacity || !ir_span_valid(output as ptr<u8>, output_capacity, 112)) {
+        result.status = 1; return 1;
+    }
+    output[entry_count] = candidate[0]; output[entry_count].id = result.value;
+    if (candidate.kind == 0) { state.next_function += 1; } else { state.next_global += 1; }
+    state.namespace_nodes += candidate.type_count + 1;
+    state.namespace_bytes += candidate.name_count + candidate.link_count;
+    state.work += result.work;
+    return 0;
+}
+
+fun ir_builder_namespace_literal(kind: u64, literal: u64, low: u64, high: u64) -> bool {
+    if (kind == 1) { return literal == 3 && low <= 1 && high == 0; }
+    if (kind >= 14 && kind <= 16) { return literal == kind - 10; }
+    var signed: bool = kind == 2 || (kind >= 4 && kind <= 8);
+    var unsigned: bool = kind == 3 || (kind >= 9 && kind <= 13);
+    if (!signed && !unsigned) { return false; }
+    if ((signed && literal != 1) || (unsigned && literal != 2)) { return false; }
+    var width: u64 = 1;
+    if (kind == 4 || kind == 9) { width = 8; }
+    if (kind == 5 || kind == 10) { width = 16; }
+    if (kind == 6 || kind == 11) { width = 32; }
+    if (kind == 7 || kind == 12) { width = 64; }
+    if (kind == 8 || kind == 13) { return true; }
+    var one: u64 = 1;
+    if (unsigned) { return high == 0 && (width == 64 || low < (one << width)); }
+    var top: u64 = one << (width - 1);
+    return (high == 0 && low < top)
+        || (high == 18446744073709551615 && low >= 18446744073709551615 - top + 1);
+}
+
+// Queries do not publish definition state. Marking occurs only when a complete
+// FunctionBuilder is committed, so dropping an unfinished builder remains safe.
+export(c) fun whale_ir_builder_definition(entries: ptr<IrBuilderNamespace>, count: u64,
+    id: u64, parameter_count: u64, mode: u64, max_work: u64, result: ptr<IrBuilderResult>) -> i32 {
+    if (result == null) { return 1; }
+    result.status = 0; result.detail = 0; result.value = 0; result.work = 0;
+    if (mode > 1 || !ir_span_valid(entries as ptr<u8>, count, 112)) { result.status = 1; return 1; }
+    var index: u64 = 0;
+    while (index < count) {
+        if (result.work >= max_work) { result.status = 4; return 4; }
+        result.work += 1;
+        if (entries[index].kind == 0 && entries[index].id == id) {
+            if (entries[index].type_count > max_work - result.work) { result.status = 4; return 4; }
+            result.work += entries[index].type_count;
+            var signature_status: i32 = ir_builder_namespace_signature(entries[index].types, entries[index].type_count);
+            if (signature_status != 0 && mode == 0) { result.status = signature_status as u64; return signature_status; }
+            if (entries[index].defined != 0) { result.status = 14; return 14; }
+            if (entries[index].type_count == 0 || entries[index].types[0].kind != 18
+                || entries[index].types[0].children != parameter_count + 1) { result.status = 15; return 15; }
+            result.value = index;
+            if (mode == 1) { entries[index].defined = 1; }
+            return 0;
+        }
+        index += 1;
+    }
+    result.status = 13; return 13;
+}
+
+export(c) fun whale_ir_builder_function_lookup(entries: ptr<IrBuilderNamespace>, count: u64,
+    name: ptr<u8>, name_count: u64, max_work: u64, result: ptr<IrBuilderResult>) -> i32 {
+    if (result == null) { return 1; }
+    result.status = 0; result.detail = 0; result.value = 0; result.work = 0;
+    if (!ir_span_valid(entries as ptr<u8>, count, 112) || !ir_span_valid(name, name_count, 1)) { result.status = 1; return 1; }
+    var index: u64 = 0;
+    while (index < count) {
+        if (result.work >= max_work) { result.status = 4; return 4; }
+        result.work += 1;
+        if (entries[index].kind == 0) {
+            var same: bool = ir_builder_namespace_bytes_equal(entries[index].name,
+                entries[index].name_count, name, name_count, result, max_work);
+            if (result.status != 0) { return result.status as i32; }
+            if (same) { result.value = entries[index].id; return 0; }
+        }
+        index += 1;
+    }
+    result.status = 13; return 13;
+}
+
+fun ir_builder_subtree_end(types: ptr<IrBuilderType>, count: u64, begin: u64,
+    result: ptr<IrBuilderResult>, work: u64) -> u64 {
+    var end: u64 = begin + 1;
+    while (end < count && types[end].depth > types[begin].depth) {
+        if (result.work >= work) { result.status = 4; return end; }
+        result.work += 1; end += 1;
+    }
+    return end;
+}
+
+// 21 non-function pointer, 22 argument count, 23 argument type (detail=index).
+export(c) fun whale_ir_builder_call(types: ptr<IrBuilderType>, type_count: u64,
+    values: ptr<IrBuilderValue>, value_count: u64, first_value: u64,
+    entries: ptr<IrBuilderNamespace>, entry_count: u64, indirect: u64, callee: u64,
+    arguments: ptr<u64>, argument_count: u64, check_arguments: u64,
+    max_work: u64, result: ptr<IrBuilderResult>) -> i32 {
+    if (result == null) { return 1; }
+    result.status = 0; result.detail = 0; result.value = 0; result.work = 0;
+    if (indirect > 1 || check_arguments > 1 || first_value > value_count
+        || !ir_span_valid(types as ptr<u8>, type_count, 32)
+        || !ir_span_valid(values as ptr<u8>, value_count, 24)
+        || !ir_span_valid(entries as ptr<u8>, entry_count, 112)
+        || !ir_span_valid(arguments as ptr<u8>, argument_count, 8)) { result.status = 1; return 1; }
+    var signature: ptr<IrBuilderType> = null;
+    var signature_count: u64 = 0;
+    if (indirect == 1) {
+        if (callee < first_value || callee >= value_count) { result.status = 8; result.detail = callee; return 8; }
+        if (values[callee].first_type > type_count
+            || values[callee].type_count > type_count - values[callee].first_type
+            || values[callee].type_count == 0) { result.status = 1; return 1; }
+        signature = &types[values[callee].first_type]; signature_count = values[callee].type_count;
+        if (signature[0].kind != 18) { result.status = 21; result.detail = callee; return 21; }
+    } else {
+        var index: u64 = 0;
+        while (index < entry_count) {
+            if (result.work >= max_work) { result.status = 4; return 4; }
+            result.work += 1;
+            if (entries[index].kind == 0 && entries[index].id == callee) {
+                signature = entries[index].types; signature_count = entries[index].type_count; break;
+            }
+            index += 1;
+        }
+        if (signature == null) { result.status = 13; result.detail = callee; return 13; }
+    }
+    if (!ir_span_valid(signature as ptr<u8>, signature_count, 32)
+        || signature_count == 0 || signature[0].kind != 18 || signature[0].children == 0) {
+        result.status = 1; return 1;
+    }
+    var status: i32 = ir_builder_namespace_signature(signature, signature_count);
+    if (status != 0) { result.status = status as u64; return status; }
+    if (signature_count > max_work - result.work) { result.status = 4; return 4; }
+    result.work += signature_count;
+    if (check_arguments == 0) { return 0; }
+    var parameter_count: u64 = signature[0].children - 1;
+    if (argument_count != parameter_count) { result.status = 22; result.detail = parameter_count; return 22; }
+    var expected: u64 = ir_builder_subtree_end(signature, signature_count, 1, result, max_work);
+    var argument: u64 = 0;
+    while (argument < argument_count) {
+        if (result.status != 0) { return result.status as i32; }
+        var value: u64 = arguments[argument];
+        if (value < first_value || value >= value_count) { result.status = 8; result.detail = value; return 8; }
+        var actual: u64 = values[value].first_type;
+        var actual_count: u64 = values[value].type_count;
+        if (actual > type_count || actual_count > type_count - actual || actual_count == 0 || expected >= signature_count) {
+            result.status = 1; return 1;
+        }
+        var end: u64 = ir_builder_subtree_end(signature, signature_count, expected, result, max_work);
+        if (result.status != 0) { return result.status as i32; }
+        var same: bool = actual_count == end - expected;
+        var offset: u64 = 0;
+        while (same && offset < actual_count) {
+            if (result.work >= max_work) { result.status = 4; return 4; }
+            result.work += 1;
+            if (types[actual + offset].kind != signature[expected + offset].kind
+                || types[actual + offset].children != signature[expected + offset].children
+                || types[actual + offset].auxiliary != signature[expected + offset].auxiliary
+                || types[actual + offset].depth + signature[expected].depth != signature[expected + offset].depth) { same = false; }
+            offset += 1;
+        }
+        if (!same) { result.status = 23; result.detail = argument; return 23; }
+        expected = end; argument += 1;
+    }
+    return 0;
+}
+
+export(c) fun whale_ir_builder_signature(types: ptr<IrBuilderType>, count: u64,
+    depth: u64, nodes: u64, work: u64, result: ptr<IrBuilderResult>) -> i32 {
+    if (result == null) { return 1; }
+    result.status = 0; result.detail = 0; result.value = 0; result.work = 0;
+    var status: i32 = ir_builder_type_check(types, count, depth, nodes, work, result);
+    if (status != 0) { result.status = status as u64; return status; }
+    if (count > work - result.work) { result.status = 4; return 4; }
+    result.work += count;
+    status = ir_builder_namespace_signature(types, count);
+    result.status = status as u64; return status;
+}
+
+export(c) fun whale_ir_builder_pointer(types: ptr<IrBuilderType>, type_count: u64,
+    values: ptr<IrBuilderValue>, value_count: u64, first_value: u64,
+    lhs: u64, rhs: u64, pair: u64, max_work: u64, result: ptr<IrBuilderResult>) -> i32 {
+    if (result == null) { return 1; }
+    result.status = 0; result.detail = 0; result.value = 0; result.work = 0;
+    if (pair > 1 || first_value > value_count
+        || !ir_span_valid(types as ptr<u8>, type_count, 32)
+        || !ir_span_valid(values as ptr<u8>, value_count, 24)) { result.status = 1; return 1; }
+    if (lhs < first_value || lhs >= value_count) { result.status = 8; result.detail = lhs; return 8; }
+    if (pair == 1 && (rhs < first_value || rhs >= value_count)) { result.status = 8; result.detail = rhs; return 8; }
+    var left: u64 = values[lhs].first_type;
+    var count: u64 = values[lhs].type_count;
+    if (left >= type_count || count > type_count - left || count == 0) { result.status = 1; return 1; }
+    if (types[left].kind != 17) { result.status = 28; return 28; }
+    if (pair == 0) { return 0; }
+    var right: u64 = values[rhs].first_type;
+    if (right > type_count || values[rhs].type_count > type_count - right) { result.status = 1; return 1; }
+    if (count != values[rhs].type_count) { result.status = 28; return 28; }
+    var index: u64 = 0;
+    while (index < count) {
+        if (result.work >= max_work) { result.status = 4; return 4; }
+        result.work += 1;
+        if (types[left + index].kind != types[right + index].kind
+            || types[left + index].children != types[right + index].children
+            || types[left + index].depth != types[right + index].depth
+            || types[left + index].auxiliary != types[right + index].auxiliary) { result.status = 28; return 28; }
+        index += 1;
+    }
+    return 0;
+}
+
+export(c) fun whale_ir_builder_function_capacity(state: ptr<IrBuilderState>,
+    entries: ptr<IrBuilderNamespace>, count: u64, id: u64, node_limit: u64,
+    work_limit: u64, result: ptr<IrBuilderResult>) -> i32 {
+    if (result == null) { return 1; }
+    result.status = 0; result.detail = 0; result.value = 0; result.work = 0;
+    if (state == null || !ir_span_valid(entries as ptr<u8>, count, 112)) { result.status = 1; return 1; }
+    if (state.work > work_limit) { result.status = 4; return 4; }
+    var available: u64 = work_limit - state.work;
+    var index: u64 = 0;
+    while (index < count) {
+        if (result.work >= available) { result.status = 4; return 4; }
+        result.work += 1;
+        if (entries[index].kind == 0 && entries[index].id == id) {
+            var types: ptr<IrBuilderType> = entries[index].types;
+            var type_count: u64 = entries[index].type_count;
+            if (type_count < 2 || !ir_span_valid(types as ptr<u8>, type_count, 32)
+                || types[0].kind != 18 || types[0].children == 0) { result.status = 1; return 1; }
+            var end: u64 = ir_builder_subtree_end(types, type_count, 1, result, available);
+            if (result.status != 0) { return result.status as i32; }
+            var parameter_nodes: u64 = type_count - end;
+            var parameters: u64 = types[0].children - 1;
+            if (state.next_value > 4294967295 || parameters > 4294967295 - state.next_value
+                || state.next_block >= 4294967295) { result.status = 5; return 5; }
+            var used: u64 = state.namespace_nodes;
+            if (used > node_limit || state.type_count > node_limit - used) { result.status = 3; return 3; }
+            used += state.type_count;
+            if (state.next_value > node_limit - used) { result.status = 3; return 3; }
+            used += state.next_value;
+            if (state.next_block > node_limit - used) { result.status = 3; return 3; }
+            used += state.next_block;
+            if (state.instruction_count > node_limit - used) { result.status = 3; return 3; }
+            used += state.instruction_count;
+            if (used == node_limit) { result.status = 3; return 3; }
+            used += 1;
+            if (parameter_nodes > node_limit - used || parameters > node_limit - used - parameter_nodes) {
+                result.status = 3; return 3;
+            }
+            if (parameter_nodes > available / 2) { result.status = 4; return 4; }
+            var cost: u64 = parameter_nodes * 2;
+            if (parameters >= available - cost) { result.status = 4; return 4; }
+            result.work = cost + parameters + 1;
+            return 0;
+        }
+        index += 1;
+    }
+    result.status = 13; return 13;
+}

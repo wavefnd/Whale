@@ -1,5 +1,67 @@
 use ir::*;
 
+#[cfg(whale_wave_ir)]
+#[test]
+fn complete_body_resource_failures_preserve_values_and_terminator_state() {
+    let mut module = ModuleBuilder::with_limits(
+        "x86_64-whale-linux",
+        DataLayout::default_64bit_le(),
+        IrLimits { max_input_bytes: 16, ..IrLimits::default() },
+    )
+    .unwrap();
+    let mut function = module.begin_function("f", vec![], Type::Void);
+    let condition = function.try_const_bool(true).unwrap();
+    let expected =
+        BuilderError::ResourceLimit(LimitError { resource: Resource::InputBytes, limit: 16 });
+    assert_eq!(function.try_trap("x".repeat(17)), Err(expected.clone()));
+    assert_eq!(function.try_trap_if(condition, "x".repeat(17)), Err(expected.clone()));
+    assert_eq!(
+        function.try_const_decl(
+            "x".repeat(17),
+            ConstExpr::literal(Type::I32, ConstValue::I(4)),
+            ConstValue::I(4)
+        ),
+        Err(expected)
+    );
+    assert_eq!(function.try_const_i32(42), Ok(ValueId(condition.0 + 1)));
+    function.try_ret(None).unwrap();
+    function.finish();
+    let module = module.finish();
+    verify_module(&module).unwrap();
+    assert_eq!(module.functions[0].blocks[0].instructions.len(), 2);
+}
+
+#[cfg(whale_wave_ir)]
+#[test]
+fn rejected_constant_body_expression_is_discarded_iteratively() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            let mut expression = ConstExpr::literal(Type::I32, ConstValue::I(0));
+            for _ in 0..5000 {
+                expression =
+                    ConstExpr { ty: Type::I32, kind: ConstExprKind::Not(Box::new(expression)) };
+            }
+            let mut module =
+                ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+            let mut function = module.begin_function("f", vec![], Type::Void);
+            assert!(matches!(
+                function.try_const_decl("deep", expression, ConstValue::I(0)),
+                Err(BuilderError::ResourceLimit(LimitError {
+                    resource: Resource::ConstantDepth,
+                    ..
+                }))
+            ));
+            assert_eq!(function.try_const_i32(42), Ok(ValueId(0)));
+            function.try_ret(None).unwrap();
+            function.finish();
+            verify_module(&module.finish()).unwrap();
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 #[test]
 fn checked_entry_allocation_cannot_mutate_a_terminated_entry() {
     let mut mb = ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
@@ -137,4 +199,75 @@ fn function_and_storage_link_collisions_fail_atomically_in_both_orders() {
         assert_eq!(m.global_storage.len(), 1);
         verify_module(&m).unwrap();
     }
+}
+
+#[test]
+fn legacy_entry_hoisting_preserves_a_preexisting_terminator() {
+    let mut mb = ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+    let mut f = mb.begin_function("hoist_after_branch", vec![], Type::Void);
+    let entry = f.entry_block();
+    let next = f.create_block("body");
+    f.br(next);
+    f.set_insert_point(next);
+    let slot = f.alloca_in_entry(Type::I32, 4);
+    assert_eq!(f.try_alloca_in_entry(Type::I32, 4), Err(BuilderError::TerminatedBlock(entry)));
+    let value = f.const_i32(7);
+    f.store(Type::I32, value, slot, 4);
+    f.ret(None);
+    f.finish();
+    let module = mb.finish();
+    assert!(matches!(
+        module.functions[0].blocks[0].instructions.as_slice(),
+        [Instruction::Alloca { .. }]
+    ));
+    assert!(
+        matches!(module.functions[0].blocks[0].terminator, Some(Terminator::Br { target }) if target == next)
+    );
+    verify_module(&module).unwrap();
+}
+
+#[test]
+fn deep_rejected_builder_type_is_discarded_before_clone_on_a_small_stack() {
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(|| {
+            let mut ty = Type::I32;
+            for _ in 0..50_000 {
+                ty = Type::ptr_to(ty);
+            }
+            let mut mb = ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+            let mut f = mb.begin_function("bounded_type", vec![], Type::I32);
+            assert!(matches!(
+                f.try_const_int(ty, 1),
+                Err(BuilderError::ResourceLimit(LimitError { resource: Resource::TypeDepth, .. }))
+            ));
+            let value = f.try_const_i32(9).unwrap();
+            assert_eq!(value, ValueId(0), "rejected type cannot consume a value identity");
+            f.ret(Some(value));
+            f.finish();
+            verify_module(&mb.finish()).unwrap();
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+#[cfg(whale_wave_ir)]
+#[test]
+fn checked_function_admission_reserves_all_parameter_storage_before_publication() {
+    let mut mb = ModuleBuilder::with_limits(
+        "x86_64-whale-linux",
+        DataLayout::default_64bit_le(),
+        IrLimits { max_nodes: 10, ..IrLimits::default() },
+    )
+    .unwrap();
+    let signature = FunctionSignature::whale(vec![Type::I32; 5], Type::Void);
+    let id = mb.declare_function("f", signature, Linkage::Internal, None).unwrap();
+    assert!(matches!(
+        mb.begin_declared_function(id, vec![String::new(); 5]),
+        Err(CallError::ResourceLimit(LimitError { resource: Resource::Nodes, .. }))
+    ));
+    let module = mb.finish();
+    assert!(module.functions.is_empty());
+    assert_eq!(module.declarations.len(), 1);
 }

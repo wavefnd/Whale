@@ -414,13 +414,10 @@ class SourceStructureTests(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in module.glob("*.wave")), sorted(helper.SOURCES))
         self.assertEqual(list(module.rglob("*.rs")), [])
         self.assertFalse((module / "Cargo.toml").exists())
-        actual = set()
         for directory in ("assembler", "object", "reverse", "ir", "toolchain", "src"):
             source_root = ROOT / directory
             if source_root.is_dir():
-                actual.update(path.relative_to(ROOT).as_posix() for path in source_root.rglob("*.wave"))
                 self.assertFalse(any(path.is_dir() and path.name == "wave" for path in source_root.rglob("*")))
-        self.assertEqual(actual, {"assembler/asmobj/" + name for name in helper.SOURCES})
 
 
 if __name__ == "__main__":

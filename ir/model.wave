@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MPL-2.0
+// Flat, caller-owned IR type graph. Aggregate children precede their parent;
+// pointer and function-pointer pointees are deliberately not laid out.
+// Kinds: void, 1/2/4/8/16-byte scalar, pointer, function pointer, array,
+// struct, tuple. The Rust compatibility model maps its named scalar types to
+// these storage classes at this internal boundary.
+struct IrTypeNode {
+    kind: u64;
+    child: u64;
+    first: u64;
+    count: u64;
+}
+
+struct IrStorage {
+    ptr_bits: u64;
+    pointer_align: u64;
+    scalar_align1: u64;
+    scalar_align2: u64;
+    scalar_align4: u64;
+    scalar_align8: u64;
+    scalar_align16: u64;
+    large_array_threshold: u64;
+    large_array_align: u64;
+    has_large_array: u64;
+}
+
+struct IrTypeLayout {
+    size: u64;
+    align: u64;
+    stride: u64;
+    allocation_align: u64;
+    depth: u64;
+}
+
+struct IrLayoutResult {
+    status: u64;
+    index: u64;
+}
+
+fun ir_power_two(value: u64) -> bool {
+    return value != 0 && (value & (value - 1)) == 0;
+}
+
+fun ir_storage_valid(storage: ptr<IrStorage>) -> bool {
+    if (storage == null || (storage.ptr_bits != 32 && storage.ptr_bits != 64)
+        || !ir_power_two(storage.pointer_align)
+        || storage.pointer_align > storage.ptr_bits / 8
+        || !ir_power_two(storage.scalar_align1) || storage.scalar_align1 > 1
+        || !ir_power_two(storage.scalar_align2) || storage.scalar_align2 > 2
+        || !ir_power_two(storage.scalar_align4) || storage.scalar_align4 > 4
+        || !ir_power_two(storage.scalar_align8) || storage.scalar_align8 > 8
+        || !ir_power_two(storage.scalar_align16) || storage.scalar_align16 > 16
+        || storage.has_large_array > 1) { return false; }
+    return storage.has_large_array == 0 || ir_power_two(storage.large_array_align);
+}
+
+fun ir_span_valid(data: ptr<u8>, count: u64, width: u64) -> bool {
+    return count <= 9223372036854775807 / width
+        && (count == 0 || data != null)
+        && count * width <= 18446744073709551615 - (data as u64);
+}
+
+fun ir_align_up(size: u64, align: u64, result: ptr<u64>) -> bool {
+    var mask: u64 = align - 1;
+    if (size > 18446744073709551615 - mask) { return false; }
+    result[0] = (size + mask) & ~mask;
+    return true;
+}

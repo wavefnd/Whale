@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: MPL-2.0
+// Exact scalar text decoding. Integer arithmetic uses four 32-bit limbs so
+// parsing i128/u128 never depends on host overflow or compiler-runtime helpers.
+struct IrLiteralResult {
+    status: u64;
+    low: u64;
+    high: u64;
+    work: u64;
+}
+
+export(c) fun whale_ir_parse_literal(source: ptr<u8>, length: u64,
+    category: u64, width: u64, max_work: u64, result: ptr<IrLiteralResult>) -> i32 {
+    if (result == null) { return 11; }
+    result.status = 0; result.low = 0; result.high = 0; result.work = 0;
+    if (!ir_span_valid(source, length, 1) || category > 4) {
+        result.status = 11; return 11;
+    }
+    if (length > max_work) { result.status = 10; return 10; }
+    result.work = length;
+    if (category == 0) { result.status = 8; return 8; }
+    if (category == 1) {
+        if (length == 4 && source[0] == 116 && source[1] == 114
+            && source[2] == 117 && source[3] == 101) { result.low = 1; return 0; }
+        if (length == 5 && source[0] == 102 && source[1] == 97
+            && source[2] == 108 && source[3] == 115 && source[4] == 101) { return 0; }
+        result.status = 1; return 1;
+    }
+    var low: u64 = 0;
+    var high: u64 = 0;
+    var at: u64 = 0;
+    var octet: u64 = 0;
+    var digit: u64 = 0;
+    if (category == 4) {
+        if (width != 16 && width != 32 && width != 64) { result.status = 11; return 11; }
+        if (length < 2 || source[0] != 48 || source[1] != 120) { result.status = 6; return 6; }
+        if (length != width / 4 + 2) { result.status = 7; return 7; }
+        at = 2;
+        while (at < length) {
+            octet = source[at] as u64;
+            if (octet >= 48 && octet <= 57) { digit = octet - 48; }
+            else if (octet >= 65 && octet <= 70) { digit = octet - 55; }
+            else if (octet >= 97 && octet <= 102) { digit = octet - 87; }
+            else { result.status = 7; return 7; }
+            low = (low << 4) | digit;
+            at += 1;
+        }
+        result.low = low; return 0;
+    }
+    if (width == 0 || width > 128) { result.status = 11; return 11; }
+    var negative: bool = false;
+    if (category == 2 && length != 0 && source[0] == 45) { negative = true; at = 1; }
+    var syntax: u64 = 2;
+    var range: u64 = 3;
+    if (category == 3) { syntax = 4; range = 5; }
+    if (at == length) { result.status = syntax; return syntax as i32; }
+    var overflow: bool = false;
+    var limb0: u64 = 0;
+    var limb1: u64 = 0;
+    var limb2: u64 = 0;
+    var limb3: u64 = 0;
+    while (at < length) {
+        octet = source[at] as u64;
+        if (octet < 48 || octet > 57) { result.status = syntax; return syntax as i32; }
+        digit = octet - 48;
+        // Preserve lexical error precedence even after the magnitude overflows.
+        if (!overflow) {
+            limb0 = (low & 4294967295) * 10 + digit;
+            limb1 = (low >> 32) * 10 + (limb0 >> 32);
+            limb2 = (high & 4294967295) * 10 + (limb1 >> 32);
+            limb3 = (high >> 32) * 10 + (limb2 >> 32);
+            if ((limb3 >> 32) != 0) { overflow = true; }
+            else {
+                low = (limb0 & 4294967295) | (limb1 << 32);
+                high = (limb2 & 4294967295) | (limb3 << 32);
+            }
+        }
+        at += 1;
+    }
+    if (overflow) { result.status = range; return range as i32; }
+    if (category == 2) {
+        if (high > 9223372036854775808
+            || (high == 9223372036854775808 && (low != 0 || !negative))) {
+            result.status = 3; return 3;
+        }
+        if (width < 128) {
+            if (width > 64) {
+                if (high > (1 as u64 << (width - 65))
+                    || (high == (1 as u64 << (width - 65)) && (low != 0 || !negative))) {
+                    result.status = 9; return 9;
+                }
+            } else if (high != 0 || low > (1 as u64 << (width - 1))
+                || (low == (1 as u64 << (width - 1)) && !negative)) {
+                result.status = 9; return 9;
+            }
+        }
+        if (negative) {
+            low = ~low + 1;
+            high = ~high;
+            if (low == 0) { high += 1; }
+        }
+    } else if (width < 128) {
+        if (width >= 64) {
+            if (width == 64) {
+                if (high != 0) { result.status = 9; return 9; }
+            } else if (high >= (1 as u64 << (width - 64))) { result.status = 9; return 9; }
+        } else if (high != 0 || low >= (1 as u64 << width)) { result.status = 9; return 9; }
+    }
+    result.low = low; result.high = high;
+    return 0;
+}

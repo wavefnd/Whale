@@ -8,6 +8,7 @@ use diagnostic::EscapedName;
 pub enum LowerError {
     Located { annotation: crate::SourceAnnotation, error: Box<LowerError> },
     ResourceLimit(super::AstLimitError),
+    Backend(&'static str),
     Call(crate::CallError),
     VoidCallUsedAsValue,
     NumericLiteral(String),

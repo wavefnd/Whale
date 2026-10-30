@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: MPL-2.0
+// Source identities and mapping validation. Caller storage, Wave decisions.
+struct IrSourceFile { id: u64; bytes: ptr<u8>; length: u64; }
+
+struct IrSourceOriginal {
+    id: u64; has_span: u64; file: u64; line: u64; column: u64;
+    end_line: u64; end_column: u64;
+}
+
+struct IrSourceBlock { function: u64; block: u64; instructions: u64; terminated: u64; }
+
+struct IrSourceMapping { kind: u64; function: u64; block: u64; index: u64; original: u64; }
+
+struct IrSourceSlot { kind: u64; a: u64; b: u64; c: u64; value: u64; extra: u64; }
+
+struct IrSourceResult { status: u64; index: u64; work: u64; }
+
+fun ir_source_fail(result: ptr<IrSourceResult>, status: u64, index: u64, work: u64) -> i32 {
+    result.status = status; result.index = index; result.work = work; return status as i32;
+}
+
+// Return the matching slot or an empty slot. Probes always consume budget.
+fun ir_source_mix(value: u64) -> u64 {
+    var x: u64 = value;
+    x = (x ^ (x >> 30)) * 13787848793156543929;
+    x = (x ^ (x >> 27)) * 10723151780598845931;
+    return x ^ (x >> 31);
+}
+
+fun ir_source_slot(table: ptr<IrSourceSlot>, capacity: u64, kind: u64,
+    a: u64, b: u64, c: u64, work: ptr<u64>, limit: u64) -> u64 {
+    var hash: u64 = ir_source_mix(a ^ (kind * 16777619));
+    hash = ir_source_mix(hash ^ b);
+    var at: u64 = ir_source_mix(hash ^ c) & (capacity - 1);
+    while (true) {
+        if (!ir_cfg_charge(work, limit)) { return capacity; }
+        var slot: ptr<IrSourceSlot> = &table[at];
+        if (slot.kind == 0 || (slot.kind == kind && slot.a == a && slot.b == b && slot.c == c)) { return at; }
+        at = (at + 1) & (capacity - 1);
+    }
+    return capacity;
+}
+
+fun ir_source_put(table: ptr<IrSourceSlot>, at: u64, kind: u64, a: u64, b: u64, c: u64, value: u64, extra: u64) {
+    table[at].kind = kind; table[at].a = a; table[at].b = b; table[at].c = c;
+    table[at].value = value; table[at].extra = extra;
+}
+
+export(c) fun whale_ir_verify_sources(files: ptr<IrSourceFile>, file_count: u64,
+    originals: ptr<IrSourceOriginal>, original_count: u64,
+    blocks: ptr<IrSourceBlock>, block_count: u64,
+    globals: ptr<u64>, global_count: u64,
+    mappings: ptr<IrSourceMapping>, mapping_count: u64,
+    table: ptr<IrSourceSlot>, capacity: u64, max_work: u64,
+    result: ptr<IrSourceResult>) -> i32 {
+    if (result == null) { return 6; }
+    result.status = 0; result.index = 0; result.work = 0;
+    if (!ir_span_valid(files as ptr<u8>, file_count, 24)
+        || !ir_span_valid(originals as ptr<u8>, original_count, 56)
+        || !ir_span_valid(blocks as ptr<u8>, block_count, 32)
+        || !ir_span_valid(globals as ptr<u8>, global_count, 8)
+        || !ir_span_valid(mappings as ptr<u8>, mapping_count, 40)
+        || !ir_span_valid(table as ptr<u8>, capacity, 48)
+        || capacity < 2 || !ir_power_two(capacity)) { return ir_source_fail(result, 6, 0, 0); }
+    if (file_count > capacity / 2) { return ir_source_fail(result, 6, 0, 0); }
+    var total: u64 = file_count;
+    if (original_count > capacity / 2 - total) { return ir_source_fail(result, 6, 0, 0); }
+    total += original_count;
+    if (block_count > capacity / 2 - total) { return ir_source_fail(result, 6, 0, 0); }
+    total += block_count;
+    if (global_count > capacity / 2 - total) { return ir_source_fail(result, 6, 0, 0); }
+    total += global_count;
+    if (mapping_count > capacity / 2 - total) { return ir_source_fail(result, 6, 0, 0); }
+    var work: u64 = 0; var i: u64 = 0;
+    while (i < capacity) {
+        if (!ir_cfg_charge(&work, max_work)) { return ir_source_fail(result, 7, i, work); }
+        table[i].kind = 0; i += 1;
+    }
+    i = 0;
+    while (i < file_count) {
+        var file: ptr<IrSourceFile> = &files[i];
+        if (!ir_span_valid(file.bytes, file.length, 1)) { return ir_source_fail(result, 6, i, work); }
+        if (file.length == 0) { return ir_source_fail(result, 1, i, work); }
+        var character: u64 = 0;
+        while (character < file.length) {
+            if (!ir_cfg_charge(&work, max_work)) { return ir_source_fail(result, 7, i, work); }
+            if (file.bytes[character] == 0) { return ir_source_fail(result, 1, i, work); }
+            character += 1;
+        }
+        var at: u64 = ir_source_slot(table, capacity, 1, file.id, 0, 0, &work, max_work);
+        if (at == capacity) { return ir_source_fail(result, 7, i, work); }
+        if (table[at].kind != 0) { return ir_source_fail(result, 1, i, work); }
+        ir_source_put(table, at, 1, file.id, 0, 0, 0, 0); i += 1;
+    }
+    i = 0;
+    while (i < original_count) {
+        var node: ptr<IrSourceOriginal> = &originals[i];
+        var at: u64 = ir_source_slot(table, capacity, 2, node.id, 0, 0, &work, max_work);
+        if (at == capacity) { return ir_source_fail(result, 7, i, work); }
+        if (table[at].kind != 0) { return ir_source_fail(result, 2, i, work); }
+        ir_source_put(table, at, 2, node.id, 0, 0, 0, 0);
+        if (node.has_span > 1) { return ir_source_fail(result, 6, i, work); }
+        if (node.has_span == 1) {
+            at = ir_source_slot(table, capacity, 1, node.file, 0, 0, &work, max_work);
+            if (at == capacity) { return ir_source_fail(result, 7, i, work); }
+            if (table[at].kind == 0 || node.line == 0 || node.column == 0
+                || node.end_line == 0 || node.end_column == 0 || node.line > node.end_line
+                || (node.line == node.end_line && node.column > node.end_column)) {
+                return ir_source_fail(result, 3, i, work);
+            }
+        }
+        i += 1;
+    }
+    i = 0;
+    while (i < block_count) {
+        var block: ptr<IrSourceBlock> = &blocks[i];
+        if (block.terminated > 1) { return ir_source_fail(result, 6, i, work); }
+        var at: u64 = ir_source_slot(table, capacity, 3, block.function, block.block, 0, &work, max_work);
+        if (at == capacity) { return ir_source_fail(result, 7, i, work); }
+        ir_source_put(table, at, 3, block.function, block.block, 0, block.instructions, block.terminated);
+        i += 1;
+    }
+    i = 0;
+    while (i < global_count) {
+        var at: u64 = ir_source_slot(table, capacity, 4, globals[i], 0, 0, &work, max_work);
+        if (at == capacity) { return ir_source_fail(result, 7, i, work); }
+        ir_source_put(table, at, 4, globals[i], 0, 0, 0, 0); i += 1;
+    }
+    i = 0;
+    while (i < mapping_count) {
+        var mapping: ptr<IrSourceMapping> = &mappings[i];
+        if (mapping.kind > 2 || (mapping.kind == 1 && mapping.index != 0)
+            || (mapping.kind == 2 && (mapping.block != 0 || mapping.index != 0))) { return ir_source_fail(result, 6, i, work); }
+        var at: u64 = ir_source_slot(table, capacity, 2, mapping.original, 0, 0, &work, max_work);
+        if (at == capacity) { return ir_source_fail(result, 7, i, work); }
+        if (table[at].kind == 0) { return ir_source_fail(result, 4, i, work); }
+        at = ir_source_slot(table, capacity, 5 + mapping.kind, mapping.function, mapping.block, mapping.index, &work, max_work);
+        if (at == capacity) { return ir_source_fail(result, 7, i, work); }
+        if (table[at].kind != 0) { return ir_source_fail(result, 4, i, work); }
+        ir_source_put(table, at, 5 + mapping.kind, mapping.function, mapping.block, mapping.index, 0, 0);
+        if (mapping.kind == 2) {
+            at = ir_source_slot(table, capacity, 4, mapping.function, 0, 0, &work, max_work);
+            if (at == capacity) { return ir_source_fail(result, 7, i, work); }
+            if (table[at].kind == 0) { return ir_source_fail(result, 5, i, work); }
+        } else {
+            at = ir_source_slot(table, capacity, 3, mapping.function, mapping.block, 0, &work, max_work);
+            if (at == capacity) { return ir_source_fail(result, 7, i, work); }
+            if (table[at].kind == 0 || (mapping.kind == 0 && mapping.index >= table[at].value)
+                || (mapping.kind == 1 && table[at].extra == 0)) { return ir_source_fail(result, 5, i, work); }
+        }
+        i += 1;
+    }
+    result.work = work; return 0;
+}

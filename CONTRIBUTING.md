@@ -21,7 +21,7 @@ executable does not need the Wave compiler at runtime.
 | `assembler/src/` | Shared Rust assembly types and helpers |
 | `assembler/asmobj/` | Complete Wave assembly-to-object module |
 | `toolchain/`, `backend-api/` | Rust composition, backend interfaces and external data calls to `asmobj` |
-| `ir/`, `target-spec/` | Rust IR semantics, target identities and layouts |
+| `ir/`, `target-spec/` | Wave IR model, parser, printer, layout and verifier; Rust data transport and target contracts |
 | `object/`, `linker/` | Rust object formats, relocations and executable layout |
 | `reverse/` | Rust image inspection; decoder and CFG currently unavailable |
 | `src/`, `tests/` | CLI and integration tests |
@@ -30,7 +30,7 @@ executable does not need the Wave compiler at runtime.
 Split source files by role. Shared modules must not import a concrete ISA.
 `asmobj` contains only Wave sources; its Rust data boundary lives in
 `toolchain/src/assembly_object.rs`. Object serialization belongs to `object`.
-IR remains Rust.
+IR reference algorithms remain available for comparison during the Wave migration.
 
 ### Adding an assembler or IR target
 

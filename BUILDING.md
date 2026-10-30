@@ -1,8 +1,9 @@
 # Building Whale with Meson
 
-Meson configures the product, compiles the Wave `asmobj` module, then builds the
-Rust components with Cargo. `assembler/asmobj/` is implemented entirely in Wave;
-the remaining assembler, IR, object, linker and CLI implementations remain Rust.
+Meson configures the product, compiles the Wave `asmobj` and IR sources, then
+builds Rust components with Cargo. `assembler/asmobj/` is entirely Wave. IR model,
+parsing, printing, layout and verification run in Wave when its archive is selected;
+Rust supplies typed transport and retained reference implementations.
 Generated files and Cargo outputs stay in the selected build directory.
 
 ## Build, test and install
@@ -69,6 +70,9 @@ the pinned compiler, std, Rust/LLVM bootstrap requirements, ABI, source and arch
 hashes. Changing the Rust/Wave boundary requires rebuilding the archive. Failed
 compilation or archiving preserves the previous complete publication. Ambient environment
 variables cannot select a different module for a Meson product.
+Source builds also compile the Wave IR model, parser, printer, layout and verifier.
+With a prebuilt `asmobj`, pass `-Dwave-ir-dir=/absolute/path/to/built-wave-ir`
+to use them. Ordinary Cargo keeps the Rust reference during the IR migration.
 
 For work confined to Rust components, ordinary Cargo builds remain available:
 

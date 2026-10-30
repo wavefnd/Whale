@@ -4,6 +4,30 @@ mod instruction;
 
 mod lexer;
 
+#[cfg(whale_wave_ir)]
+mod wave_lexer;
+
+#[cfg(whale_wave_ir)]
+mod wave_header;
+
+#[cfg(whale_wave_ir)]
+mod wave_text;
+
+#[cfg(whale_wave_ir)]
+mod wave_type;
+
+#[cfg(whale_wave_ir)]
+mod wave_literal;
+
+#[cfg(whale_wave_ir)]
+mod wave_expression;
+
+#[cfg(whale_wave_ir)]
+mod wave_module;
+
+#[cfg(whale_wave_ir)]
+mod wave_instruction;
+
 mod syntax;
 
 use crate::{IrLimits, LimitError, Module, VerifyError};
@@ -20,6 +44,7 @@ pub enum ParseErrorKind {
     Syntax(String),
     ResourceLimit(LimitError),
     Verification(Box<VerifyError>),
+    Backend(&'static str),
 }
 
 #[derive(Debug)]
@@ -35,6 +60,7 @@ impl std::fmt::Display for ParseError {
             ParseErrorKind::Syntax(s) => f.write_str(s),
             ParseErrorKind::ResourceLimit(e) => e.fmt(f),
             ParseErrorKind::Verification(e) => write!(f, "invalid IR: {e:?}"),
+            ParseErrorKind::Backend(component) => write!(f, "IR Wave backend error: {component}"),
         }
     }
 }

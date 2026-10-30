@@ -558,6 +558,9 @@ cargo run --locked -- ir verify ir/tests/fixtures/calls-v3.wir
 cargo run --locked -- ir print ir/tests/fixtures/calls-v3.wir -o canonical.wir
 ```
 
+`ir print` and `ir lower` stream output under `--max-output N` (default 64 MiB).
+An output error preserves the existing destination file.
+
 `ir::parse_module` reads **and verifies** formats 3, 4, 5, 6, 7 and 8. Print-parse-print
 preserves explicit scoped IDs, quoted names, entry and block order, types,
 exact integer/float payloads, constant-expression trees, alignment, signatures

@@ -3,7 +3,10 @@ use crate::{CallError, Callee, FunctionDecl, FunctionId, Instruction, Module, Ty
 
 use std::cell::Cell;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+
+#[cfg(not(whale_wave_ir))]
+use std::collections::HashSet;
 
 pub(super) struct DeclarationIndex<'a> {
     by_id: HashMap<FunctionId, &'a FunctionDecl>,
@@ -25,12 +28,19 @@ fn error(name: &str, reason: CallError) -> VerifyError {
     VerifyError::Call { func: name.into(), reason }
 }
 
-pub(super) fn verify_declarations(
-    m: &Module,
+pub(super) fn verify_declarations<'a>(
+    m: &'a Module,
     limits: crate::IrLimits,
-) -> Result<DeclarationIndex<'_>, VerifyError> {
+    analysis: &super::AnalysisBudget,
+) -> Result<DeclarationIndex<'a>, VerifyError> {
+    #[cfg(not(whale_wave_ir))]
+    let _ = analysis;
     for f in &m.functions {
         for (_, ty) in &f.value_types {
+            #[cfg(whale_wave_ir)]
+            super::wave_semantics::pointer_signatures(ty, analysis)
+                .map_err(|e| with_name(e, &f.name))?;
+            #[cfg(not(whale_wave_ir))]
             validate_pointer_types(ty, limits).map_err(|e| error(&f.name, e))?;
         }
         for p in &f.params {
@@ -42,23 +52,66 @@ pub(super) fn verify_declarations(
             }
         }
     }
+    #[cfg(whale_wave_ir)]
+    let mut ids = super::wave_index::Index::new(m.declarations.len(), analysis)?;
+    #[cfg(not(whale_wave_ir))]
     let mut ids = HashSet::new();
+    #[cfg(whale_wave_ir)]
+    let mut names = super::wave_index::Index::new(m.declarations.len(), analysis)?;
+    #[cfg(not(whale_wave_ir))]
     let mut names = HashSet::new();
+    #[cfg(whale_wave_ir)]
+    let mut links = super::wave_index::Index::new(m.declarations.len(), analysis)?;
+    #[cfg(not(whale_wave_ir))]
     let mut links = HashSet::new();
+    #[cfg(whale_wave_ir)]
+    let mut body_ids = {
+        let mut index = super::wave_index::Index::new(m.functions.len(), analysis)?;
+        for function in &m.functions {
+            index.id(function.id.0, analysis)?;
+        }
+        index
+    };
+    #[cfg(not(whale_wave_ir))]
     let body_ids: HashSet<_> = m.functions.iter().map(|f| f.id).collect();
     let mut by_id = HashMap::new();
     for decl in &m.declarations {
+        #[cfg(whale_wave_ir)]
+        {
+            super::wave_semantics::signature(&decl.signature, limits, analysis)
+                .map_err(|e| with_name(e, &decl.name))?;
+            if !super::wave_semantics::valid_link(
+                decl.linkage,
+                decl.link_name.as_deref(),
+                analysis,
+            )? {
+                return Err(error(&decl.name, CallError::InvalidLinkName(decl.name.clone())));
+            }
+        }
+        #[cfg(not(whale_wave_ir))]
         crate::function::validate_decl_with_limits(decl, limits)
             .map_err(|e| error(&decl.name, e))?;
-        if !ids.insert(decl.id) || !names.insert(&decl.name) {
+        #[cfg(whale_wave_ir)]
+        let conflicting = !ids.id(decl.id.0, analysis)? || !names.name(&decl.name, analysis)?;
+        #[cfg(not(whale_wave_ir))]
+        let conflicting = !ids.insert(decl.id) || !names.insert(&decl.name);
+        if conflicting {
             return Err(error(&decl.name, CallError::ConflictingDeclaration(decl.name.clone())));
         }
         if let Some(link) = &decl.link_name {
-            if !links.insert(link) {
+            #[cfg(whale_wave_ir)]
+            let inserted = links.name(link, analysis)?;
+            #[cfg(not(whale_wave_ir))]
+            let inserted = links.insert(link);
+            if !inserted {
                 return Err(error(&decl.name, CallError::LinkNameCollision(link.clone())));
             }
         }
-        if decl.linkage == crate::Linkage::Internal && !body_ids.contains(&decl.id) {
+        #[cfg(whale_wave_ir)]
+        let missing_body = !body_ids.contains_id(decl.id.0, analysis)?;
+        #[cfg(not(whale_wave_ir))]
+        let missing_body = !body_ids.contains(&decl.id);
+        if decl.linkage == crate::Linkage::Internal && missing_body {
             return Err(error(&decl.name, CallError::MissingDefinition(decl.id)));
         }
         by_id.insert(decl.id, decl);
@@ -67,28 +120,103 @@ pub(super) fn verify_declarations(
         by_id,
         work: Cell::new(m.functions.len().saturating_add(m.declarations.len().saturating_mul(2))),
     };
+    #[cfg(whale_wave_ir)]
+    let mut bodies = super::wave_index::Index::new(m.functions.len(), analysis)?;
+    #[cfg(not(whale_wave_ir))]
     let mut bodies = HashSet::new();
     for f in &m.functions {
-        if !bodies.insert(f.id) {
+        #[cfg(whale_wave_ir)]
+        let inserted = bodies.id(f.id.0, analysis)?;
+        #[cfg(not(whale_wave_ir))]
+        let inserted = bodies.insert(f.id);
+        if !inserted {
             return Err(error(&f.name, CallError::DuplicateDefinition(f.id)));
         }
         let decl =
             index.get(f.id).ok_or_else(|| error(&f.name, CallError::UnknownFunction(f.id)))?;
-        if decl.name != f.name
+        #[cfg(whale_wave_ir)]
+        let mismatch = {
+            let actual = crate::FunctionSignature {
+                params: f.params.iter().map(|param| param.ty.clone()).collect(),
+                ret: f.ret_ty.clone(),
+                convention: decl.signature.convention,
+                variadic: decl.signature.variadic,
+            };
+            decl.name != f.name
+                || !super::wave_semantics::signature_equal(&decl.signature, &actual, analysis)?
+        };
+        #[cfg(not(whale_wave_ir))]
+        let mismatch = decl.name != f.name
             || decl.signature.ret != f.ret_ty
-            || decl.signature.params != f.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>()
-        {
+            || decl.signature.params != f.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>();
+        if mismatch {
             return Err(error(&f.name, CallError::DefinitionMismatch(f.id)));
         }
     }
     Ok(index)
 }
 
+#[cfg(whale_wave_ir)]
+fn with_name(error: VerifyError, name: &str) -> VerifyError {
+    match error {
+        VerifyError::Call { reason, .. } => VerifyError::Call { func: name.into(), reason },
+        other => other,
+    }
+}
+
+#[cfg(whale_wave_ir)]
 pub(super) fn verify_instruction(
     declarations: &DeclarationIndex<'_>,
     f: &super::IndexedFunction<'_>,
     ins: &Instruction,
     limits: crate::IrLimits,
+    analysis: &super::AnalysisBudget,
+) -> Result<(), VerifyError> {
+    match ins {
+        Instruction::NullFunction { signature, .. } => {
+            super::wave_semantics::signature(signature, limits, analysis)
+                .map_err(|e| with_name(e, &f.name))
+        },
+        Instruction::FunctionAddr { function, signature, .. } => {
+            let decl = declarations
+                .get(*function)
+                .ok_or_else(|| error(&f.name, CallError::UnknownFunction(*function)))?;
+            if super::wave_semantics::signature_equal(&decl.signature, signature, analysis)? {
+                Ok(())
+            } else {
+                Err(error(&f.name, CallError::AddressTypeMismatch))
+            }
+        },
+        Instruction::Call { callee, .. } => {
+            let signature;
+            let ty = match callee {
+                Callee::Direct(id) => {
+                    let declaration = declarations
+                        .get(*id)
+                        .ok_or_else(|| error(&f.name, CallError::UnknownFunction(*id)))?;
+                    signature = Type::FnPtr(Box::new(declaration.signature.clone()));
+                    &signature
+                },
+                Callee::Indirect(value) => f
+                    .value_type(*value)
+                    .ok_or_else(|| error(&f.name, CallError::UnknownValue(*value)))?,
+            };
+            super::wave_semantics::call(f, ty, ins, analysis)
+        },
+        Instruction::Cast { src, src_ty, dst_ty, op, .. } => {
+            super::wave_semantics::function_pointer_cast(f, *src, src_ty, dst_ty, op, analysis)
+        },
+        _ => Ok(()),
+    }
+}
+
+#[cfg(not(whale_wave_ir))]
+pub(super) fn verify_instruction(
+    declarations: &DeclarationIndex<'_>,
+    f: &super::IndexedFunction<'_>,
+    ins: &Instruction,
+    limits: crate::IrLimits,
+    _analysis: &super::AnalysisBudget,
 ) -> Result<(), VerifyError> {
     let check = || -> Result<(), CallError> {
         match ins {
@@ -161,6 +289,7 @@ pub(super) fn verify_instruction(
     check().map_err(|e| error(&f.name, e))
 }
 
+#[cfg(not(whale_wave_ir))]
 fn contains_function_pointer(ty: &Type) -> bool {
     match ty {
         Type::FnPtr(_) => true,
@@ -170,6 +299,7 @@ fn contains_function_pointer(ty: &Type) -> bool {
     }
 }
 
+#[cfg(not(whale_wave_ir))]
 fn validate_pointer_types(ty: &Type, limits: crate::IrLimits) -> Result<(), CallError> {
     match ty {
         Type::FnPtr(sig) => crate::function::validate_signature_with_limits(sig, limits),

@@ -1,0 +1,356 @@
+// SPDX-License-Identifier: MPL-2.0
+// Scalar and preserved-constant expression lowering. Typed constexpr payloads
+// stay independent from runtime instructions and are evaluated by the core
+// constant engine after a successful lowering transaction.
+fun ir_lower_mismatch(p: ptr<IrLowerDriver>, node: u64, expected: u64, actual: u64) -> bool {
+    ir_lower_fail(p.core, 6, node, expected, actual, 0);
+    if (node < p.core.node_count && p.core.nodes[node].tag == 0) {
+        p.core.result.annotation = p.core.nodes[node].a;
+    }
+    return false;
+}
+
+fun ir_lower_literal(p: ptr<IrLowerDriver>, node: u64, value: ptr<IrLowerValue>,
+    low: ptr<u64>, high: ptr<u64>, category: ptr<u64>) -> bool {
+    var n: ptr<IrLowerNode> = &p.core.nodes[node];
+    var ty: u64 = 0;
+    var width: u64 = 0;
+    var source: ptr<u8> = null;
+    var length: u64 = 0;
+    var cat: u64 = 0;
+    low[0] = 0; high[0] = 0;
+    if (n.tag == 16) {
+        if (n.a > 1) { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+        ty = 1; low[0] = n.a; cat = 1;
+    } else {
+        width = n.a;
+        if (n.tag == 17) {
+            if (n.b > 1) { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+            if (width == 1) { ty = 2; }
+            else if (width == 8) { ty = 4; }
+            else if (width == 16) { ty = 5; }
+            else if (width == 32) { ty = 6; }
+            else if (width == 64) { ty = 7; }
+            else if (width == 128) { ty = 8; }
+            else { return ir_lower_fail(p.core, 5, node, 0, 0, 0); }
+            cat = 2;
+            if (n.b == 0) {
+                cat = 3;
+                if (ty == 2) { ty = 3; } else { ty += 5; }
+            }
+            source = n.c as ptr<u8>; length = n.d;
+        } else if (n.tag == 18) {
+            if (width == 16) { ty = 14; }
+            else if (width == 32) { ty = 15; }
+            else if (width == 64) { ty = 16; }
+            else { return ir_lower_fail(p.core, 5, node, 0, 0, 0); }
+            cat = 4; source = n.b as ptr<u8>; length = n.c;
+        } else { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+        var literal: IrLiteralResult;
+        var status: i32 = whale_ir_parse_literal(source, length, cat, width,
+            p.core.max_work - p.core.work, &literal);
+        if (status == 10) { return ir_lower_fail(p.core, 1, node, 0, 0, 0); }
+        if (!ir_lower_charge(p.core, literal.work, node)) { return false; }
+        if (status != 0) { return ir_lower_fail(p.core, 19, node, ty, 0, literal.status); }
+        low[0] = literal.low; high[0] = literal.high;
+    }
+    value.ty = ty; value.value = node; category[0] = cat; return true;
+}
+
+fun ir_lower_binop(p: ptr<IrLowerDriver>, op: u64, ty: u64, node: u64, output: ptr<u64>) -> bool {
+    var code: u64 = 0;
+    if (ir_lower_float(ty)) {
+        if (op <= 2) { code = op + 7; }
+        else if (op == 6 || op == 7) { code = op + 4; }
+        else { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+    } else if (ir_lower_integer(ty)) {
+        if (op <= 2) { code = op; }
+        else if (op >= 3 && op <= 5) { code = op + 9; }
+        else if (op == 6) { code = 3; if (ir_lower_signed(ty)) { code = 4; } }
+        else if (op == 7) { code = 5; if (ir_lower_signed(ty)) { code = 6; } }
+        else if (op == 8) { code = 15; }
+        else if (op == 9) { code = 16; if (ir_lower_signed(ty)) { code = 17; } }
+        else { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+    } else { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+    output[0] = code; return true;
+}
+
+fun ir_lower_compare(p: ptr<IrLowerDriver>, op: u64, ty: u64, node: u64, output: ptr<u64>) -> bool {
+    if (op > 5) { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+    if (ir_lower_float(ty)) { output[0] = op + 10; return true; }
+    if (ty == 1) {
+        if (op > 1) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+        output[0] = op; return true;
+    }
+    if (!ir_lower_integer(ty)) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+    if (op <= 1 || ir_lower_signed(ty)) { output[0] = op; }
+    else { output[0] = op + 4; }
+    return true;
+}
+
+fun ir_lower_preserve_constant(p: ptr<IrLowerDriver>, node: u64, depth: u64,
+    output: ptr<IrLowerValue>) -> bool {
+    if (!ir_lower_node(p.core, node, depth)
+        || !ir_lower_source_charge(p, 1, node)) { return false; }
+    var n: ptr<IrLowerNode> = &p.core.nodes[node];
+    if (n.tag == 0) {
+        var saved: u64 = p.core.annotation; p.core.annotation = n.a;
+        var success: bool = ir_lower_source(p, n.a, node)
+            && ir_lower_preserve_constant(p, n.b, depth + 1, output);
+        p.core.annotation = saved; return success;
+    }
+    var kind: u64 = 0;
+    var operation: u64 = 0;
+    var low: u64 = 0;
+    var high: u64 = 0;
+    var reference: u64 = 0;
+    var left: IrLowerValue;
+    var right: IrLowerValue;
+    left.value = 18446744073709551615; left.ty = 0;
+    right.value = 18446744073709551615; right.ty = 0;
+    var ty: u64 = 0;
+    if (n.tag >= 16 && n.tag <= 18) {
+        if (!ir_lower_literal(p, node, &left, &low, &high, &operation)) { return false; }
+        ty = left.ty;
+    } else if (n.tag == 15) {
+        var binding: IrLowerBinding;
+        if (!ir_lower_name(p.core, n.a, node) || !ir_lower_binding(p, n.a, node, false, &binding)) { return false; }
+        if (binding.kind == 0) { return ir_lower_fail(p.core, 17, node, 0, 0, 0); }
+        kind = binding.kind; reference = binding.value; ty = binding.ty;
+    } else if (n.tag == 9 || n.tag == 10) {
+        if (!ir_lower_preserve_constant(p, n.a, depth + 1, &left)) { return false; }
+        ty = left.ty; kind = 3;
+        if (n.tag == 9) {
+            if (!ir_lower_integer(ty)) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+            kind = 4;
+        }
+    } else if (n.tag == 19 || n.tag == 20) {
+        if (!ir_lower_preserve_constant(p, n.a, depth + 1, &left)
+            || !ir_lower_preserve_constant(p, n.c, depth + 1, &right)) { return false; }
+        if (left.ty != right.ty) { return ir_lower_fail(p.core, 6, node, left.ty, right.ty, 0); }
+        operation = n.b; ty = left.ty;
+        if (n.tag == 19) {
+            kind = 5;
+            if (operation == 10 || operation == 11) {
+                if (ty != 1) { return ir_lower_fail(p.core, 6, node, 1, ty, 0); }
+            } else {
+                var ignored: u64 = 0;
+                if (!ir_lower_binop(p, operation, ty, node, &ignored)) { return false; }
+            }
+        } else { kind = 6; ty = 1; }
+    } else { return ir_lower_fail(p.core, 17, node, 0, 0, 0); }
+    var type_size: u64 = 0;
+    if (!ir_lower_type_size(p, ty, node, 0, &type_size)
+        || !ir_lower_expand(p, 1 + type_size, node)) { return false; }
+    if (true) {
+        var record: ptr<IrLowerConstant> = &p.constants[node];
+        record.kind = kind; record.operation = operation; record.ty = ty;
+        record.low = low; record.high = high; record.left = left.value; record.right = right.value;
+        record.reference = reference; record.annotation = p.core.annotation;
+    }
+    output.value = node; output.ty = ty; return true;
+}
+
+fun ir_lower_immediate(p: ptr<IrLowerDriver>, ty: u64, low: u64, high: u64,
+    node: u64, output: ptr<u64>) -> bool {
+    var id: u64 = 0;
+    if (!ir_lower_value(p, ty, node, &id)) { return false; }
+    var category: u64 = 3;
+    if (ty == 1) { category = 1; }
+    else if (ir_lower_signed(ty)) { category = 2; }
+    else if (ir_lower_float(ty)) { category = 4; }
+    if (!ir_lower_emit(p, 4, id, ty, 2, low, high, category, 0, null, 0, false, node)) { return false; }
+    output[0] = id; return true;
+}
+
+fun ir_lower_cast_value(p: ptr<IrLowerDriver>, op: u64, src_ty: u64, dst_ty: u64,
+    value: u64, node: u64, output: ptr<u64>) -> bool {
+    var id: u64 = 0;
+    if (!ir_lower_value(p, dst_ty, node, &id)
+        || !ir_lower_emit(p, 14, id, dst_ty, op, src_ty, value, 0, 0, null, 0, false, node)) { return false; }
+    output[0] = id; return true;
+}
+
+fun ir_lower_call(p: ptr<IrLowerDriver>, node: u64, depth: u64,
+    output: ptr<IrLowerValue>) -> bool {
+    var n: ptr<IrLowerNode> = &p.core.nodes[node];
+    var callee: u64 = n.b;
+    var signature: u64 = 0;
+    if (n.a == 0) {
+        if (!ir_lower_name(p.core, callee, node)) { return false; }
+        callee = p.declaration_map[callee];
+        if (callee == 18446744073709551615) { return ir_lower_fail(p.core, 21, node, n.b, 0, 2); }
+        signature = p.declarations[callee].signature;
+    } else if (n.a == 1) {
+        var pointer: IrLowerValue;
+        if (!ir_lower_expression(p, callee, depth + 1, false, &pointer)) { return false; }
+        callee = pointer.value; signature = pointer.ty;
+        if (p.core.types[signature].kind != 18) {
+            return ir_lower_fail(p.core, 21, node, callee, 0, 3);
+        }
+    } else { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+    if (!ir_lower_edges(p.core, n.c, n.d, node)) { return false; }
+    var saved: u64 = p.core.temporary_count;
+    if (n.d > (p.core.temporary_capacity - saved) / 2) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+    p.core.temporary_count += n.d * 2;
+    var at: u64 = 0;
+    var argument: IrLowerValue;
+    while (at < n.d) {
+        if (!ir_lower_expression(p, p.core.edges[n.c + at], depth + 1, false, &argument)) { return false; }
+        p.core.temporary[saved + at] = argument.value;
+        p.core.temporary[saved + n.d + at] = argument.ty; at += 1;
+    }
+    var sig: ptr<IrLowerType> = &p.core.types[signature];
+    if (sig.count != n.d) { return ir_lower_fail(p.core, 21, node, sig.count, n.d, 4); }
+    at = 0;
+    while (at < n.d) {
+        var expected: u64 = p.core.type_edges[sig.first + at];
+        var actual: u64 = p.core.temporary[saved + n.d + at];
+        if (expected != actual) {
+            ir_lower_fail(p.core, 21, node, expected, actual, 5);
+            p.error_index = at; return false;
+        }
+        at += 1;
+    }
+    var value: u64 = 18446744073709551615;
+    if (sig.child != 0 && !ir_lower_value(p, sig.child, node, &value)) { return false; }
+    if (!ir_lower_emit(p, 29, value, sig.child, sig.auxiliary, n.a, callee,
+        signature, 0, &p.core.temporary[saved], n.d, false, node)) { return false; }
+    p.core.temporary_count = saved; output.value = value; output.ty = sig.child; return true;
+}
+
+fun ir_lower_expression(p: ptr<IrLowerDriver>, node: u64, depth: u64,
+    allow_void: bool, output: ptr<IrLowerValue>) -> bool {
+    if (!ir_lower_node(p.core, node, depth)) { return false; }
+    var n: ptr<IrLowerNode> = &p.core.nodes[node];
+    if (n.tag == 0) {
+        var saved_annotation: u64 = p.core.annotation; p.core.annotation = n.a;
+        var success: bool = ir_lower_expression(p, n.b, depth + 1, allow_void, output)
+            && ir_lower_complete_source(p, n.a, node);
+        p.core.annotation = saved_annotation; return success;
+    }
+    if (n.tag == 1 || n.tag == 2) { return ir_lower_aggregate_literal(p, node, depth, output); }
+    var left: IrLowerValue;
+    var right: IrLowerValue;
+    var ty: u64 = 0;
+    var value: u64 = 0;
+    if (n.tag == 3 || n.tag == 4 || n.tag == 6) {
+        if (!ir_lower_place(p, node, depth, &left)) { return false; }
+        return ir_lower_read(p, left.value, left.ty, node, output);
+    }
+    if (n.tag == 5) {
+        if (!ir_lower_place(p, n.a, depth + 1, &left)
+            || !ir_lower_pointer(p.core, left.ty, node, &ty)) { return false; }
+        output.value = left.value; output.ty = ty; return true;
+    }
+    if (n.tag == 7 || n.tag == 8) {
+        if (!ir_lower_expression(p, n.a, depth + 1, false, &left)) { return false; }
+        if (p.core.types[left.ty].kind != 17) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+        ty = p.core.types[left.ty].child;
+        if (n.tag == 7) {
+            if (!ir_lower_scalar(p.core, ty)) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+            if (!ir_lower_layout(p.core, ty, node) || !ir_lower_value(p, ty, node, &value)
+                || !ir_lower_emit(p, 19, value, ty, left.value,
+                    p.core.layouts[ty].allocation_align, 0, 0, 0, null, 0, false, node)) { return false; }
+        } else {
+            if (!ir_lower_layout(p.core, ty, node)
+                || !ir_lower_expression(p, n.b, depth + 1, false, &right)) { return false; }
+            if (!ir_lower_integer(right.ty)) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+            ty = left.ty;
+            if (!ir_lower_value(p, ty, node, &value)
+                || !ir_lower_emit(p, 24, value, ty, left.value, 0, 0, 0, 0,
+                    &right.value, 1, false, node)) { return false; }
+        }
+    } else if (n.tag == 9 || n.tag == 10) {
+        if (!ir_lower_expression(p, n.a, depth + 1, false, &left)) { return false; }
+        ty = left.ty;
+        if (!ir_lower_integer(ty) && (n.tag == 9 || !ir_lower_float(ty))) {
+            return ir_lower_fail(p.core, 7, node, 0, 0, 0);
+        }
+        var tag: u64 = 8; if (n.tag == 9) { tag = 9; }
+        if (!ir_lower_value(p, ty, node, &value)
+            || !ir_lower_emit(p, tag, value, ty, left.value, 0, 0, 0, 0, null, 0, false, node)) { return false; }
+    } else if (n.tag == 11) {
+        if (!ir_lower_type(p.core, n.b, 0, &ty)) { return false; }
+        if (!ir_lower_integer(ty)) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+        if (!ir_lower_expression(p, n.a, depth + 1, false, &left)) { return false; }
+        if (!ir_lower_integer(left.ty) || n.c > 1) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+        var cast: u64 = 0;
+        if (n.c == 0) {
+            var source_width: u64 = ir_lower_width(left.ty);
+            var destination_width: u64 = ir_lower_width(ty);
+            cast = 1;
+            if (source_width > destination_width) { cast = 3; }
+            else if (source_width == destination_width) { cast = 10; }
+            else if (ir_lower_signed(left.ty)) { cast = 2; }
+        }
+        if (!ir_lower_cast_value(p, cast, left.ty, ty, left.value, node, &value)) { return false; }
+    } else if (n.tag == 12 || n.tag == 13) {
+        var function: u64 = 0;
+        var tag: u64 = 27;
+        if (n.tag == 12) {
+            if (!ir_lower_name(p.core, n.a, node)) { return false; }
+            function = p.declaration_map[n.a];
+            if (function == 18446744073709551615) { return ir_lower_fail(p.core, 21, node, n.a, 0, 2); }
+            ty = p.declarations[function].signature; tag = 28;
+        } else if (!ir_lower_type(p.core, n.a, 0, &ty)) { return false; }
+        if (p.core.types[ty].kind != 18) { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+        if (!ir_lower_signature_validate(p, ty, 0, node)) { return false; }
+        if (!ir_lower_value(p, ty, node, &value)
+            || !ir_lower_emit(p, tag, value, ty, function, 0, 0, 0, 0, null, 0, false, node)) { return false; }
+    } else if (n.tag == 14) {
+        if (!ir_lower_call(p, node, depth, output)) { return false; }
+        if (!allow_void && output.ty == 0) { return ir_lower_fail(p.core, 16, node, 0, 0, 0); }
+        return true;
+    } else if (n.tag == 15) {
+        var binding: IrLowerBinding;
+        if (!ir_lower_binding(p, n.a, node, false, &binding)) { return false; }
+        ty = binding.ty; value = binding.value;
+        if (binding.kind == 0) { return ir_lower_read(p, value, ty, node, output); }
+        if (binding.kind == 2) {
+            if (!ir_lower_value(p, ty, node, &value)
+                || !ir_lower_emit(p, 4, value, ty, 1, binding.value, 0, 0, 0, null, 0, false, node)) { return false; }
+        }
+    } else if (n.tag >= 16 && n.tag <= 18) {
+        var low: u64 = 0; var high: u64 = 0; var category: u64 = 0;
+        if (!ir_lower_literal(p, node, &left, &low, &high, &category)
+            || !ir_lower_immediate(p, left.ty, low, high, node, &value)) { return false; }
+        ty = left.ty;
+    } else if (n.tag == 19 || n.tag == 20) {
+        if (!ir_lower_expression(p, n.a, depth + 1, false, &left)) { return false; }
+        if (n.tag == 19 && (n.b == 10 || n.b == 11)) {
+            if (left.ty != 1) { return ir_lower_fail(p.core, 6, node, 1, left.ty, 0); }
+            var left_exit: u64 = p.current_block;
+            var rhs: u64 = 0; var continuation: u64 = 0;
+            if (!ir_lower_block(p, 8, node, &rhs) || !ir_lower_block(p, 9, node, &continuation)) { return false; }
+            var true_block: u64 = rhs; var false_block: u64 = continuation;
+            if (n.b == 11) { true_block = continuation; false_block = rhs; }
+            if (!ir_lower_term(p, 2, 0, left.value, true_block, false_block, node)) { return false; }
+            p.current_block = rhs;
+            if (!ir_lower_expression(p, n.c, depth + 1, false, &right)) { return false; }
+            if (right.ty != 1) { return ir_lower_fail(p.core, 6, node, 1, right.ty, 0); }
+            var right_exit: u64 = p.current_block;
+            if (!ir_lower_term(p, 1, 0, continuation, 0, 0, node)) { return false; }
+            p.current_block = continuation; ty = 1;
+            var incoming: array<u64, 4>;
+            incoming[0] = left.value; incoming[1] = left_exit;
+            incoming[2] = right.value; incoming[3] = right_exit;
+            if (!ir_lower_value(p, ty, node, &value)
+                || !ir_lower_emit(p, 15, value, ty, 0, 0, 0, 0, 0, &incoming[0], 4, false, node)) { return false; }
+        } else {
+            if (!ir_lower_expression(p, n.c, depth + 1, false, &right)) { return false; }
+            if (left.ty != right.ty) { return ir_lower_fail(p.core, 6, node, left.ty, right.ty, 0); }
+            ty = left.ty; var op: u64 = 0; var tag: u64 = 7;
+            if (n.tag == 20) {
+                if (!ir_lower_compare(p, n.b, ty, node, &op)) { return false; }
+                tag = 10;
+            } else if (!ir_lower_binop(p, n.b, ty, node, &op)) { return false; }
+            var result_type: u64 = ty;
+            if (n.tag == 20) { result_type = 1; }
+            if (!ir_lower_value(p, result_type, node, &value)
+                || !ir_lower_emit(p, tag, value, ty, op, left.value, right.value, 0, 0, null, 0, false, node)) { return false; }
+            ty = result_type;
+        }
+    } else { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+    output.value = value; output.ty = ty; return true;
+}

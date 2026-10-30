@@ -1,0 +1,311 @@
+// SPDX-License-Identifier: MPL-2.0
+// Bounded tokenization for the versioned Whale IR text format. The caller
+// owns both scratch and published buffers; errors leave published data alone.
+struct IrToken {
+    kind: u64; // 0 word, 1 decoded string, 2 punctuation, 3 EOF
+    start: u64;
+    end: u64;
+    line: u64;
+    column: u64;
+    decoded_start: u64;
+    decoded_len: u64;
+}
+
+struct IrLexResult {
+    status: u64; // 1 malformed source, 2 token limit, 3 decoded-byte limit, 4 work limit
+    reason: u64; // syntax detail: invalid UTF-8, unterminated string/escape, Unicode/escape/control
+    offset: u64;
+    line: u64;
+    column: u64;
+    token_count: u64;
+    decoded_count: u64;
+}
+
+fun ir_lex_space(cp: u64) -> bool {
+    return (cp >= 9 && cp <= 13) || cp == 32 || cp == 133 || cp == 160
+        || cp == 5760 || (cp >= 8192 && cp <= 8202) || cp == 8232
+        || cp == 8233 || cp == 8239 || cp == 8287 || cp == 12288;
+}
+
+fun ir_lex_control(cp: u64) -> bool {
+    return cp < 32 || (cp >= 127 && cp <= 159) || cp == 8232 || cp == 8233;
+}
+
+fun ir_lex_hex(octet: u8) -> i32 {
+    if (octet >= 48 && octet <= 57) { return (octet - 48) as i32; }
+    if (octet >= 65 && octet <= 70) { return (octet - 55) as i32; }
+    if (octet >= 97 && octet <= 102) { return (octet - 87) as i32; }
+    return -1;
+}
+
+fun ir_lex_mark(cp: u64) -> bool {
+    return cp == 123 || cp == 125 || cp == 40 || cp == 41 || cp == 91
+        || cp == 93 || cp == 60 || cp == 62 || cp == 44 || cp == 58
+        || cp == 61 || cp == 34;
+}
+
+// Return zero for invalid UTF-8. The source has already been span checked.
+fun ir_lex_utf8(source: ptr<u8>, length: u64, at: u64, width: ptr<u64>, cp: ptr<u64>) -> bool {
+    if (at >= length) { return false; }
+    var first: u64 = source[at] as u64;
+    if (first < 128) { width[0] = 1; cp[0] = first; return true; }
+    var count: u64 = 0;
+    var value: u64 = 0;
+    var minimum: u64 = 0;
+    if (first >= 194 && first <= 223) { count = 2; value = first & 31; minimum = 128; }
+    else if (first >= 224 && first <= 239) { count = 3; value = first & 15; minimum = 2048; }
+    else if (first >= 240 && first <= 244) { count = 4; value = first & 7; minimum = 65536; }
+    else { return false; }
+    if (count > length - at) { return false; }
+    var index: u64 = 1;
+    while (index < count) {
+        var next: u64 = source[at + index] as u64;
+        if (next < 128 || next > 191) { return false; }
+        value = (value << 6) | (next & 63);
+        index += 1;
+    }
+    if (value < minimum || value > 1114111 || (value >= 55296 && value <= 57343)) {
+        return false;
+    }
+    width[0] = count;
+    cp[0] = value;
+    return true;
+}
+
+fun ir_lex_advance(cp: u64, width: u64, at: ptr<u64>, line: ptr<u64>, column: ptr<u64>) {
+    at[0] += width;
+    if (cp == 10) { line[0] += 1; column[0] = 1; }
+    else { column[0] += 1; }
+}
+
+fun ir_lex_emit(cp: u64, output: ptr<u8>, at: ptr<u64>, capacity: u64) -> bool {
+    var width: u64 = 1;
+    if (cp >= 65536) { width = 4; }
+    else if (cp >= 2048) { width = 3; }
+    else if (cp >= 128) { width = 2; }
+    if (at[0] > capacity || width > capacity - at[0]) { return false; }
+    var p: u64 = at[0];
+    if (output == null) { at[0] += width; return true; }
+    if (width == 1) { output[p] = cp as u8; }
+    else if (width == 2) {
+        output[p] = (192 | (cp >> 6)) as u8;
+        output[p + 1] = (128 | (cp & 63)) as u8;
+    }
+    else if (width == 3) {
+        output[p] = (224 | (cp >> 12)) as u8;
+        output[p + 1] = (128 | ((cp >> 6) & 63)) as u8;
+        output[p + 2] = (128 | (cp & 63)) as u8;
+    }
+    else {
+        output[p] = (240 | (cp >> 18)) as u8;
+        output[p + 1] = (128 | ((cp >> 12) & 63)) as u8;
+        output[p + 2] = (128 | ((cp >> 6) & 63)) as u8;
+        output[p + 3] = (128 | (cp & 63)) as u8;
+    }
+    at[0] += width;
+    return true;
+}
+
+fun ir_lex_error(result: ptr<IrLexResult>, status: u64, at: u64, line: u64,
+    column: u64) -> i32 {
+    result.status = status;
+    result.offset = at;
+    result.line = line;
+    result.column = column;
+    return status as i32;
+}
+
+fun ir_lex_syntax_error(result: ptr<IrLexResult>, reason: u64, at: u64,
+    line: u64, column: u64) -> i32 {
+    result.reason = reason;
+    return ir_lex_error(result, 1, at, line, column);
+}
+
+export(c) fun whale_ir_lex(source: ptr<u8>, length: u64, max_tokens: u64, max_work: u64,
+    mode: u64, // 0 preflight counts; 1 publish after exact allocation
+    scratch_tokens: ptr<IrToken>, token_capacity: u64, scratch_decoded: ptr<u8>,
+    decoded_capacity: u64, output_tokens: ptr<IrToken>, output_token_capacity: u64,
+    output_decoded: ptr<u8>, output_decoded_capacity: u64,
+    result: ptr<IrLexResult>) -> i32 {
+    if (result == null) { return 5; }
+    result.status = 0; result.reason = 0; result.offset = 0; result.line = 1; result.column = 1;
+    result.token_count = 0; result.decoded_count = 0;
+    if (mode > 1 || !ir_span_valid(source, length, 1)
+        || (mode == 1 && (!ir_span_valid(scratch_tokens as ptr<u8>, token_capacity, 56)
+        || !ir_span_valid(output_tokens as ptr<u8>, output_token_capacity, 56)
+        || !ir_span_valid(scratch_decoded, decoded_capacity, 1)
+        || !ir_span_valid(output_decoded, output_decoded_capacity, 1)))) {
+        result.status = 5; return 5;
+    }
+    var at: u64 = 0;
+    var line: u64 = 1;
+    var column: u64 = 1;
+    var count: u64 = 0;
+    var decoded: u64 = 0;
+    var work: u64 = 0;
+    // The pinned Wave O0 compiler allocates local declarations at their
+    // lexical site. Keep reusable locals outside token loops so a long IR
+    // source cannot grow the native stack one token at a time.
+    var width: u64 = 0;
+    var cp: u64 = 0;
+    var token: IrToken = IrToken { kind: 0, start: 0, end: 0, line: 1,
+        column: 1, decoded_start: 0, decoded_len: 0 };
+    var closed: bool = false;
+    var digits: u64 = 0;
+    var digit: i32 = 0;
+    var capacity: u64 = 0;
+    while (at < length) {
+        if (work >= max_work) { return ir_lex_error(result, 4, at, line, column); }
+        work += 1;
+        width = 0;
+        cp = 0;
+        if (!ir_lex_utf8(source, length, at, &width, &cp)) {
+            return ir_lex_syntax_error(result, 1, at, line, column);
+        }
+        if (ir_lex_space(cp)) {
+            ir_lex_advance(cp, width, &at, &line, &column);
+            continue;
+        }
+        if (cp == 47 && at + 1 < length && source[at + 1] == 47) {
+            while (at < length && source[at] != 10) {
+                if (work >= max_work) { return ir_lex_error(result, 4, at, line, column); }
+                work += 1;
+                if (!ir_lex_utf8(source, length, at, &width, &cp)) {
+                    return ir_lex_syntax_error(result, 1, at, line, column);
+                }
+                ir_lex_advance(cp, width, &at, &line, &column);
+            }
+            continue;
+        }
+        if (count >= max_tokens || (mode == 1
+            && (count >= token_capacity || count >= output_token_capacity))) {
+            return ir_lex_error(result, 2, at, line, column);
+        }
+        token.kind = 0;
+        token.start = at;
+        token.end = at;
+        token.line = line;
+        token.column = column;
+        token.decoded_start = decoded;
+        token.decoded_len = 0;
+        if (cp == 34) {
+            token.kind = 1;
+            ir_lex_advance(cp, width, &at, &line, &column);
+            closed = false;
+            while (at < length) {
+                if (work >= max_work) { return ir_lex_error(result, 4, at, line, column); }
+                work += 1;
+                if (!ir_lex_utf8(source, length, at, &width, &cp)) {
+                    return ir_lex_syntax_error(result, 1, at, line, column);
+                }
+                if (cp == 34) {
+                    ir_lex_advance(cp, width, &at, &line, &column);
+                    closed = true; break;
+                }
+                if (cp == 92) {
+                    ir_lex_advance(cp, width, &at, &line, &column);
+                    if (at == length) { return ir_lex_syntax_error(result, 3, at, line, column); }
+                    if (!ir_lex_utf8(source, length, at, &width, &cp)) {
+                        return ir_lex_syntax_error(result, 1, at, line, column);
+                    }
+                    ir_lex_advance(cp, width, &at, &line, &column);
+                    if (cp == 110) { cp = 10; }
+                    else if (cp == 114) { cp = 13; }
+                    else if (cp == 116) { cp = 9; }
+                    else if (cp == 48) { cp = 0; }
+                    else if (cp == 117) {
+                        if (at >= length || source[at] != 123) {
+                            return ir_lex_syntax_error(result, 4, at, line, column);
+                        }
+                        ir_lex_advance(123, 1, &at, &line, &column);
+                        digits = 0;
+                        cp = 0;
+                        while (at < length) {
+                            digit = ir_lex_hex(source[at]);
+                            if (digit < 0) { break; }
+                            if (work >= max_work) { return ir_lex_error(result, 4, at, line, column); }
+                            work += 1;
+                            if (digits < 6) { cp = (cp << 4) | (digit as u64); }
+                            digits += 1;
+                            ir_lex_advance(source[at] as u64, 1, &at, &line, &column);
+                        }
+                        if (digits == 0 || digits > 6 || at >= length || source[at] != 125) {
+                            return ir_lex_syntax_error(result, 5, at, line, column);
+                        }
+                        ir_lex_advance(125, 1, &at, &line, &column);
+                        if (cp > 1114111 || (cp >= 55296 && cp <= 57343)) {
+                            return ir_lex_syntax_error(result, 8, at, line, column);
+                        }
+                    }
+                    else if (cp != 34 && cp != 92) {
+                        return ir_lex_syntax_error(result, 6, at, line, column);
+                    }
+                }
+                else {
+                    if (ir_lex_control(cp)) {
+                        return ir_lex_syntax_error(result, 7, token.start, token.line, token.column);
+                    }
+                    ir_lex_advance(cp, width, &at, &line, &column);
+                }
+                capacity = decoded_capacity;
+                if (mode == 0) { capacity = length; }
+                if (!ir_lex_emit(cp, scratch_decoded, &decoded, capacity)) {
+                    return ir_lex_error(result, 3, at, line, column);
+                }
+            }
+            if (!closed) { return ir_lex_syntax_error(result, 2, token.start, token.line, token.column); }
+            token.decoded_len = decoded - token.decoded_start;
+        }
+        else if (ir_lex_mark(cp)
+            || ((cp == 45 || cp == 61) && at + 1 < length && source[at + 1] == 62)) {
+            token.kind = 2;
+            ir_lex_advance(cp, width, &at, &line, &column);
+            if ((cp == 45 || cp == 61) && at < length && source[at] == 62) {
+                ir_lex_advance(62, 1, &at, &line, &column);
+            }
+        }
+        else {
+            while (at < length) {
+                if (work >= max_work) { return ir_lex_error(result, 4, at, line, column); }
+                work += 1;
+                if (!ir_lex_utf8(source, length, at, &width, &cp)) {
+                    return ir_lex_syntax_error(result, 1, at, line, column);
+                }
+                if (ir_lex_space(cp) || ir_lex_mark(cp)) { break; }
+                ir_lex_advance(cp, width, &at, &line, &column);
+            }
+        }
+        token.end = at;
+        if (mode == 1) { scratch_tokens[count] = token; }
+        count += 1;
+    }
+    if (mode == 1 && (count >= token_capacity || count >= output_token_capacity)) {
+        return ir_lex_error(result, 2, at, line, column);
+    }
+    if (mode == 1) {
+        scratch_tokens[count] = IrToken { kind: 3, start: at, end: at, line: line,
+            column: column, decoded_start: decoded, decoded_len: 0 };
+    }
+    count += 1;
+    if (mode == 1 && decoded > output_decoded_capacity) {
+        return ir_lex_error(result, 3, at, line, column);
+    }
+    // Include publication in the same work ceiling as scanning. Count-only
+    // preflight charges the identical amount, so it cannot promise a later
+    // pass that exceeds the caller's budget.
+    if (count > max_work - work || decoded > max_work - work - count) {
+        return ir_lex_error(result, 4, at, line, column);
+    }
+    if (mode == 0) {
+        result.offset = at; result.line = line; result.column = column;
+        result.token_count = count; result.decoded_count = decoded;
+        return 0;
+    }
+    var index: u64 = 0;
+    while (index < count) { output_tokens[index] = scratch_tokens[index]; index += 1; }
+    index = 0;
+    while (index < decoded) { output_decoded[index] = scratch_decoded[index]; index += 1; }
+    result.offset = at; result.line = line; result.column = column;
+    result.token_count = count; result.decoded_count = decoded;
+    return 0;
+}

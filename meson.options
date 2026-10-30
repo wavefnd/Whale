@@ -11,6 +11,8 @@ option('socket-cli', type: 'boolean', value: false,
        description: 'Include experimental AST JSON lowering commands')
 option('asmobj-dir', type: 'string', value: '',
        description: 'Absolute directory of the complete prebuilt Wave asmobj module for the executable host')
+option('wave-ir-dir', type: 'string', value: '',
+       description: 'Absolute directory of a prebuilt internal Wave IR module; source builds use the pinned compiler')
 option('wave-source', type: 'string', value: '',
        description: 'Read-only Wave Git checkout containing the pinned bootstrap revision')
 option('wave-bootstrap-dir', type: 'string', value: '',

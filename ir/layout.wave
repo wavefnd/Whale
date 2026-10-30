@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: MPL-2.0
+// Walk the root in source order, preserving the reference layout's first-error
+// precedence. Every node and edge visit consumes work, including repeated DAG
+// references. The aggregate depth bound also bounds native call-stack use.
+fun ir_layout_scalar(kind: u64, storage: ptr<IrStorage>, layout: ptr<IrTypeLayout>) -> bool {
+    layout.stride = 0;
+    layout.depth = 0;
+    if (kind == 1) { layout.size = 1; layout.align = storage.scalar_align1; }
+    else if (kind == 2) { layout.size = 2; layout.align = storage.scalar_align2; }
+    else if (kind == 3) { layout.size = 4; layout.align = storage.scalar_align4; }
+    else if (kind == 4) { layout.size = 8; layout.align = storage.scalar_align8; }
+    else if (kind == 5) { layout.size = 16; layout.align = storage.scalar_align16; }
+    else if (kind == 6 || kind == 7) {
+        layout.size = storage.ptr_bits / 8;
+        layout.align = storage.pointer_align;
+    }
+    else { return false; }
+    layout.allocation_align = layout.align;
+    return true;
+}
+
+fun ir_layout_node(index: u64, nodes: ptr<IrTypeNode>, node_count: u64,
+    edges: ptr<u64>, edge_count: u64, storage: ptr<IrStorage>, remaining_depth: u64,
+    scratch: ptr<IrTypeLayout>, offsets: ptr<u64>, work: ptr<u64>) -> i32 {
+    if (work[0] == 0) { return 6; }
+    work[0] -= 1;
+    var node: ptr<IrTypeNode> = &nodes[index];
+    var layout: ptr<IrTypeLayout> = &scratch[index];
+    if (node.kind == 0) { return 1; }
+    if ((node.kind == 6 || node.kind == 7) && node.child >= node_count) { return 1; }
+    if (ir_layout_scalar(node.kind, storage, layout)) { return 0; }
+    if (node.kind != 8 && node.kind != 9 && node.kind != 10) { return 1; }
+    if (remaining_depth == 0) { return 2; }
+    if (node.kind == 8) {
+        if (node.child >= index) { return 1; }
+        var status: i32 = ir_layout_node(node.child, nodes, node_count, edges, edge_count,
+            storage, remaining_depth - 1, scratch, offsets, work);
+        if (status != 0) { return status; }
+        var child: ptr<IrTypeLayout> = &scratch[node.child];
+        if (node.count != 0 && child.size > 18446744073709551615 / node.count) { return 3; }
+        layout.size = child.size * node.count;
+        layout.align = child.align;
+        layout.stride = child.size;
+        layout.depth = child.depth + 1;
+        layout.allocation_align = child.align;
+        if (storage.has_large_array != 0 && layout.size >= storage.large_array_threshold
+            && storage.large_array_align > layout.allocation_align) {
+            layout.allocation_align = storage.large_array_align;
+        }
+    }
+    else {
+        if (node.first > edge_count || node.count > edge_count - node.first) { return 1; }
+        layout.size = 0;
+        layout.align = 1;
+        layout.stride = 0;
+        layout.depth = 1;
+        var field: u64 = 0;
+        while (field < node.count) {
+            if (work[0] == 0) { return 6; }
+            work[0] -= 1;
+            var child_index: u64 = edges[node.first + field];
+            if (child_index >= index) { return 1; }
+            var status: i32 = ir_layout_node(child_index, nodes, node_count, edges, edge_count,
+                storage, remaining_depth - 1, scratch, offsets, work);
+            if (status != 0) { return status; }
+            var child: ptr<IrTypeLayout> = &scratch[child_index];
+            if (child.align > layout.align) { layout.align = child.align; }
+            var aligned: u64 = 0;
+            if (!ir_align_up(layout.size, child.align, &aligned)) { return 3; }
+            offsets[node.first + field] = aligned;
+            if (child.size > 18446744073709551615 - aligned) { return 3; }
+            layout.size = aligned + child.size;
+            if (child.depth + 1 > layout.depth) { layout.depth = child.depth + 1; }
+            field += 1;
+        }
+        var padded: u64 = 0;
+        if (!ir_align_up(layout.size, layout.align, &padded)) { return 3; }
+        layout.size = padded;
+        layout.allocation_align = layout.align;
+    }
+    if (storage.ptr_bits == 32 && layout.size > 4294967295) { return 3; }
+    return 0;
+}

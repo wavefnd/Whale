@@ -98,6 +98,50 @@ fn hardlink_output_cannot_overwrite_ir_input() {
 }
 
 #[test]
+fn canonical_printing_obeys_exact_byte_limits_and_preserves_existing_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let input = tmp.path().join("input.wir");
+    let output = tmp.path().join("output.wir");
+    let source = include_str!("../ir/tests/fixtures/wave-control-v3.wir");
+    fs::write(&input, source).unwrap();
+    let input_name = input.to_str().unwrap();
+    let output_name = output.to_str().unwrap();
+    let complete = run(&["ir", "print", input_name]);
+    assert!(complete.status.success(), "{complete:?}");
+    let exact = complete.stdout.len().to_string();
+    let short = (complete.stdout.len() - 1).to_string();
+    let result = run(&["ir", "print", input_name, "--max-output", &exact]);
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(result.stdout, complete.stdout);
+    let result = run(&["ir", "print", input_name, "--max-output", &short]);
+    assert_eq!(result.status.code(), Some(1), "{result:?}");
+    assert!(result.stdout.len() < complete.stdout.len());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("output limit"), "{result:?}");
+    for limit in ["0", "1", &short] {
+        fs::write(&output, b"keep previous output").unwrap();
+        let result = run(&["ir", "print", input_name, "-o", output_name, "--max-output", limit]);
+        assert_eq!(result.status.code(), Some(1), "{result:?}");
+        assert_eq!(fs::read(&output).unwrap(), b"keep previous output");
+        assert_eq!(fs::read_to_string(&input).unwrap(), source);
+        assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 2);
+    }
+    let result = run(&["ir", "print", input_name, "-o", output_name, "--max-output", &exact]);
+    assert!(result.status.success(), "{result:?}");
+    assert_eq!(fs::read(&output).unwrap(), complete.stdout);
+    for args in [
+        vec!["--max-output"],
+        vec!["--max-output", "-1"],
+        vec!["--max-output", "+1"],
+        vec!["--max-output", "18446744073709551616"],
+        vec!["--max-output", "1", "--max-output", "2"],
+    ] {
+        let mut command = vec!["ir", "print", input_name];
+        command.extend(args);
+        assert!(!run(&command).status.success());
+    }
+}
+
+#[test]
 fn run_executes_exact_arguments_and_reports_traps_fuel_and_unsupported_operations() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("loop input.wir");
@@ -164,4 +208,32 @@ fn run_executes_exact_arguments_and_reports_traps_fuel_and_unsupported_operation
     assert!(
         String::from_utf8_lossy(&result.stderr).contains("unsupported interpreter operation load")
     );
+}
+
+#[cfg(feature = "socket-cli")]
+#[test]
+fn ast_lowering_streams_with_the_same_exact_publication_ceiling() {
+    let tmp = tempfile::tempdir().unwrap();
+    let input = tmp.path().join("input.json");
+    let output = tmp.path().join("output.wir");
+    let source = include_str!("../ir/tests/fixtures/ast-v2-u128.json");
+    fs::write(&input, source).unwrap();
+    let input_name = input.to_str().unwrap();
+    let output_name = output.to_str().unwrap();
+    let complete = run(&["ir", "lower", input_name]);
+    assert!(complete.status.success(), "{complete:?}");
+    let exact = complete.stdout.len().to_string();
+    let short = (complete.stdout.len() - 1).to_string();
+    fs::write(&output, b"previous IR").unwrap();
+    let failed = run(&["ir", "lower", input_name, "--max-output", &short, "-o", output_name]);
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("output limit"), "{failed:?}");
+    assert_eq!(fs::read(&output).unwrap(), b"previous IR");
+    assert_eq!(fs::read_to_string(&input).unwrap(), source);
+    assert_eq!(fs::read_dir(tmp.path()).unwrap().count(), 2);
+    let published = run(&["ir", "lower", input_name, "--max-output", &exact, "-o", output_name]);
+    assert!(published.status.success(), "{published:?}");
+    assert_eq!(fs::read(&output).unwrap(), complete.stdout);
+    let verified = run(&["ir", "verify", output_name]);
+    assert!(verified.status.success(), "{verified:?}");
 }

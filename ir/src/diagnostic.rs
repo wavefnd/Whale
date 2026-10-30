@@ -180,6 +180,7 @@ impl ToDiagnostic for crate::lower_ast::LowerError {
             Self::InvalidLiteral { .. } => "ir.lower.invalid-literal",
             Self::AssignToConst(..) => "ir.lower.assign-to-const",
             Self::NonConstExpr => "ir.lower.non-const-expr",
+            Self::Backend(..) => "ir.lower.backend",
         };
         let mut d = Diagnostic::new("ir", "lower", code, self.to_string());
         if let Some(a) = self.annotation() {
@@ -209,6 +210,12 @@ impl ToDiagnostic for crate::ParseError {
                 Diagnostic::new("ir", "parse", "ir.parse.resource-limit", error.to_string())
             },
             crate::ParseErrorKind::Verification(error) => error.diagnostic(),
+            crate::ParseErrorKind::Backend(component) => Diagnostic::new(
+                "ir",
+                "parse",
+                "ir.parse.backend",
+                format!("IR Wave backend error: {component}"),
+            ),
         };
         d.contexts.push(Context::Source(SourceLocation {
             source: "<input>".into(),

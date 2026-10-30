@@ -1,0 +1,671 @@
+// SPDX-License-Identifier: MPL-2.0
+// Versioned instruction/terminator grammar. Primitive production selection,
+// list loops, result presence and diagnostics run in Wave. Nested type/literal/
+// constant-expression requests call the other Wave-owned grammar kernels.
+struct IrInstructionState {
+    phase: u64; at: u64; format: u64; mode: u64; op: u64; sub: u64;
+    op_at: u64; has_dst: u64; dst: u64; annotation_kind: u64; type_kind: u64;
+    a: u64; b: u64; c: u64; d: u64; e: u64; name: u64; aux: u64;
+    nodes: u64; work: u64;
+}
+
+struct IrInstructionEvent {
+    status: u64; reason: u64; at: u64; expected: u64;
+    event: u64; role: u64; op: u64; sub: u64; has_dst: u64; dst: u64;
+    a: u64; b: u64; c: u64; d: u64; e: u64; name: u64; aux: u64;
+    next: u64; nodes: u64; work: u64;
+}
+
+struct IrInstructionParser {
+    tokens: ptr<IrTextToken>; count: u64; state: ptr<IrInstructionState>;
+    max_nodes: u64; max_work: u64; result: ptr<IrInstructionEvent>;
+}
+
+fun ir_instruction_word(token: ptr<IrTextToken>, code: u64) -> bool {
+    var first: u64 = 0; var second: u64 = 0; var length: u64 = 0;
+    if (code == 0) { first = 58; second = 0; length = 1; } // :
+    else if (code == 1) { first = 61; second = 0; length = 1; } // =
+    else if (code == 2) { first = 44; second = 0; length = 1; } // ,
+    else if (code == 3) { first = 91; second = 0; length = 1; } // [
+    else if (code == 4) { first = 93; second = 0; length = 1; } // ]
+    else if (code == 5) { first = 40; second = 0; length = 1; } // (
+    else if (code == 6) { first = 41; second = 0; length = 1; } // )
+    else if (code == 7) { first = 60; second = 0; length = 1; } // <
+    else if (code == 8) { first = 62; second = 0; length = 1; } // >
+    else if (code == 9) { first = 1819242338; second = 0; length = 4; } // bool
+    else if (code == 10) { first = 7500912; second = 0; length = 3; } // ptr
+    else if (code == 11) { first = 14453; second = 0; length = 2; } // u8
+    else if (code == 12) { first = 3421813; second = 0; length = 3; } // u64
+    else if (code == 13) { first = 474181364833; second = 0; length = 5; } // align
+    else if (code == 14) { first = 465557414252; second = 0; length = 5; } // label
+    else if (code == 15) { first = 121424956188018; second = 0; length = 6; } // reason
+    else if (code == 16) { first = 28532; second = 0; length = 2; } // to
+    else if (code == 17) { first = 15933; second = 0; length = 2; } // =>
+    else if (code == 18) { first = 8386658473162862185; second = 0; length = 8; } // indirect
+    else if (code == 19) { first = 435610019959; second = 0; length = 5; } // whale
+    else if (code == 20) { first = 57408520157555; second = 0; length = 6; } // sysv64
+    else if (code == 21) { first = 7016445909985619047; second = 7496804; length = 11; } // global_addr
+    else if (code == 22) { first = 7308613718930516332; second = 1684956511; length = 12; } // lifetime_end
+    else if (code == 23) { first = 28823050467308656; second = 0; length = 7; } // ptrdiff
+    else if (code == 24) { first = 7306069449259249507; second = 27747; length = 10; } // const_decl
+    else if (code == 25) { first = 500152823651; second = 0; length = 5; } // const
+    else if (code == 26) { first = 439787744885; second = 0; length = 5; } // undef
+    else if (code == 27) { first = 7761773; second = 0; length = 3; } // mov
+    else if (code == 28) { first = 6776174; second = 0; length = 3; } // neg
+    else if (code == 29) { first = 7630702; second = 0; length = 3; } // not
+    else if (code == 30) { first = 7368035; second = 0; length = 3; } // cmp
+    else if (code == 31) { first = 1886217065; second = 0; length = 4; } // icmp
+    else if (code == 32) { first = 1886217062; second = 0; length = 4; } // fcmp
+    else if (code == 33) { first = 127970252186995; second = 0; length = 6; } // select
+    else if (code == 34) { first = 6908016; second = 0; length = 3; } // phi
+    else if (code == 35) { first = 32760367481649253; second = 0; length = 7; } // extract
+    else if (code == 36) { first = 107079699033185; second = 0; length = 6; } // alloca
+    else if (code == 37) { first = 7308332243887091574; second = 431131421791; length = 13; } // volatile_load
+    else if (code == 38) { first = 7308332243887091574; second = 111542170579807; length = 14; } // volatile_store
+    else if (code == 39) { first = 1684107116; second = 0; length = 4; } // load
+    else if (code == 40) { first = 127996172791413; second = 0; length = 6; } // uninit
+    else if (code == 41) { first = 435711603827; second = 0; length = 5; } // store
+    else if (code == 42) { first = 7365991; second = 0; length = 3; } // gep
+    else if (code == 43) { first = 133523611411821; second = 0; length = 6; } // memcpy
+    else if (code == 44) { first = 127979077068141; second = 0; length = 6; } // memset
+    else if (code == 45) { first = 7959380476474193262; second = 474315584611; length = 13; } // null_function
+    else if (code == 46) { first = 7957695015192261990; second = 491310571871; length = 13; } // function_addr
+    else if (code == 47) { first = 1819042147; second = 0; length = 4; } // call
+    else if (code == 48) { first = 28826306252730996; second = 0; length = 7; } // trap_if
+    else if (code == 49) { first = 29282; second = 0; length = 2; } // br
+    else if (code == 50) { first = 7496291; second = 0; length = 3; } // cbr
+    else if (code == 51) { first = 114776364119923; second = 0; length = 6; } // switch
+    else if (code == 52) { first = 7628146; second = 0; length = 3; } // ret
+    else if (code == 53) { first = 1885434484; second = 0; length = 4; } // trap
+    else if (code == 54) { first = 6579297; second = 0; length = 3; } // add
+    else if (code == 55) { first = 6452595; second = 0; length = 3; } // sub
+    else if (code == 56) { first = 7107949; second = 0; length = 3; } // mul
+    else if (code == 57) { first = 1986618485; second = 0; length = 4; } // udiv
+    else if (code == 58) { first = 1986618483; second = 0; length = 4; } // sdiv
+    else if (code == 59) { first = 1835364981; second = 0; length = 4; } // urem
+    else if (code == 60) { first = 1835364979; second = 0; length = 4; } // srem
+    else if (code == 61) { first = 1684300134; second = 0; length = 4; } // fadd
+    else if (code == 62) { first = 1651864422; second = 0; length = 4; } // fsub
+    else if (code == 63) { first = 1819635046; second = 0; length = 4; } // fmul
+    else if (code == 64) { first = 1986618470; second = 0; length = 4; } // fdiv
+    else if (code == 65) { first = 1835364966; second = 0; length = 4; } // frem
+    else if (code == 66) { first = 6581857; second = 0; length = 3; } // and
+    else if (code == 67) { first = 29295; second = 0; length = 2; } // or
+    else if (code == 68) { first = 7499640; second = 0; length = 3; } // xor
+    else if (code == 69) { first = 7104627; second = 0; length = 3; } // shl
+    else if (code == 70) { first = 1919447916; second = 0; length = 4; } // lshr
+    else if (code == 71) { first = 1919447905; second = 0; length = 4; } // ashr
+    else if (code == 72) { first = 6873730443177715811; second = 7630441; length = 11; } // checked_int
+    else if (code == 73) { first = 1954047354; second = 0; length = 4; } // zext
+    else if (code == 74) { first = 1954047347; second = 0; length = 4; } // sext
+    else if (code == 75) { first = 427054953076; second = 0; length = 5; } // trunc
+    else if (code == 76) { first = 1954047334; second = 0; length = 4; } // fext
+    else if (code == 77) { first = 109326067987558; second = 0; length = 6; } // ftrunc
+    else if (code == 78) { first = 126853577667689; second = 0; length = 6; } // itof_s
+    else if (code == 79) { first = 129052600923241; second = 0; length = 6; } // itof_u
+    else if (code == 80) { first = 126853627999334; second = 0; length = 6; } // ftoi_s
+    else if (code == 81) { first = 129052651254886; second = 0; length = 6; } // ftoi_u
+    else if (code == 82) { first = 32777959416031586; second = 0; length = 7; } // bitcast
+    else if (code == 83) { first = 8389759083253757040; second = 0; length = 8; } // ptrtoint
+    else if (code == 84) { first = 8247340441619689065; second = 0; length = 8; } // inttoptr
+    else if (code == 85) { first = 7739545220993540469; second = 0; length = 8; } // uadd_chk
+    else if (code == 86) { first = 7739545220961104757; second = 0; length = 8; } // usub_chk
+    else if (code == 87) { first = 7739545221128875381; second = 0; length = 8; } // umul_chk
+    else if (code == 88) { first = 7739545220993540467; second = 0; length = 8; } // sadd_chk
+    else if (code == 89) { first = 7739545220961104755; second = 0; length = 8; } // ssub_chk
+    else if (code == 90) { first = 7739545221128875379; second = 0; length = 8; } // smul_chk
+    else if (code == 91) { first = 29029; second = 0; length = 2; } // eq
+    else if (code == 92) { first = 25966; second = 0; length = 2; } // ne
+    else if (code == 93) { first = 7629939; second = 0; length = 3; } // slt
+    else if (code == 94) { first = 6646899; second = 0; length = 3; } // sle
+    else if (code == 95) { first = 7628659; second = 0; length = 3; } // sgt
+    else if (code == 96) { first = 6645619; second = 0; length = 3; } // sge
+    else if (code == 97) { first = 7629941; second = 0; length = 3; } // ult
+    else if (code == 98) { first = 6646901; second = 0; length = 3; } // ule
+    else if (code == 99) { first = 7628661; second = 0; length = 3; } // ugt
+    else if (code == 100) { first = 6645621; second = 0; length = 3; } // uge
+    else if (code == 101) { first = 7431526; second = 0; length = 3; } // feq
+    else if (code == 102) { first = 6647398; second = 0; length = 3; } // fne
+    else if (code == 103) { first = 7629926; second = 0; length = 3; } // flt
+    else if (code == 104) { first = 6646886; second = 0; length = 3; } // fle
+    else if (code == 105) { first = 7628646; second = 0; length = 3; } // fgt
+    else if (code == 106) { first = 6645606; second = 0; length = 3; } // fge
+    else if (code == 107) { first = 7431535; second = 0; length = 3; } // oeq
+    else if (code == 108) { first = 6647407; second = 0; length = 3; } // one
+    else if (code == 109) { first = 7629935; second = 0; length = 3; } // olt
+    else if (code == 110) { first = 6646895; second = 0; length = 3; } // ole
+    else if (code == 111) { first = 7628655; second = 0; length = 3; } // ogt
+    else if (code == 112) { first = 6645615; second = 0; length = 3; } // oge
+    else if (code == 113) { first = 6582895; second = 0; length = 3; } // ord
+    else if (code == 114) { first = 7302773; second = 0; length = 3; } // uno
+    else if (code == 115) { first = 7431541; second = 0; length = 3; } // ueq
+    else if (code == 116) { first = 6647413; second = 0; length = 3; } // une
+    else { return false; }
+    if (token.kind == 1 || token.kind == 3 || token.length != length) { return false; }
+    var index: u64 = 0;
+    while (index < length) {
+        var packed: u64 = first; if (index >= 8) { packed = second; }
+        if (token.data[index] as u64 != ((packed >> ((index & 7) * 8)) & 255)) { return false; }
+        index += 1;
+    }
+    return true;
+}
+
+fun ir_instruction_opcode(token: ptr<IrTextToken>, sub: ptr<u64>) -> u64 {
+    if (ir_instruction_word(token, 21)) { sub[0] = 0; return 0; } // global_addr
+    if (ir_instruction_word(token, 22)) { sub[0] = 0; return 1; } // lifetime_end
+    if (ir_instruction_word(token, 23)) { sub[0] = 0; return 2; } // ptrdiff
+    if (ir_instruction_word(token, 24)) { sub[0] = 0; return 3; } // const_decl
+    if (ir_instruction_word(token, 25)) { sub[0] = 0; return 4; } // const
+    if (ir_instruction_word(token, 26)) { sub[0] = 0; return 5; } // undef
+    if (ir_instruction_word(token, 27)) { sub[0] = 0; return 6; } // mov
+    if (ir_instruction_word(token, 28)) { sub[0] = 0; return 8; } // neg
+    if (ir_instruction_word(token, 29)) { sub[0] = 0; return 9; } // not
+    if (ir_instruction_word(token, 30)) { sub[0] = 0; return 10; } // cmp
+    if (ir_instruction_word(token, 31)) { sub[0] = 0; return 11; } // icmp
+    if (ir_instruction_word(token, 32)) { sub[0] = 0; return 12; } // fcmp
+    if (ir_instruction_word(token, 33)) { sub[0] = 0; return 13; } // select
+    if (ir_instruction_word(token, 34)) { sub[0] = 0; return 15; } // phi
+    if (ir_instruction_word(token, 35)) { sub[0] = 0; return 16; } // extract
+    if (ir_instruction_word(token, 36)) { sub[0] = 0; return 18; } // alloca
+    if (ir_instruction_word(token, 37)) { sub[0] = 0; return 19; } // volatile_load
+    if (ir_instruction_word(token, 38)) { sub[0] = 0; return 20; } // volatile_store
+    if (ir_instruction_word(token, 39)) { sub[0] = 0; return 21; } // load
+    if (ir_instruction_word(token, 40)) { sub[0] = 0; return 22; } // uninit
+    if (ir_instruction_word(token, 41)) { sub[0] = 0; return 23; } // store
+    if (ir_instruction_word(token, 42)) { sub[0] = 0; return 24; } // gep
+    if (ir_instruction_word(token, 43)) { sub[0] = 0; return 25; } // memcpy
+    if (ir_instruction_word(token, 44)) { sub[0] = 0; return 26; } // memset
+    if (ir_instruction_word(token, 45)) { sub[0] = 0; return 27; } // null_function
+    if (ir_instruction_word(token, 46)) { sub[0] = 0; return 28; } // function_addr
+    if (ir_instruction_word(token, 47)) { sub[0] = 0; return 29; } // call
+    if (ir_instruction_word(token, 48)) { sub[0] = 0; return 30; } // trap_if
+    if (ir_instruction_word(token, 49)) { sub[0] = 0; return 31; } // br
+    if (ir_instruction_word(token, 50)) { sub[0] = 0; return 32; } // cbr
+    if (ir_instruction_word(token, 51)) { sub[0] = 0; return 33; } // switch
+    if (ir_instruction_word(token, 52)) { sub[0] = 0; return 34; } // ret
+    if (ir_instruction_word(token, 53)) { sub[0] = 0; return 35; } // trap
+    if (ir_instruction_word(token, 54)) { sub[0] = 0; return 7; } // add
+    if (ir_instruction_word(token, 55)) { sub[0] = 1; return 7; } // sub
+    if (ir_instruction_word(token, 56)) { sub[0] = 2; return 7; } // mul
+    if (ir_instruction_word(token, 57)) { sub[0] = 3; return 7; } // udiv
+    if (ir_instruction_word(token, 58)) { sub[0] = 4; return 7; } // sdiv
+    if (ir_instruction_word(token, 59)) { sub[0] = 5; return 7; } // urem
+    if (ir_instruction_word(token, 60)) { sub[0] = 6; return 7; } // srem
+    if (ir_instruction_word(token, 61)) { sub[0] = 7; return 7; } // fadd
+    if (ir_instruction_word(token, 62)) { sub[0] = 8; return 7; } // fsub
+    if (ir_instruction_word(token, 63)) { sub[0] = 9; return 7; } // fmul
+    if (ir_instruction_word(token, 64)) { sub[0] = 10; return 7; } // fdiv
+    if (ir_instruction_word(token, 65)) { sub[0] = 11; return 7; } // frem
+    if (ir_instruction_word(token, 66)) { sub[0] = 12; return 7; } // and
+    if (ir_instruction_word(token, 67)) { sub[0] = 13; return 7; } // or
+    if (ir_instruction_word(token, 68)) { sub[0] = 14; return 7; } // xor
+    if (ir_instruction_word(token, 69)) { sub[0] = 15; return 7; } // shl
+    if (ir_instruction_word(token, 70)) { sub[0] = 16; return 7; } // lshr
+    if (ir_instruction_word(token, 71)) { sub[0] = 17; return 7; } // ashr
+    if (ir_instruction_word(token, 72)) { sub[0] = 0; return 14; } // checked_int
+    if (ir_instruction_word(token, 73)) { sub[0] = 1; return 14; } // zext
+    if (ir_instruction_word(token, 74)) { sub[0] = 2; return 14; } // sext
+    if (ir_instruction_word(token, 75)) { sub[0] = 3; return 14; } // trunc
+    if (ir_instruction_word(token, 76)) { sub[0] = 4; return 14; } // fext
+    if (ir_instruction_word(token, 77)) { sub[0] = 5; return 14; } // ftrunc
+    if (ir_instruction_word(token, 78)) { sub[0] = 6; return 14; } // itof_s
+    if (ir_instruction_word(token, 79)) { sub[0] = 7; return 14; } // itof_u
+    if (ir_instruction_word(token, 80)) { sub[0] = 8; return 14; } // ftoi_s
+    if (ir_instruction_word(token, 81)) { sub[0] = 9; return 14; } // ftoi_u
+    if (ir_instruction_word(token, 82)) { sub[0] = 10; return 14; } // bitcast
+    if (ir_instruction_word(token, 83)) { sub[0] = 11; return 14; } // ptrtoint
+    if (ir_instruction_word(token, 84)) { sub[0] = 12; return 14; } // inttoptr
+    if (ir_instruction_word(token, 85)) { sub[0] = 0; return 17; } // uadd_chk
+    if (ir_instruction_word(token, 86)) { sub[0] = 1; return 17; } // usub_chk
+    if (ir_instruction_word(token, 87)) { sub[0] = 2; return 17; } // umul_chk
+    if (ir_instruction_word(token, 88)) { sub[0] = 3; return 17; } // sadd_chk
+    if (ir_instruction_word(token, 89)) { sub[0] = 4; return 17; } // ssub_chk
+    if (ir_instruction_word(token, 90)) { sub[0] = 5; return 17; } // smul_chk
+    return 18446744073709551615;
+}
+
+fun ir_instruction_predicate(token: ptr<IrTextToken>, op: u64) -> u64 {
+    if (op == 10) {
+        if (ir_instruction_word(token, 91)) { return 0; } // eq
+        if (ir_instruction_word(token, 92)) { return 1; } // ne
+        if (ir_instruction_word(token, 93)) { return 2; } // slt
+        if (ir_instruction_word(token, 94)) { return 3; } // sle
+        if (ir_instruction_word(token, 95)) { return 4; } // sgt
+        if (ir_instruction_word(token, 96)) { return 5; } // sge
+        if (ir_instruction_word(token, 97)) { return 6; } // ult
+        if (ir_instruction_word(token, 98)) { return 7; } // ule
+        if (ir_instruction_word(token, 99)) { return 8; } // ugt
+        if (ir_instruction_word(token, 100)) { return 9; } // uge
+        if (ir_instruction_word(token, 101)) { return 10; } // feq
+        if (ir_instruction_word(token, 102)) { return 11; } // fne
+        if (ir_instruction_word(token, 103)) { return 12; } // flt
+        if (ir_instruction_word(token, 104)) { return 13; } // fle
+        if (ir_instruction_word(token, 105)) { return 14; } // fgt
+        if (ir_instruction_word(token, 106)) { return 15; } // fge
+    }
+    if (op == 11) {
+        if (ir_instruction_word(token, 91)) { return 0; } // eq
+        if (ir_instruction_word(token, 92)) { return 1; } // ne
+        if (ir_instruction_word(token, 97)) { return 2; } // ult
+        if (ir_instruction_word(token, 98)) { return 3; } // ule
+        if (ir_instruction_word(token, 99)) { return 4; } // ugt
+        if (ir_instruction_word(token, 100)) { return 5; } // uge
+        if (ir_instruction_word(token, 93)) { return 6; } // slt
+        if (ir_instruction_word(token, 94)) { return 7; } // sle
+        if (ir_instruction_word(token, 95)) { return 8; } // sgt
+        if (ir_instruction_word(token, 96)) { return 9; } // sge
+    }
+    if (op == 12) {
+        if (ir_instruction_word(token, 107)) { return 0; } // oeq
+        if (ir_instruction_word(token, 108)) { return 1; } // one
+        if (ir_instruction_word(token, 109)) { return 2; } // olt
+        if (ir_instruction_word(token, 110)) { return 3; } // ole
+        if (ir_instruction_word(token, 111)) { return 4; } // ogt
+        if (ir_instruction_word(token, 112)) { return 5; } // oge
+        if (ir_instruction_word(token, 113)) { return 6; } // ord
+        if (ir_instruction_word(token, 114)) { return 7; } // uno
+        if (ir_instruction_word(token, 115)) { return 8; } // ueq
+        if (ir_instruction_word(token, 116)) { return 9; } // une
+        if (ir_instruction_word(token, 97)) { return 10; } // ult
+        if (ir_instruction_word(token, 98)) { return 11; } // ule
+        if (ir_instruction_word(token, 99)) { return 12; } // ugt
+        if (ir_instruction_word(token, 100)) { return 13; } // uge
+    }
+    return 18446744073709551615;
+}
+
+fun ir_instruction_fail(p: ptr<IrInstructionParser>, status: u64, reason: u64,
+    at: u64, expected: u64) -> bool {
+    p.result.status = status; p.result.reason = reason; p.result.at = at;
+    p.result.expected = expected; return false;
+}
+
+fun ir_instruction_read(p: ptr<IrInstructionParser>) -> bool {
+    if (p.state.at >= p.count) { return ir_instruction_fail(p, 6, 0, p.state.at, 0); }
+    var token: ptr<IrTextToken> = &p.tokens[p.state.at];
+    if (token.kind > 3 || !ir_span_valid(token.data, token.length, 1)) { return ir_instruction_fail(p, 6, 0, p.state.at, 0); }
+    if (token.length >= p.max_work - p.state.work) { return ir_instruction_fail(p, 4, 0, p.state.at, 0); }
+    p.state.work += token.length + 1; return true;
+}
+
+fun ir_instruction_eat(p: ptr<IrInstructionParser>, code: u64) -> bool {
+    if (!ir_instruction_read(p)) { return false; }
+    if (!ir_instruction_word(&p.tokens[p.state.at], code)) { return false; }
+    p.state.at += 1; return true;
+}
+
+fun ir_instruction_expect(p: ptr<IrInstructionParser>, code: u64) -> bool {
+    if (ir_instruction_eat(p, code)) { return true; }
+    if (p.result.status != 0) { return false; }
+    return ir_instruction_fail(p, 1, 1, p.state.at, code);
+}
+
+fun ir_instruction_id(p: ptr<IrInstructionParser>, prefix: u64, output: ptr<u64>) -> bool {
+    if (!ir_instruction_read(p)) { return false; }
+    var token: ptr<IrTextToken> = &p.tokens[p.state.at];
+    var first: u64 = 37; var second: u64 = 118;
+    if (prefix == 1) { second = 98; }
+    if (prefix == 2) { first = 64; second = 103; }
+    if (prefix == 3) { first = 64; second = 102; }
+    if (token.length < 2 || token.kind != 0 || token.data[0] as u64 != first || token.data[1] as u64 != second) {
+        return ir_instruction_fail(p, 1, 6, p.state.at, prefix);
+    }
+    if (token.length == 2) { return ir_instruction_fail(p, 1, 7, p.state.at, 0); }
+    var index: u64 = 2; var value: u64 = 0; var overflow: bool = false;
+    while (index < token.length) {
+        var digit: u64 = token.data[index] as u64;
+        if (digit < 48 || digit > 57) { return ir_instruction_fail(p, 1, 7, p.state.at, 0); }
+        digit -= 48;
+        if (value > (4294967295 - digit) / 10) { overflow = true; }
+        if (!overflow) { value = value * 10 + digit; }
+        index += 1;
+    }
+    if (overflow) { return ir_instruction_fail(p, 1, 8, p.state.at, 0); }
+    output[0] = value; p.state.at += 1; return true;
+}
+
+fun ir_instruction_number(p: ptr<IrInstructionParser>, output: ptr<u64>) -> bool {
+    if (!ir_instruction_read(p)) { return false; }
+    var token: ptr<IrTextToken> = &p.tokens[p.state.at];
+    if (token.kind != 0 || token.length == 0) { return ir_instruction_fail(p, 1, 4, p.state.at, 0); }
+    var index: u64 = 0; var value: u64 = 0; var overflow: bool = false;
+    while (index < token.length) {
+        var digit: u64 = token.data[index] as u64;
+        if (digit < 48 || digit > 57) { return ir_instruction_fail(p, 1, 4, p.state.at, 0); }
+        digit -= 48;
+        if (value > (4294967295 - digit) / 10) { overflow = true; }
+        if (!overflow) { value = value * 10 + digit; }
+        index += 1;
+    }
+    if (overflow) { return ir_instruction_fail(p, 1, 5, p.state.at, 0); }
+    output[0] = value; p.state.at += 1; return true;
+}
+
+fun ir_instruction_string(p: ptr<IrInstructionParser>) -> bool {
+    if (!ir_instruction_read(p)) { return false; }
+    if (p.tokens[p.state.at].kind != 1) { return ir_instruction_fail(p, 1, 3, p.state.at, 0); }
+    p.state.name = p.state.at; p.state.at += 1; return true;
+}
+
+fun ir_instruction_node(p: ptr<IrInstructionParser>) -> bool {
+    if (p.state.nodes >= p.max_nodes) { return ir_instruction_fail(p, 3, 0, p.state.at, 0); }
+    p.state.nodes += 1; return true;
+}
+
+fun ir_instruction_request(p: ptr<IrInstructionParser>, event: u64, role: u64, phase: u64) -> bool {
+    p.result.event = event; p.result.role = role; p.state.phase = phase; return true;
+}
+
+fun ir_instruction_align(p: ptr<IrInstructionParser>) -> bool {
+    return ir_instruction_expect(p, 2) && ir_instruction_expect(p, 13)
+        && ir_instruction_number(p, &p.state.d);
+}
+
+fun ir_instruction_byte_pointer(p: ptr<IrInstructionParser>) -> bool {
+    return ir_instruction_expect(p, 10) && ir_instruction_expect(p, 7)
+        && ir_instruction_expect(p, 11) && ir_instruction_expect(p, 8);
+}
+
+fun ir_instruction_prefix(p: ptr<IrInstructionParser>) -> bool {
+    if (p.state.phase == 0) {
+        if (!ir_instruction_read(p)) { return false; }
+        var token: ptr<IrTextToken> = &p.tokens[p.state.at];
+        if (p.state.mode == 0 && token.length >= 2 && token.kind == 0
+            && token.data[0] == 37 && token.data[1] == 118) {
+            if (!ir_instruction_id(p, 0, &p.state.dst) || !ir_instruction_expect(p, 0)) { return false; }
+            p.state.has_dst = 1;
+            return ir_instruction_request(p, 100, 0, 1);
+        }
+        p.state.phase = 2;
+    }
+    if (p.state.phase == 1) {
+        p.state.annotation_kind = p.state.type_kind;
+        if (!ir_instruction_expect(p, 1)) { return false; }
+        p.state.phase = 2;
+    }
+    if (p.state.phase == 2) {
+        if (!ir_instruction_read(p)) { return false; }
+        if (p.tokens[p.state.at].kind != 0) { return ir_instruction_fail(p, 1, 2, p.state.at, 0); }
+        p.state.op_at = p.state.at;
+        p.state.op = ir_instruction_opcode(&p.tokens[p.state.at], &p.state.sub);
+        p.state.at += 1;
+        var op: u64 = p.state.op;
+        if (p.state.mode == 1) {
+            if (op < 31 || op > 35) { return ir_instruction_fail(p, 1, 25, p.state.at, 0); }
+        } else {
+            if (op > 30) { return ir_instruction_fail(p, 1, 23, p.state.op_at, 0); }
+            if ((op == 0 || op == 1 || op == 2) && p.state.format < 6) {
+                return ir_instruction_fail(p, 1, 11, p.state.at, 0);
+            }
+            var required: bool = op != 1 && op != 19 && op != 20 && op != 21
+                && op != 22 && op != 23 && op != 25 && op != 26 && op != 29 && op != 30;
+            if (required && p.state.has_dst == 0) { return ir_instruction_fail(p, 1, 9, p.state.at, 0); }
+        }
+        p.state.phase = 20;
+    }
+    return true;
+}
+
+fun ir_instruction_common(p: ptr<IrInstructionParser>) -> bool {
+    var op: u64 = p.state.op;
+    if (op == 0) {
+        if (p.state.annotation_kind != 17) { return ir_instruction_fail(p, 1, 10, p.state.at, 0); }
+        if (!ir_instruction_id(p, 2, &p.state.a)) { return false; }
+    } else if (op == 1) {
+        if (!ir_instruction_id(p, 0, &p.state.a)) { return false; }
+    } else if (op == 2) {
+        if (!ir_instruction_id(p, 0, &p.state.a) || !ir_instruction_expect(p, 2)
+            || !ir_instruction_id(p, 0, &p.state.b)) { return false; }
+    } else if (op == 3) {
+        if (p.state.phase == 20) {
+            if (!ir_instruction_string(p)) { return false; }
+            return ir_instruction_request(p, 102, 0, 21);
+        }
+        if (p.state.phase == 21) {
+            if (!ir_instruction_expect(p, 17) || !ir_instruction_expect(p, 25)) { return false; }
+            return ir_instruction_request(p, 100, 1, 22);
+        }
+        if (p.state.phase == 22) { return ir_instruction_request(p, 110, 8, 23); }
+        return ir_instruction_request(p, 101, 1, 900);
+    } else if (op == 4) {
+        if (p.state.phase == 20) { return ir_instruction_request(p, 100, 1, 21); }
+        return ir_instruction_request(p, 101, 1, 900);
+    } else if (op == 5) {
+        return ir_instruction_request(p, 100, 1, 900);
+    } else if (op == 6 || op == 8 || op == 9) {
+        if (p.state.phase == 20) { return ir_instruction_request(p, 100, 1, 21); }
+        if (!ir_instruction_id(p, 0, &p.state.a)) { return false; }
+        if (op == 8 && p.state.format < 8) { return ir_instruction_fail(p, 1, 12, p.state.at, 0); }
+    } else if (op == 7 || op == 17) {
+        if (p.state.phase == 20) { return ir_instruction_request(p, 100, 1, 21); }
+        if (!ir_instruction_id(p, 0, &p.state.a) || !ir_instruction_expect(p, 2)
+            || !ir_instruction_id(p, 0, &p.state.b)) { return false; }
+    } else if (op == 10 || op == 11 || op == 12) {
+        if (p.state.phase == 20) {
+            if (!ir_instruction_read(p)) { return false; }
+            if (p.tokens[p.state.at].kind != 0) { return ir_instruction_fail(p, 1, 2, p.state.at, 0); }
+            var token: ptr<IrTextToken> = &p.tokens[p.state.at];
+            p.state.sub = ir_instruction_predicate(token, op);
+            p.state.aux = 0;
+            if (ir_instruction_word(token, 91) || ir_instruction_word(token, 92)) { p.state.aux = 1; }
+            p.state.at += 1;
+            return ir_instruction_request(p, 100, 1, 21);
+        }
+        if (p.state.format < 6 && p.state.type_kind == 17 && p.state.aux == 0) {
+            return ir_instruction_fail(p, 1, 13, p.state.at, 0);
+        }
+        if (!ir_instruction_id(p, 0, &p.state.a) || !ir_instruction_expect(p, 2)
+            || !ir_instruction_id(p, 0, &p.state.b)) { return false; }
+        if (p.state.sub == 18446744073709551615) {
+            var reason: u64 = 14; if (op == 11) { reason = 15; } if (op == 12) { reason = 16; }
+            return ir_instruction_fail(p, 1, reason, p.state.at, 0);
+        }
+    } else if (op == 13) {
+        if (p.state.phase == 20) {
+            if (!ir_instruction_expect(p, 9) || !ir_instruction_id(p, 0, &p.state.a)
+                || !ir_instruction_expect(p, 2)) { return false; }
+            return ir_instruction_request(p, 100, 1, 21);
+        }
+        if (p.state.phase == 21) {
+            if (!ir_instruction_id(p, 0, &p.state.b) || !ir_instruction_expect(p, 2)) { return false; }
+            return ir_instruction_request(p, 100, 2, 22);
+        }
+        if (p.state.phase == 22) { return ir_instruction_request(p, 110, 6, 23); }
+        if (!ir_instruction_id(p, 0, &p.state.c)) { return false; }
+    } else if (op == 14) {
+        if (p.state.phase == 20) { return ir_instruction_request(p, 100, 1, 21); }
+        if (p.state.phase == 21) {
+            if (!ir_instruction_id(p, 0, &p.state.a) || !ir_instruction_expect(p, 16)) { return false; }
+            return ir_instruction_request(p, 100, 2, 22);
+        }
+        if (p.state.sub == 0 && p.state.format < 8) { return ir_instruction_fail(p, 1, 17, p.state.at, 0); }
+    } else if (op == 16) {
+        if (!ir_instruction_id(p, 0, &p.state.a) || !ir_instruction_expect(p, 2)
+            || !ir_instruction_number(p, &p.state.d)) { return false; }
+    } else if (op == 18) {
+        if (p.state.phase == 20) { return ir_instruction_request(p, 100, 1, 21); }
+        if (!ir_instruction_align(p)) { return false; }
+    } else if (op >= 19 && op <= 23) {
+        if (p.state.phase == 20) {
+            if ((op == 19 || op == 20) && p.state.format < 8) { return ir_instruction_fail(p, 1, 19, p.state.at, 0); }
+            if (op == 22 && p.state.format < 4) { return ir_instruction_fail(p, 1, 18, p.state.at, 0); }
+            return ir_instruction_request(p, 100, 1, 21);
+        }
+        if (p.state.phase == 21) {
+            if ((op == 20 || op == 23) && !ir_instruction_id(p, 0, &p.state.a)) { return false; }
+            if (!ir_instruction_expect(p, 2)) { return false; }
+            return ir_instruction_request(p, 100, 2, 22);
+        }
+        if (p.state.phase == 22) { return ir_instruction_request(p, 110, 7, 23); }
+        if (!ir_instruction_id(p, 0, &p.state.b) || !ir_instruction_align(p)) { return false; }
+        if ((op == 19 || op == 21) && p.state.has_dst == 0) { return ir_instruction_fail(p, 1, 20, p.state.at, 0); }
+    } else if (op == 25 || op == 26) {
+        if (!ir_instruction_byte_pointer(p) || !ir_instruction_id(p, 0, &p.state.a)
+            || !ir_instruction_expect(p, 2)) { return false; }
+        if (op == 25) { if (!ir_instruction_byte_pointer(p)) { return false; } }
+        else { if (!ir_instruction_expect(p, 11)) { return false; } }
+        if (!ir_instruction_id(p, 0, &p.state.b) || !ir_instruction_expect(p, 2)
+            || !ir_instruction_expect(p, 12) || !ir_instruction_id(p, 0, &p.state.c)
+            || !ir_instruction_align(p)) { return false; }
+    } else if (op == 27 || op == 28) {
+        if (p.state.annotation_kind != 18) { return ir_instruction_fail(p, 1, 21, p.state.at, 0); }
+        if (op == 28 && !ir_instruction_id(p, 3, &p.state.a)) { return false; }
+    } else if (op == 30) {
+        if (!ir_instruction_expect(p, 9) || !ir_instruction_id(p, 0, &p.state.a)
+            || !ir_instruction_expect(p, 2) || !ir_instruction_expect(p, 15)
+            || !ir_instruction_expect(p, 1) || !ir_instruction_string(p)) { return false; }
+    } else { return ir_instruction_fail(p, 6, 0, p.state.at, 0); }
+    p.state.phase = 900; return true;
+}
+
+fun ir_instruction_lists(p: ptr<IrInstructionParser>) -> bool {
+    var op: u64 = p.state.op;
+    if (op == 15) {
+        if (p.state.phase == 20) { return ir_instruction_request(p, 100, 1, 21); }
+        if (p.state.phase == 21) {
+            if (!ir_instruction_read(p)) { return false; }
+            if (p.state.aux == 0 && !ir_instruction_word(&p.tokens[p.state.at], 3)) { p.state.phase = 900; return true; }
+            if (!ir_instruction_node(p) || !ir_instruction_expect(p, 3)
+                || !ir_instruction_id(p, 0, &p.state.a) || !ir_instruction_expect(p, 2)
+                || !ir_instruction_id(p, 1, &p.state.b) || !ir_instruction_expect(p, 4)) { return false; }
+            return ir_instruction_request(p, 200, 0, 22);
+        }
+        if (ir_instruction_eat(p, 2)) { p.state.aux = 1; p.state.phase = 21; }
+        else { if (p.result.status != 0) { return false; } p.state.phase = 900; }
+        return true;
+    }
+    if (op == 24) {
+        if (p.state.phase == 20) {
+            if (!ir_instruction_id(p, 0, &p.state.a)) { return false; }
+            p.state.phase = 21;
+        }
+        if (!ir_instruction_eat(p, 2)) {
+            if (p.result.status != 0) { return false; }
+            p.state.phase = 900; return true;
+        }
+        if (!ir_instruction_node(p) || !ir_instruction_id(p, 0, &p.state.b)) { return false; }
+        return ir_instruction_request(p, 201, 0, 21);
+    }
+    if (p.state.phase == 20) {
+        if (!ir_instruction_read(p)) { return false; }
+        if (p.tokens[p.state.at].kind != 0) { return ir_instruction_fail(p, 1, 2, p.state.at, 0); }
+        if (ir_instruction_word(&p.tokens[p.state.at], 19)) { p.state.sub = 0; }
+        else if (ir_instruction_word(&p.tokens[p.state.at], 20)) { p.state.sub = 1; }
+        else { return ir_instruction_fail(p, 1, 22, p.state.at, 0); }
+        p.state.at += 1;
+        return ir_instruction_request(p, 100, 1, 21);
+    }
+    if (p.state.phase == 21) {
+        p.state.aux = p.state.type_kind;
+        p.state.e = 0;
+        if (ir_instruction_eat(p, 18)) {
+            p.state.e = 1;
+            if (!ir_instruction_id(p, 0, &p.state.a)) { return false; }
+        } else {
+            if (p.result.status != 0 || !ir_instruction_id(p, 3, &p.state.a)) { return false; }
+        }
+        if (!ir_instruction_expect(p, 5)) { return false; }
+        p.state.phase = 22;
+    }
+    if (p.state.phase == 22 || p.state.phase == 23) {
+        if (ir_instruction_eat(p, 6)) { p.state.phase = 900; return true; }
+        if (p.result.status != 0) { return false; }
+        if (p.state.phase == 23 && !ir_instruction_expect(p, 2)) { return false; }
+    }
+    if (!ir_instruction_node(p) || !ir_instruction_id(p, 0, &p.state.b)) { return false; }
+    return ir_instruction_request(p, 201, 0, 23);
+}
+
+fun ir_instruction_terminator(p: ptr<IrInstructionParser>) -> bool {
+    var op: u64 = p.state.op;
+    if (op == 31) {
+        if (!ir_instruction_expect(p, 14) || !ir_instruction_id(p, 1, &p.state.a)) { return false; }
+    } else if (op == 32) {
+        if (!ir_instruction_expect(p, 9) || !ir_instruction_id(p, 0, &p.state.a)
+            || !ir_instruction_expect(p, 2) || !ir_instruction_expect(p, 14)
+            || !ir_instruction_id(p, 1, &p.state.b) || !ir_instruction_expect(p, 2)
+            || !ir_instruction_expect(p, 14) || !ir_instruction_id(p, 1, &p.state.c)) { return false; }
+    } else if (op == 33) {
+        if (p.state.phase == 20) { return ir_instruction_request(p, 100, 1, 21); }
+        if (p.state.phase == 21) {
+            if (!ir_instruction_id(p, 0, &p.state.a) || !ir_instruction_expect(p, 2)
+                || !ir_instruction_expect(p, 14) || !ir_instruction_id(p, 1, &p.state.b)
+                || !ir_instruction_expect(p, 3)) { return false; }
+            p.state.phase = 22;
+        }
+        if (p.state.phase == 22 || p.state.phase == 24) {
+            if (ir_instruction_eat(p, 4)) { p.state.phase = 900; return true; }
+            if (p.result.status != 0) { return false; }
+            if (p.state.phase == 24 && !ir_instruction_expect(p, 2)) { return false; }
+            if (!ir_instruction_node(p)) { return false; }
+            return ir_instruction_request(p, 101, 1, 23);
+        }
+        if (!ir_instruction_expect(p, 0) || !ir_instruction_id(p, 1, &p.state.c)) { return false; }
+        return ir_instruction_request(p, 202, 0, 24);
+    } else if (op == 34) {
+        if (p.state.phase == 20) { return ir_instruction_request(p, 100, 1, 21); }
+        p.state.aux = 0;
+        if (p.state.type_kind != 0) {
+            p.state.aux = 1;
+            if (!ir_instruction_id(p, 0, &p.state.a)) { return false; }
+        }
+    } else if (op == 35) {
+        if (!ir_instruction_expect(p, 15) || !ir_instruction_expect(p, 1)
+            || !ir_instruction_string(p)) { return false; }
+    } else { return ir_instruction_fail(p, 6, 0, p.state.at, 0); }
+    p.state.phase = 900; return true;
+}
+
+fun ir_instruction_final(p: ptr<IrInstructionParser>) -> bool {
+    if (p.state.phase == 901 || p.state.mode == 1) {
+        return ir_instruction_request(p, 1, 0, 902);
+    }
+    var op: u64 = p.state.op;
+    var produces: bool = op != 1 && op != 20 && op != 22 && op != 23
+        && op != 25 && op != 26 && op != 30 && !(op == 29 && p.state.aux == 0);
+    if ((produces && p.state.has_dst == 0) || (!produces && p.state.has_dst != 0)) {
+        return ir_instruction_fail(p, 1, 24, p.state.at, 0);
+    }
+    var comparison: u64 = 0;
+    if (!produces || op == 0 || op == 16 || op == 24 || op == 27 || op == 28) {
+        return ir_instruction_request(p, 1, 0, 902);
+    }
+    if (op == 3) { comparison = 9; }
+    if (op == 2) { comparison = 2; }
+    if (op == 10 || op == 11 || op == 12) { comparison = 1; }
+    if (op == 14) { comparison = 5; }
+    if (op == 17) { comparison = 4; }
+    if (op == 18) { comparison = 3; }
+    return ir_instruction_request(p, 110, comparison, 901);
+}
+
+export(c) fun whale_ir_instruction_step(tokens: ptr<IrTextToken>, token_count: u64,
+    state: ptr<IrInstructionState>, max_nodes: u64, max_work: u64,
+    result: ptr<IrInstructionEvent>) -> i32 {
+    if (result == null) { return 6; }
+    result.status = 0; result.reason = 0; result.at = 0; result.expected = 0;
+    result.event = 0; result.role = 0; result.nodes = 0; result.work = 0;
+    if (state == null || state.mode > 1 || state.format < 3 || state.format > 8
+        || state.at >= token_count || !ir_span_valid(tokens as ptr<u8>, token_count, 24)) {
+        result.status = 6; return 6;
+    }
+    state.nodes = 0; state.work = 0;
+    var parser: IrInstructionParser;
+    parser.tokens = tokens; parser.count = token_count; parser.state = state;
+    parser.max_nodes = max_nodes; parser.max_work = max_work; parser.result = result;
+    while (result.status == 0 && result.event == 0) {
+        if (state.phase < 20) { if (!ir_instruction_prefix(&parser)) { break; } }
+        else if (state.phase == 900 || state.phase == 901) { if (!ir_instruction_final(&parser)) { break; } }
+        else if (state.phase >= 20 && state.phase <= 30) {
+            if (state.mode == 1) { if (!ir_instruction_terminator(&parser)) { break; } }
+            else if (state.op == 15 || state.op == 24 || state.op == 29) { if (!ir_instruction_lists(&parser)) { break; } }
+            else { if (!ir_instruction_common(&parser)) { break; } }
+        } else { ir_instruction_fail(&parser, 6, 0, state.at, 0); break; }
+    }
+    result.op = state.op; result.sub = state.sub; result.has_dst = state.has_dst; result.dst = state.dst;
+    result.a = state.a; result.b = state.b; result.c = state.c; result.d = state.d;
+    result.e = state.e; result.name = state.name; result.aux = state.aux;
+    result.next = state.at; result.nodes = state.nodes; result.work = state.work;
+    return result.status as i32;
+}

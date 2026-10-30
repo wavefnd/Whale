@@ -40,6 +40,7 @@ pub fn run(args: Vec<String>) {
     let mut arguments = Vec::new();
     let mut max_steps = None;
     let mut max_memory = None;
+    let mut max_output = None;
     let mut input = None;
     let mut output = None;
     #[cfg(feature = "socket-cli")]
@@ -49,6 +50,20 @@ pub fn run(args: Vec<String>) {
     let mut args = args.iter().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            "--max-output" if matches!(command.as_str(), "lower" | "print") => {
+                if max_output.is_some() {
+                    fail("duplicate --max-output option");
+                }
+                let value =
+                    args.next().unwrap_or_else(|| fail("--max-output requires a byte count"));
+                max_output = Some(
+                    value
+                        .parse::<usize>()
+                        .ok()
+                        .filter(|_| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
+                        .unwrap_or_else(|| fail("--max-output requires a decimal byte count")),
+                );
+            },
             "-o" if matches!(command.as_str(), "lower" | "print") => {
                 if output.is_some() {
                     fail("duplicate -o option");
@@ -170,24 +185,45 @@ pub fn run(args: Vec<String>) {
         );
         return;
     }
-    let text = printer::print_module(&module);
+    let mut limits = printer::PrintLimits::default();
+    if let Some(limit) = max_output {
+        limits.max_output_bytes = limit;
+    }
     if let Some(output) = output {
-        super::output::publish(input.as_ref(), output.as_ref(), text.as_bytes())
-            .unwrap_or_else(|e| fail(format!("failed to write {output}: {e}")));
+        super::output::publish_with(input.as_ref(), output.as_ref(), |file| {
+            printer::write_module(&module, file, limits).map_err(std::io::Error::other)
+        })
+        .unwrap_or_else(|e| fail(format!("failed to write {output}: {e}")));
         stdout(format!("Wrote IR to {output}\n"));
     } else {
-        stdout(text);
+        use std::io::Write;
+        let mut stream = std::io::stdout().lock();
+        match printer::write_module(&module, &mut stream, limits) {
+            Ok(()) => stream.flush().unwrap_or_else(|error| {
+                if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    process::exit(0);
+                }
+                fail(format!("failed to write stdout: {error}"));
+            }),
+            Err(printer::PrintError::Io(error))
+                if error.kind() == std::io::ErrorKind::BrokenPipe =>
+            {
+                process::exit(0)
+            },
+            Err(error) => fail(error),
+        }
     }
 }
 
 fn print_help() {
     stdout(concat!(
         "Usage: whale ir <command> [options]", "\n",
-        "  verify <input.wir>             Read and verify format 3/4/5/6/7 typed IR", "\n",
-        "  print <input.wir> [-o <path>]   Verify and write canonical typed IR", "\n",
+        "  verify <input.wir>             Read and verify format 3/4/5/6/7/8 typed IR", "\n",
+        "  print <input.wir> [-o <path>] [--max-output <bytes>]", "\n",
         "  run <input.wir> --function @fN [--arg <literal> ...] [--max-steps <u64>] [--max-memory <u64>]", "\n",
         "    Execute integer/bool/float values, control flow and tracked stack memory; default 1000000 steps, 64 MiB storage.", "\n",
-        "  lower <socket.json> [-o <path>] Lower AST JSON (requires socket-cli)", "\n",
+        "  lower <socket.json> [-o <path>] [--max-output <bytes>] (requires socket-cli)", "\n",
+        "  Canonical output streams within a 64 MiB default limit; failed file writes preserve existing output.", "\n",
         "  lower options: --target x86_64-whale-linux, --no-verify", "\n",
         "  AST envelope: reads format_version 2/3/4/5, writes 5; semantics_version: 1, features: [], program: AST", "\n",
         "  Typed IR reads format_version 3/4/5/6/7/8, writes 8; semantics_version 1. Legacy undef is invalid.", "\n",

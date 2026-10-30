@@ -1,0 +1,147 @@
+// SPDX-License-Identifier: MPL-2.0
+// Wave owns lexical scope restoration and all O0 control-flow construction.
+fun ir_lower_statements(p: ptr<IrLowerDriver>, first: u64, count: u64,
+    depth: u64, node: u64) -> bool {
+    if (!ir_lower_edges(p.core, first, count, node)) { return false; }
+    var at: u64 = 0;
+    while (at < count) {
+        if (!ir_lower_statement(p, p.core.edges[first + at], depth, node)) { return false; }
+        at += 1;
+    }
+    return true;
+}
+
+fun ir_lower_statement(p: ptr<IrLowerDriver>, node: u64, depth: u64, parent: u64) -> bool {
+    if (!ir_lower_node(p.core, node, depth)) { return false; }
+    if (p.blocks[p.current_block].term_kind != 0) {
+        var dead: u64 = 0;
+        if (!ir_lower_block(p, 1, node, &dead)) { return false; }
+        p.current_block = dead;
+    }
+    var n: ptr<IrLowerNode> = &p.core.nodes[node];
+    if (n.tag == 50) {
+        var saved_annotation: u64 = p.core.annotation; p.core.annotation = n.a;
+        var success: bool = ir_lower_statement(p, n.b, depth + 1, node)
+            && ir_lower_complete_source(p, n.a, node);
+        p.core.annotation = saved_annotation; return success;
+    }
+    var value: IrLowerValue;
+    var place: IrLowerValue;
+    var ty: u64 = 0;
+    var slot: u64 = 0;
+    if (n.tag == 51) {
+        if (p.return_type == 0) {
+            if (n.a != 18446744073709551615) { return ir_lower_fail(p.core, 15, node, 0, 0, 0); }
+            return ir_lower_term(p, 3, 0, 18446744073709551615, 0, 0, node);
+        }
+        if (n.a == 18446744073709551615) { return ir_lower_fail(p.core, 24, node, 0, 0, 0); }
+        if (!ir_lower_expression(p, n.a, depth + 1, false, &value)) { return false; }
+        if (value.ty != p.return_type) { return ir_lower_mismatch(p, n.a, p.return_type, value.ty); }
+        return ir_lower_term(p, 3, p.return_type, value.value, 0, 0, node);
+    }
+    if (n.tag == 52) {
+        if (!ir_lower_expression(p, n.a, depth + 1, false, &place)) { return false; }
+        if (p.core.types[place.ty].kind != 17) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+        ty = p.core.types[place.ty].child;
+        if (!ir_lower_scalar(p.core, ty)) { return ir_lower_fail(p.core, 7, node, 0, 0, 0); }
+        if (!ir_lower_expression(p, n.b, depth + 1, false, &value)) { return false; }
+        if (value.ty != ty) { return ir_lower_fail(p.core, 6, node, ty, value.ty, 0); }
+        if (!ir_lower_layout(p.core, ty, node)) { return false; }
+        return ir_lower_emit(p, 20, 18446744073709551615, ty, value.value,
+            place.value, p.core.layouts[ty].allocation_align, 0, 0, null, 0, false, node);
+    }
+    if (n.tag == 53) {
+        if (!ir_lower_place(p, n.a, depth + 1, &place)
+            || !ir_lower_expression(p, n.b, depth + 1, false, &value)) { return false; }
+        if (place.ty != value.ty) { return ir_lower_fail(p.core, 6, node, place.ty, value.ty, 0); }
+        return ir_lower_write(p, place.value, value.value, place.ty, node);
+    }
+    if (n.tag == 54) {
+        if (!ir_lower_name(p.core, n.a, node) || !ir_lower_type(p.core, n.b, 0, &ty)
+            || !ir_lower_preserve_constant(p, n.c, depth + 1, &value)) { return false; }
+        if (!ir_lower_evaluate_request(p, value.value, 1, p.next_value, node)) { return false; }
+        if (ty != value.ty) { return ir_lower_mismatch(p, n.c, ty, value.ty); }
+        if (!ir_lower_value(p, ty, node, &slot)) { return false; }
+        var saved: u64 = p.core.annotation;
+        if (p.core.nodes[n.c].tag == 0) { p.core.annotation = p.core.nodes[n.c].a; }
+        if (!ir_lower_emit(p, 3, slot, ty, n.a, value.value, 0, 0, 0, null, 0, false, node)) { return false; }
+        if (p.core.nodes[n.c].tag == 0
+            && !ir_lower_complete_source(p, p.core.nodes[n.c].a, node)) { return false; }
+        p.core.annotation = saved;
+        return ir_lower_bind(p, n.a, ty, slot, 1, value.value, node);
+    }
+    if (n.tag == 55) {
+        if (!ir_lower_name(p.core, n.a, node) || !ir_lower_type(p.core, n.b, 0, &ty)
+            || !ir_lower_layout(p.core, ty, node)) { return false; }
+        var align: u64 = p.core.layouts[ty].allocation_align;
+        if (n.c != 18446744073709551615) {
+            if (!ir_lower_expression(p, n.c, depth + 1, false, &value)) { return false; }
+            if (value.ty != ty) { return ir_lower_mismatch(p, n.c, ty, value.ty); }
+            if (!ir_lower_alloca(p, ty, align, node, &slot)
+                || !ir_lower_write(p, slot, value.value, ty, node)) { return false; }
+        } else {
+            if (!ir_lower_alloca(p, ty, align, node, &slot)
+                || !ir_lower_emit(p, 22, 18446744073709551615, ty,
+                    slot, align, 0, 0, 0, null, 0, false, node)) { return false; }
+        }
+        return ir_lower_bind(p, n.a, ty, slot, 0, 0, node);
+    }
+    if (n.tag == 56) {
+        if (!ir_lower_expression(p, n.b, depth + 1, false, &value)) { return false; }
+        var binding: IrLowerBinding;
+        if (!ir_lower_local_binding(p, n.a, node, &binding)) { return false; }
+        if (binding.kind != 0) { return ir_lower_fail(p.core, 12, node, 0, 0, n.a); }
+        if (binding.ty != value.ty) { return ir_lower_mismatch(p, n.b, binding.ty, value.ty); }
+        return ir_lower_write(p, binding.value, value.value, binding.ty, node);
+    }
+    if (n.tag == 57) { return ir_lower_expression(p, n.a, depth + 1, true, &value); }
+    if (n.tag == 58) {
+        if (!ir_lower_expression(p, n.a, depth + 1, false, &value)) { return false; }
+        if (value.ty != 1) { return ir_lower_mismatch(p, n.a, 1, value.ty); }
+        var then_block: u64 = 0; var else_block: u64 = 0; var continuation: u64 = 0;
+        if (!ir_lower_block(p, 2, node, &then_block) || !ir_lower_block(p, 3, node, &else_block)
+            || !ir_lower_block(p, 4, node, &continuation)
+            || !ir_lower_term(p, 2, 0, value.value, then_block, else_block, node)) { return false; }
+        var saved_bindings: u64 = p.binding_count;
+        p.current_block = then_block;
+        if (!ir_lower_statements(p, n.b, n.c, depth + 1, node)) { return false; }
+        if (p.blocks[p.current_block].term_kind == 0
+            && !ir_lower_term(p, 1, 0, continuation, 0, 0, node)) { return false; }
+        if (!ir_lower_restore(p, saved_bindings, node)) { return false; }
+        p.current_block = else_block;
+        if (!ir_lower_statements(p, n.d, n.e, depth + 1, node)) { return false; }
+        if (p.blocks[p.current_block].term_kind == 0
+            && !ir_lower_term(p, 1, 0, continuation, 0, 0, node)) { return false; }
+        if (!ir_lower_restore(p, saved_bindings, node)) { return false; }
+        p.current_block = continuation; return true;
+    }
+    if (n.tag == 59) {
+        var condition: u64 = 0; var body: u64 = 0; var exit: u64 = 0;
+        if (!ir_lower_block(p, 5, node, &condition) || !ir_lower_block(p, 6, node, &body)
+            || !ir_lower_block(p, 7, node, &exit)
+            || !ir_lower_term(p, 1, 0, condition, 0, 0, node)) { return false; }
+        p.current_block = condition;
+        if (!ir_lower_expression(p, n.a, depth + 1, false, &value)) { return false; }
+        if (value.ty != 1) { return ir_lower_mismatch(p, n.a, 1, value.ty); }
+        if (!ir_lower_term(p, 2, 0, value.value, body, exit, node)) { return false; }
+        p.current_block = body;
+        if (p.loop_count >= p.loop_capacity) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+        p.loops[p.loop_count].condition = condition; p.loops[p.loop_count].exit = exit; p.loop_count += 1;
+        var saved_bindings: u64 = p.binding_count;
+        if (!ir_lower_statements(p, n.b, n.c, depth + 1, node)) { return false; }
+        if (p.blocks[p.current_block].term_kind == 0
+            && !ir_lower_term(p, 1, 0, condition, 0, 0, node)) { return false; }
+        if (!ir_lower_restore(p, saved_bindings, node)) { return false; }
+        p.loop_count -= 1; p.current_block = exit; return true;
+    }
+    if (n.tag == 60 || n.tag == 61) {
+        if (p.loop_count == 0) {
+            var error: u64 = 13; if (n.tag == 61) { error = 14; }
+            return ir_lower_fail(p.core, error, node, 0, 0, 0);
+        }
+        var destination: u64 = p.loops[p.loop_count - 1].exit;
+        if (n.tag == 61) { destination = p.loops[p.loop_count - 1].condition; }
+        return ir_lower_term(p, 1, 0, destination, 0, 0, node);
+    }
+    return ir_lower_fail(p.core, 24, node, 0, 0, 0);
+}

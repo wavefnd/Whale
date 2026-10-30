@@ -36,7 +36,8 @@ elif not fs.is_absolute(wave_cache)
   error('-Dwave-bootstrap-dir must be absolute.')
 endif
 asmobj_directory = get_option('asmobj-dir')
-if asmobj_directory == ''
+wave_bootstrap = []
+if asmobj_directory == '' or (wave_source != '' and get_option('wave-ir-dir') == '')
   if wave_source == '' or not fs.is_absolute(wave_source) or not fs.is_dir(wave_source)
     error('Supply -Dwave-source=/absolute/Wave or -Dasmobj-dir=/absolute/built/module.')
   endif
@@ -53,6 +54,7 @@ if asmobj_directory == ''
     depend_files: files('tools/wave_bootstrap.py', 'tools/meson_cargo.py'), console: true)
 endif
 subdir('assembler/asmobj')
+subdir('ir')
 
 profile = 'dev'
 if get_option('buildtype') in ['release', 'minsize']
@@ -84,6 +86,9 @@ if get_option('cargo-offline')
   build_arguments += ['--offline']
 endif
 build_arguments += ['--asmobj-dir', asmobj_directory]
+if wave_ir_directory != ''
+  build_arguments += ['--wave-ir-dir', wave_ir_directory]
+endif
 foreach feature : selected_features
   build_arguments += ['--feature', feature]
 endforeach
@@ -93,7 +98,7 @@ whale = custom_target('whale-cli',
   command: [python, bridge, build_arguments],
   depend_files: files('Cargo.toml', 'Cargo.lock', 'tools/meson_cargo.py'),
   depfile: 'whale-cargo.d',
-  depends: asmobj_dependencies,
+  depends: asmobj_dependencies + wave_ir_dependencies,
   build_by_default: true,
   console: true,
   install: true,
@@ -121,5 +126,6 @@ summary({
   'Cargo host target': cargo_host_target == '' ? 'native Rust toolchain host' : cargo_host_target,
   'Assembler output modules': assembler_outputs,
   'Complete Wave module': 'assembler/asmobj',
+  'Wave IR sources': wave_ir_directory == '' ? 'Rust compatibility path' : wave_ir_directory,
   'Cargo offline': get_option('cargo-offline'),
 }, section: 'Whale source modules')

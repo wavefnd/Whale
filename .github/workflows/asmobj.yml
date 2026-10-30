@@ -84,6 +84,32 @@ jobs:
               "$asmobj_python" tools/check_asmobj.py \
               --library "$RUNNER_TEMP/asmobj-o$optimization.so" --cases 10000
           done
+      - name: Run actual Wave IR module at O0 and O2
+        run: |
+          cargo fetch --locked
+          for optimization in 0 2; do
+            python3 tools/build_wave_ir.py --wave-source .asmobj-bootstrap-source \
+              --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
+              --out-dir "$RUNNER_TEMP/wave-ir-o$optimization" --opt-level "$optimization"
+            cc -shared -Wl,--whole-archive "$RUNNER_TEMP/wave-ir-o$optimization/libwhale_wave_ir.a" \
+              -Wl,--no-whole-archive -o "$RUNNER_TEMP/wave-ir-o$optimization.so"
+            ir_python="$(command -v python3)"
+            for component in layout lexer header type literal expression instruction source \
+                builder body printer verifier ssa ast_limits lower_type lowering hir cfg shape; do
+              ir_cases=10000
+              if [ "$component" = literal ]; then ir_cases=100000; fi
+              if [ "$component" = builder ]; then ir_cases=30000; fi
+              timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$ir_python" \
+                "tools/check_wave_ir_$component.py" \
+                --library "$RUNNER_TEMP/wave-ir-o$optimization.so" --cases "$ir_cases"
+            done
+          done
+          WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o2" \
+            cargo test -p ir --all-features --locked --offline
+      - name: Reproduce the pinned typed HIR fixture
+        run: |
+          python3 tools/check_wave_hir_fixture.py --wave-source .asmobj-bootstrap-source \
+            --target-dir "$RUNNER_TEMP/wave-hir-fixture" --rust-toolchain 1.89.0
       - name: Build, test and install the Meson source product
         run: |
           python3 -m pip install --disable-pip-version-check meson==1.8.5

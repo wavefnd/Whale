@@ -1,0 +1,616 @@
+// SPDX-License-Identifier: MPL-2.0
+// Semantic verification consumes a borrowed type graph and operand records.
+// No host callbacks participate in type/category, cast, memory or GEP rules.
+struct IrVerifyType { kind: u64; child: u64; first: u64; count: u64; extra: u64; }
+
+struct IrVerifyOperand { value: u64; ty: u64; literal: u64; low: u64; high: u64; }
+
+struct IrVerifyInstruction { op: u64; sub: u64; ty: u64; other: u64; dst: u64; align: u64; }
+
+struct IrVerifyResult { status: u64; index: u64; expected: u64; actual: u64; detail: u64; work: u64; }
+
+struct IrVerifyBinding { id: u64; ty: u64; index: u64; present: u64; }
+
+fun ir_verify_signed(kind: u64) -> bool { return kind == 2 || (kind >= 4 && kind <= 8); }
+
+fun ir_verify_unsigned(kind: u64) -> bool { return kind == 3 || (kind >= 9 && kind <= 13); }
+
+fun ir_verify_integer(kind: u64) -> bool { return ir_verify_signed(kind) || ir_verify_unsigned(kind); }
+
+fun ir_verify_float(kind: u64) -> bool { return kind >= 14 && kind <= 16; }
+
+fun ir_verify_width(kind: u64) -> u64 {
+    if (kind == 2 || kind == 3) { return 1; }
+    if (kind == 4 || kind == 9) { return 8; }
+    if (kind == 5 || kind == 10 || kind == 14) { return 16; }
+    if (kind == 6 || kind == 11 || kind == 15) { return 32; }
+    if (kind == 7 || kind == 12 || kind == 16) { return 64; }
+    if (kind == 8 || kind == 13) { return 128; }
+    return 0;
+}
+
+fun ir_verify_literal(kind: u64, literal: u64, low: u64, high: u64) -> bool {
+    var valid: bool = (kind == 1 && literal == 3) || (kind == 14 && literal == 4)
+        || (kind == 15 && literal == 5) || (kind == 16 && literal == 6);
+    var width: u64 = ir_verify_width(kind); var one: u64 = 1;
+    if (literal == 1 && ir_verify_signed(kind)) {
+        valid = width == 128;
+        if (width < 128) {
+            var top: u64 = one << (width - 1);
+            valid = (high == 0 && low < top)
+                || (high == 18446744073709551615 && low >= 18446744073709551615 - top + 1);
+        }
+    }
+    if (literal == 2 && ir_verify_unsigned(kind)) {
+        valid = width == 128 || (high == 0 && (width == 64 || low < (one << width)));
+    }
+    return valid;
+}
+
+fun ir_verify_error(result: ptr<IrVerifyResult>, status: u64, index: u64,
+    expected: u64, actual: u64, detail: u64) -> i32 {
+    result.status = status; result.index = index; result.expected = expected;
+    result.actual = actual; result.detail = detail; return status as i32;
+}
+
+fun ir_verify_charge(result: ptr<IrVerifyResult>, limit: u64) -> bool {
+    if (result.work >= limit) { result.status = 8; return false; }
+    result.work += 1; return true;
+}
+
+fun ir_verify_equal(a: u64, b: u64, types: ptr<IrVerifyType>, edges: ptr<u64>,
+    depth: u64, result: ptr<IrVerifyResult>, limit: u64) -> bool {
+    if (!ir_verify_charge(result, limit)) { return false; }
+    if (a == b) { return true; }
+    if (depth == 0) { result.status = 8; return false; }
+    if (types[a].kind != types[b].kind || types[a].extra != types[b].extra) { return false; }
+    var kind: u64 = types[a].kind;
+    if (kind == 17 || kind == 19) {
+        if (kind == 19 && types[a].count != types[b].count) { return false; }
+        return ir_verify_equal(types[a].child, types[b].child, types, edges,
+            depth - 1, result, limit);
+    }
+    if (kind == 18 || kind == 20 || kind == 21) {
+        if (types[a].count != types[b].count) { return false; }
+        var i: u64 = 0;
+        while (i < types[a].count) {
+            if (!ir_verify_equal(edges[types[a].first + i], edges[types[b].first + i],
+                types, edges, depth - 1, result, limit)) { return false; }
+            i += 1;
+        }
+    }
+    return true;
+}
+
+fun ir_verify_storable(ty: u64, types: ptr<IrVerifyType>, edges: ptr<u64>,
+    depth: u64, result: ptr<IrVerifyResult>, limit: u64) -> bool {
+    if (!ir_verify_charge(result, limit)) { return false; }
+    if (depth == 0) { result.status = 8; return false; }
+    var kind: u64 = types[ty].kind;
+    if (kind == 0) { return false; }
+    if (kind == 19) { return ir_verify_storable(types[ty].child, types, edges,
+        depth - 1, result, limit); }
+    if (kind == 20 || kind == 21) {
+        var i: u64 = 0;
+        while (i < types[ty].count) {
+            if (!ir_verify_storable(edges[types[ty].first + i], types, edges,
+                depth - 1, result, limit)) { return false; }
+            i += 1;
+        }
+    }
+    return true;
+}
+
+fun ir_verify_cast(op: u64, source: u64, destination: u64) -> bool {
+    var si: bool = ir_verify_integer(source); var di: bool = ir_verify_integer(destination);
+    var sf: bool = ir_verify_float(source); var df: bool = ir_verify_float(destination);
+    var sw: u64 = ir_verify_width(source); var dw: u64 = ir_verify_width(destination);
+    if (op == 0 && source == 1) { return di && destination != 2; }
+    if (op == 0 || op == 1) { return si && di && sw < dw; }
+    if (op == 2) { return si && di && sw > dw; }
+    if (op == 3) { return sf && df && sw < dw; }
+    if (op == 4) { return sf && df && sw > dw; }
+    if (op == 5) { return ir_verify_signed(source) && df; }
+    if (op == 6) { return ir_verify_unsigned(source) && df; }
+    if (op == 7) { return sf && ir_verify_signed(destination); }
+    if (op == 8) { return sf && ir_verify_unsigned(destination); }
+    if (op == 9) { return ((si || sf) && (di || df) && sw == dw) || (source == 17 && destination == 17); }
+    if (op == 10) { return source == 17 && di; }
+    if (op == 11) { return si && destination == 17; }
+    if (op == 12) { return si && di; }
+    return false;
+}
+
+fun ir_verify_operand_at(index: u64, expected: u64, pointer: bool,
+    operands: ptr<IrVerifyOperand>, types: ptr<IrVerifyType>, edges: ptr<u64>,
+    result: ptr<IrVerifyResult>, limit: u64) -> bool {
+    var actual: u64 = operands[index].ty;
+    if (actual == 18446744073709551615) {
+        ir_verify_error(result, 2, index, expected, actual, 0); return false;
+    }
+    var compare: u64 = actual;
+    if (pointer) {
+        if (types[actual].kind != 17) {
+            ir_verify_error(result, 3, index, expected, actual, 1); return false;
+        }
+        compare = types[actual].child;
+    }
+    if (!ir_verify_equal(expected, compare, types, edges, 1024, result, limit)) {
+        if (result.status == 0) { ir_verify_error(result, 3, index, expected, actual, pointer as u64); }
+        return false;
+    }
+    return true;
+}
+
+fun ir_verify_graph_valid(types: ptr<IrVerifyType>, type_count: u64,
+    edges: ptr<u64>, edge_count: u64, max_work: u64, result: ptr<IrVerifyResult>) -> bool {
+    if (!ir_span_valid(types as ptr<u8>, type_count, 40)
+        || !ir_span_valid(edges as ptr<u8>, edge_count, 8)) {
+        ir_verify_error(result, 7, 0, 0, 0, 0); return false;
+    }
+    var i: u64 = 0;
+    while (i < type_count) {
+        if (!ir_verify_charge(result, max_work)) { return false; }
+        var node: ptr<IrVerifyType> = &types[i];
+        if (node.kind > 21 || ((node.kind == 17 || node.kind == 19) && node.child >= i)) {
+            ir_verify_error(result, 7, i, 0, 0, 0); return false;
+        }
+        if (node.kind == 18 || node.kind == 20 || node.kind == 21) {
+            if (node.first > edge_count || node.count > edge_count - node.first) {
+                ir_verify_error(result, 7, i, 0, 0, 0); return false;
+            }
+            var j: u64 = 0;
+            while (j < node.count) {
+                if (!ir_verify_charge(result, max_work)) { return false; }
+                if (edges[node.first + j] >= i) { ir_verify_error(result, 7, i, 0, 0, 0); return false; }
+                j += 1;
+            }
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fun ir_verify_signature_type(ty: u64, types: ptr<IrVerifyType>, edges: ptr<u64>,
+    depth: u64, result: ptr<IrVerifyResult>, limit: u64) -> bool {
+    if (!ir_verify_charge(result, limit)) { return false; }
+    if (depth == 0) { result.status = 8; return false; }
+    var kind: u64 = types[ty].kind;
+    if (kind == 0) { ir_verify_error(result, 11, 0, 0, 0, 1); return false; }
+    if (kind == 17 || kind == 19) {
+        if (kind == 17 && types[types[ty].child].kind == 0) { return true; }
+        return ir_verify_signature_type(types[ty].child, types, edges, depth - 1, result, limit);
+    }
+    if (kind == 18) { return ir_verify_signature(ty, types, edges, depth - 1, result, limit); }
+    if (kind == 20 || kind == 21) {
+        var i: u64 = 0;
+        while (i < types[ty].count) {
+            if (!ir_verify_signature_type(edges[types[ty].first + i], types, edges,
+                depth - 1, result, limit)) { return false; }
+            i += 1;
+        }
+    }
+    return true;
+}
+
+fun ir_verify_signature(ty: u64, types: ptr<IrVerifyType>, edges: ptr<u64>,
+    depth: u64, result: ptr<IrVerifyResult>, limit: u64) -> bool {
+    if (!ir_verify_charge(result, limit)) { return false; }
+    if (depth == 0) { result.status = 8; return false; }
+    if (types[ty].kind != 18 || types[ty].count == 0 || types[ty].extra > 3) {
+        ir_verify_error(result, 7, 0, 0, 0, 0); return false;
+    }
+    if ((types[ty].extra & 2) != 0) { ir_verify_error(result, 11, 0, 0, 0, 1); return false; }
+    var i: u64 = 0;
+    if ((types[ty].extra & 1) != 0) {
+        while (i < types[ty].count) {
+            var kind: u64 = types[edges[types[ty].first + i]].kind;
+            if (kind == 19 || kind == 20 || kind == 21) {
+                ir_verify_error(result, 11, 0, 0, 0, 2); return false;
+            }
+            i += 1;
+        }
+    }
+    i = types[ty].count;
+    while (i > 0) {
+        i -= 1;
+        var child: u64 = edges[types[ty].first + i];
+        if (i != 0 || types[child].kind != 0) {
+            if (!ir_verify_signature_type(child, types, edges, depth - 1, result, limit)) { return false; }
+        }
+    }
+    return true;
+}
+
+fun ir_verify_pointer_signatures(ty: u64, types: ptr<IrVerifyType>, edges: ptr<u64>,
+    depth: u64, result: ptr<IrVerifyResult>, limit: u64) -> bool {
+    if (!ir_verify_charge(result, limit)) { return false; }
+    if (depth == 0) { result.status = 8; return false; }
+    var kind: u64 = types[ty].kind;
+    if (kind == 18) { return ir_verify_signature(ty, types, edges, depth - 1, result, limit); }
+    if (kind == 17 || kind == 19) { return ir_verify_pointer_signatures(types[ty].child,
+        types, edges, depth - 1, result, limit); }
+    if (kind == 20 || kind == 21) {
+        var i: u64 = 0;
+        while (i < types[ty].count) {
+            if (!ir_verify_pointer_signatures(edges[types[ty].first + i], types, edges,
+                depth - 1, result, limit)) { return false; }
+            i += 1;
+        }
+    }
+    return true;
+}
+
+fun ir_verify_contains_fnptr(ty: u64, types: ptr<IrVerifyType>, edges: ptr<u64>,
+    depth: u64, result: ptr<IrVerifyResult>, limit: u64) -> bool {
+    if (!ir_verify_charge(result, limit)) { return false; }
+    if (depth == 0) { result.status = 8; return false; }
+    var kind: u64 = types[ty].kind;
+    if (kind == 18) { return true; }
+    if (kind == 17 || kind == 19) { return ir_verify_contains_fnptr(types[ty].child,
+        types, edges, depth - 1, result, limit); }
+    if (kind == 20 || kind == 21) {
+        var i: u64 = 0;
+        while (i < types[ty].count) {
+            if (ir_verify_contains_fnptr(edges[types[ty].first + i], types, edges,
+                depth - 1, result, limit)) { return true; }
+            if (result.status != 0) { return false; }
+            i += 1;
+        }
+    }
+    return false;
+}
+
+// Instructions: 1 neg, 2 cast, 3 checked, 4 binary, 5 lifetime_end,
+// 6 ptrdiff, 7 not, 8 mov, 9 cmp/icmp, 10 fcmp, 11 select, 12 extract,
+// 13 uninit, 14 alloca, 15 volatile load, 16 volatile store, 17 load,
+// 18 store, 19 GEP, 20 memcpy, 21 memset, 22 condition, 23 equality,
+// 24 literal. Error statuses: category, missing type, mismatch, alignment,
+// cast, GEP, malformed transport, resource budget, invalid literal.
+export(c) fun whale_ir_verify_semantics(types: ptr<IrVerifyType>, type_count: u64,
+    edges: ptr<u64>, edge_count: u64, instruction: ptr<IrVerifyInstruction>,
+    operands: ptr<IrVerifyOperand>, operand_count: u64, max_work: u64,
+    result: ptr<IrVerifyResult>) -> i32 {
+    if (result == null) { return 7; }
+    result.status = 0; result.index = 0; result.expected = 0;
+    result.actual = 0; result.detail = 0; result.work = 0;
+    if (instruction == null || !ir_span_valid(types as ptr<u8>, type_count, 40)
+        || !ir_span_valid(edges as ptr<u8>, edge_count, 8)
+        || !ir_span_valid(operands as ptr<u8>, operand_count, 40)) {
+        return ir_verify_error(result, 7, 0, 0, 0, 0);
+    }
+    if (!ir_verify_graph_valid(types, type_count, edges, edge_count, max_work, result)) { return result.status as i32; }
+    var i: u64 = 0;
+    while (i < operand_count) {
+        if (!ir_verify_charge(result, max_work)) { return 8; }
+        if (operands[i].ty != 18446744073709551615 && operands[i].ty >= type_count) {
+            return ir_verify_error(result, 7, i, 0, 0, 0);
+        }
+        i += 1;
+    }
+    var op: u64 = instruction.op; var sub: u64 = instruction.sub;
+    var ty: u64 = instruction.ty; var other: u64 = instruction.other;
+    if (ty >= type_count || other >= type_count || op == 0 || op > 35) {
+        return ir_verify_error(result, 7, 0, 0, 0, 0);
+    }
+    if (op == 33) {
+        if (!ir_verify_storable(ty, types, edges, 1024, result, max_work)) {
+            if (result.status != 0) { return result.status as i32; }
+            return ir_verify_error(result, 1, 0, ty, 0, 0);
+        }
+        return 0;
+    }
+    if (op == 34) {
+        if (operand_count != 1) { return ir_verify_error(result, 7, 0, 0, 0, 0); }
+        if (!ir_verify_integer(types[ty].kind) && types[ty].kind != 1) {
+            return ir_verify_error(result, 1, 0, ty, 0, 0);
+        }
+        if (!ir_verify_operand_at(0, ty, false, operands, types, edges, result, max_work)) { return result.status as i32; }
+        return 0;
+    }
+    if (op == 35) {
+        if (instruction.dst > 1 || operand_count != instruction.dst) { return ir_verify_error(result, 7, 0, 0, 0, 0); }
+        if (!ir_verify_equal(ty, other, types, edges, 1024, result, max_work)) {
+            if (result.status != 0) { return result.status as i32; }
+            return ir_verify_error(result, 25, 0, ty, other, 0);
+        }
+        if (instruction.dst != 0) {
+            if (sub == 0) { return ir_verify_error(result, 27, 0, 0, 0, 0); }
+            var actual: u64 = operands[0].ty;
+            if (actual == 18446744073709551615) { return ir_verify_error(result, 2, 0, 0, 0, 0); }
+            if (types[ty].kind == 0 || !ir_verify_equal(ty, actual, types, edges, 1024, result, max_work)) {
+                if (result.status != 0) { return result.status as i32; }
+                return ir_verify_error(result, 25, 0, ty, actual, 0);
+            }
+        } else {
+            if (types[ty].kind != 0) { return ir_verify_error(result, 26, 0, ty, 0, 0); }
+        }
+        return 0;
+    }
+    if (op == 31) {
+        if (operand_count != 1 || sub > 1 || instruction.dst > 1) { return ir_verify_error(result, 7, 0, 0, 0, 0); }
+        var kind: u64 = types[ty].kind;
+        if (kind == 0 || kind > 18) { return ir_verify_error(result, 21, 0, 0, 0, 0); }
+        if (!ir_verify_signature_type(ty, types, edges, 1024, result, max_work)) {
+            if (result.status == 11) { return ir_verify_error(result, 21, 0, 0, 0, 0); }
+            return result.status as i32;
+        }
+        if (!ir_power_two(instruction.align)) { return ir_verify_error(result, 22, 0, 0, 0, 0); }
+        if (instruction.dst != 0 && !ir_verify_literal(kind, operands[0].literal, operands[0].low, operands[0].high)) {
+            return ir_verify_error(result, 23, 0, 0, 0, 0);
+        }
+        if (instruction.dst == 0 && sub != 0) { return ir_verify_error(result, 24, 0, 0, 0, 0); }
+        return 0;
+    }
+    if (op == 32) {
+        if (!ir_power_two(instruction.align)) { return ir_verify_error(result, 4, 0, 0, 0, 0); }
+        return 0;
+    }
+    if (op == 25 || op == 29) {
+        if (operand_count != 0) { return ir_verify_error(result, 7, 0, 0, 0, 0); }
+        var valid: bool = false;
+        if (op == 25) { valid = ir_verify_signature(ty, types, edges, 1024, result, max_work); }
+        else { valid = ir_verify_pointer_signatures(ty, types, edges, 1024, result, max_work); }
+        if (!valid) { return result.status as i32; }
+        return 0;
+    }
+    if (op == 27) {
+        if (!ir_verify_equal(ty, other, types, edges, 1024, result, max_work)) {
+            if (result.status != 0) { return result.status as i32; }
+            return ir_verify_error(result, 12, 0, ty, other, 0);
+        }
+        return 0;
+    }
+    if (op == 30) {
+        if (operand_count != 1) { return ir_verify_error(result, 7, 0, 0, 0, 0); }
+        var source: u64 = operands[0].ty;
+        if (sub == 9 && types[ty].kind == 17 && types[other].kind == 17
+            && source != 18446744073709551615 && types[source].kind == 17) { return 0; }
+        var forbidden: bool = ir_verify_contains_fnptr(ty, types, edges, 1024, result, max_work)
+            || ir_verify_contains_fnptr(other, types, edges, 1024, result, max_work);
+        if (source != 18446744073709551615) {
+            forbidden = forbidden || ir_verify_contains_fnptr(source, types, edges, 1024, result, max_work);
+        }
+        if (result.status != 0) { return result.status as i32; }
+        if (forbidden) { return ir_verify_error(result, 18, 0, 0, 0, 0); }
+        return 0;
+    }
+    if (op == 28) {
+        if (types[ty].kind != 18) { return ir_verify_error(result, 19, 0, 0, ty, 0); }
+        if (!ir_verify_signature(ty, types, edges, 1024, result, max_work)) { return result.status as i32; }
+        if (sub != (types[ty].extra & 1)) { return ir_verify_error(result, 13, 0, 0, 0, 0); }
+        var return_type: u64 = edges[types[ty].first];
+        if (!ir_verify_equal(return_type, other, types, edges, 1024, result, max_work)) {
+            if (result.status != 0) { return result.status as i32; }
+            return ir_verify_error(result, 14, 0, return_type, other, 0);
+        }
+        if ((instruction.dst != 0 && types[return_type].kind == 0)
+            || (instruction.dst == 0 && types[return_type].kind != 0)) { return ir_verify_error(result, 15, 0, 0, 0, 0); }
+        var params: u64 = types[ty].count - 1;
+        if (operand_count != params) { return ir_verify_error(result, 16, 0, params, operand_count, 0); }
+        i = 0;
+        while (i < operand_count) {
+            if (!ir_verify_operand_at(i, edges[types[ty].first + i + 1], false,
+                operands, types, edges, result, max_work)) {
+                if (result.status == 3) { result.status = 17; }
+                return result.status as i32;
+            }
+            i += 1;
+        }
+        return 0;
+    }
+    var count: u64 = 0;
+    if (op == 1 || op == 2 || op == 5 || op == 7 || op == 8 || op == 12 || op == 13
+        || op == 15 || op == 17 || op == 22 || op == 23 || op == 24) { count = 1; }
+    if (op == 3 || op == 4 || op == 6 || op == 9 || op == 10 || op == 16 || op == 18) { count = 2; }
+    if (op == 11 || op == 20 || op == 21) { count = 3; }
+    if ((op != 19 && operand_count != count) || (op == 19 && operand_count == 0)) {
+        return ir_verify_error(result, 7, 0, 0, 0, 0);
+    }
+    if ((op >= 13 && op <= 18 || op == 20 || op == 21) && !ir_power_two(instruction.align)) {
+        return ir_verify_error(result, 4, 0, 0, 0, 0);
+    }
+    var kind: u64 = types[ty].kind; var valid: bool = true;
+    if (op == 1) { valid = ir_verify_integer(kind) || ir_verify_float(kind); }
+    if (op == 3) { valid = ir_verify_signed(kind); if (sub == 1) { valid = ir_verify_unsigned(kind); } }
+    if (op == 4) {
+        valid = ir_verify_integer(kind);
+        if (sub == 1) { valid = ir_verify_signed(kind); }
+        if (sub == 2) { valid = ir_verify_unsigned(kind); }
+        if (sub == 3) { valid = ir_verify_float(kind); }
+    }
+    if (op == 7) { valid = ir_verify_integer(kind); }
+    if (op == 8 || op == 11 || op == 13 || op == 14 || op == 17 || op == 18) {
+        valid = ir_verify_storable(ty, types, edges, 1024, result, max_work);
+    }
+    if (op == 15 || op == 16) {
+        valid = ir_verify_storable(ty, types, edges, 1024, result, max_work)
+            && kind != 19 && kind != 20 && kind != 21;
+    }
+    if (op == 9) {
+        valid = ir_verify_integer(kind) || kind == 1 || kind == 17;
+        if (sub == 1) { valid = ir_verify_signed(kind) || kind == 17; }
+        if (sub == 2) { valid = ir_verify_unsigned(kind) || kind == 17; }
+        if (sub == 3) { valid = ir_verify_float(kind); }
+    }
+    if (op == 10) { valid = ir_verify_float(kind); }
+    if (result.status != 0) { return result.status as i32; }
+    if (!valid) { return ir_verify_error(result, 1, 0, ty, 0, 0); }
+    if (op == 14) { return 0; }
+    if (op == 24) {
+        var literal: u64 = operands[0].literal; var low: u64 = operands[0].low; var high: u64 = operands[0].high;
+        valid = ir_verify_literal(kind, literal, low, high);
+        if (!valid) { return ir_verify_error(result, 9, 0, ty, 0, 0); }
+        return 0;
+    }
+    if (op == 22) {
+        if (operands[0].ty == 18446744073709551615) { return ir_verify_error(result, 2, 0, 0, 0, 0); }
+        if (types[operands[0].ty].kind != 1) { return ir_verify_error(result, 10, 0, 0, operands[0].ty, 0); }
+        return 0;
+    }
+    if (op == 5 || op == 6) {
+        if (operands[0].ty == 18446744073709551615) { return ir_verify_error(result, 2, 0, 0, 0, 0); }
+        ty = operands[0].ty;
+        if (types[ty].kind != 17) { return ir_verify_error(result, 1, 0, ty, 0, 0); }
+        if (op == 5) { return 0; }
+        if (!ir_verify_operand_at(1, ty, false, operands, types, edges, result, max_work)) { return result.status as i32; }
+        return 0;
+    }
+    if (op == 12) {
+        var source: u64 = operands[0].ty;
+        valid = false;
+        if (source != 18446744073709551615 && types[source].kind == 21 && sub < types[source].count) {
+            valid = ir_verify_equal(ty, edges[types[source].first + sub], types, edges, 1024, result, max_work);
+        }
+        if (result.status != 0) { return result.status as i32; }
+        if (!valid) { return ir_verify_error(result, 1, 0, ty, 0, 0); }
+        return 0;
+    }
+    if (op == 19) {
+        var base: u64 = operands[0].ty;
+        if (base == 18446744073709551615) { return ir_verify_error(result, 2, 0, 0, 0, 0); }
+        if (types[base].kind != 17) { return ir_verify_error(result, 6, 0, 0, 0, 0); }
+        var selected: u64 = types[base].child;
+        if (operand_count > 1 && !ir_verify_storable(selected, types, edges, 1024, result, max_work)) {
+            if (result.status != 0) { return result.status as i32; }
+            return ir_verify_error(result, 6, 0, 0, 0, 1);
+        }
+        i = 1;
+        while (i < operand_count) {
+            var index_type: u64 = operands[i].ty;
+            if (index_type == 18446744073709551615) { return ir_verify_error(result, 2, i, 0, 0, 0); }
+            if (!ir_verify_integer(types[index_type].kind)) { return ir_verify_error(result, 6, i, 0, 0, 2); }
+            if (i > 1) {
+                var selected_kind: u64 = types[selected].kind;
+                if (selected_kind == 19) { selected = types[selected].child; }
+                else {
+                    if (selected_kind != 20 && selected_kind != 21) { return ir_verify_error(result, 6, i, 0, 0, 5); }
+                    var ordinal: u64 = operands[i].low;
+                    if ((operands[i].literal != 1 && operands[i].literal != 2) || operands[i].high != 0) {
+                        return ir_verify_error(result, 6, i, 0, 0, 3);
+                    }
+                    if (ordinal >= types[selected].count) { return ir_verify_error(result, 6, i, 0, 0, 4); }
+                    selected = edges[types[selected].first + ordinal];
+                }
+            }
+            i += 1;
+        }
+        if (kind != 17 || !ir_verify_equal(types[ty].child, selected, types, edges, 1024, result, max_work)) {
+            if (result.status != 0) { return result.status as i32; }
+            return ir_verify_error(result, 3, 0, selected, ty, 2);
+        }
+        return 0;
+    }
+    if (op == 11) {
+        if (operands[0].ty == 18446744073709551615) { return ir_verify_error(result, 2, 0, 0, 0, 0); }
+        if (types[operands[0].ty].kind != 1) { return ir_verify_error(result, 10, 0, 0, operands[0].ty, 0); }
+        i = 1;
+    } else { i = 0; }
+    while (i < operand_count) {
+        var expected: u64 = ty; var pointer: bool = false;
+        if (op == 13 || op == 15 || op == 17 || op == 16 || op == 18) { pointer = i == 0; }
+        if (op == 20 || op == 21) {
+            expected = ty;
+            pointer = i == 0 || (i == 1 && op == 20);
+            if (i == 2) { expected = other; }
+        }
+        if (!ir_verify_operand_at(i, expected, pointer, operands, types, edges, result, max_work)) { return result.status as i32; }
+        i += 1;
+    }
+    if (op == 2 && !ir_verify_cast(sub, kind, types[other].kind)) {
+        return ir_verify_error(result, 5, 0, ty, other, 0);
+    }
+    return 0;
+}
+
+export(c) fun whale_ir_verify_link(external: u64, present: u64, bytes: ptr<u8>, count: u64,
+    max_work: u64, result: ptr<IrVerifyResult>) -> i32 {
+    if (result == null) { return 7; }
+    result.status = 0; result.index = 0; result.expected = 0;
+    result.actual = 0; result.detail = 0; result.work = 0;
+    if (external > 1 || present > 1 || !ir_span_valid(bytes, count, 1)) {
+        return ir_verify_error(result, 7, 0, 0, 0, 0);
+    }
+    if (external == 0 && present == 0) { return 0; }
+    if (external == 0 || present == 0 || count == 0) { return ir_verify_error(result, 20, 0, 0, 0, 0); }
+    var i: u64 = 0;
+    while (i < count) {
+        if (!ir_verify_charge(result, max_work)) { return 8; }
+        if (bytes[i] == 0) { return ir_verify_error(result, 20, i, 0, 0, 0); }
+        i += 1;
+    }
+    return 0;
+}
+
+export(c) fun whale_ir_verify_value_types(types: ptr<IrVerifyType>, type_count: u64,
+    edges: ptr<u64>, edge_count: u64, annotations: ptr<IrVerifyBinding>, annotation_count: u64,
+    definitions: ptr<IrVerifyBinding>, definition_count: u64,
+    table: ptr<IrVerifyBinding>, capacity: u64, max_work: u64,
+    result: ptr<IrVerifyResult>) -> i32 {
+    if (result == null) { return 7; }
+    result.status = 0; result.index = 0; result.expected = 0;
+    result.actual = 0; result.detail = 0; result.work = 0;
+    if (!ir_verify_graph_valid(types, type_count, edges, edge_count, max_work, result)) { return result.status as i32; }
+    if (!ir_span_valid(annotations as ptr<u8>, annotation_count, 32)
+        || !ir_span_valid(definitions as ptr<u8>, definition_count, 32)
+        || !ir_span_valid(table as ptr<u8>, capacity, 32)
+        || capacity < 2 || !ir_power_two(capacity) || annotation_count > capacity / 2) {
+        return ir_verify_error(result, 7, 0, 0, 0, 0);
+    }
+    var i: u64 = 0;
+    while (i < capacity) {
+        if (!ir_verify_charge(result, max_work)) { return 8; }
+        table[i].present = 0; i += 1;
+    }
+    i = 0;
+    while (i < annotation_count) {
+        if (annotations[i].ty >= type_count) { return ir_verify_error(result, 7, i, 0, 0, 0); }
+        var position: u64 = (annotations[i].id ^ (annotations[i].id >> 16)) & (capacity - 1);
+        while (true) {
+            if (!ir_verify_charge(result, max_work)) { return 8; }
+            if (table[position].present == 0) {
+                table[position].id = annotations[i].id; table[position].ty = annotations[i].ty;
+                table[position].index = i; table[position].present = 1; break;
+            }
+            if (table[position].id == annotations[i].id) {
+                return ir_verify_error(result, 1, i, 0, 0, annotations[i].id);
+            }
+            position = (position + 1) & (capacity - 1);
+        }
+        i += 1;
+    }
+    i = 0;
+    while (i < definition_count) {
+        if (definitions[i].ty >= type_count) { return ir_verify_error(result, 7, i, 0, 0, 0); }
+        var position: u64 = (definitions[i].id ^ (definitions[i].id >> 16)) & (capacity - 1);
+        while (true) {
+            if (!ir_verify_charge(result, max_work)) { return 8; }
+            if (table[position].present == 0) {
+                return ir_verify_error(result, 2, i, 0, 0, definitions[i].id);
+            }
+            if (table[position].id == definitions[i].id) {
+                if (!ir_verify_equal(definitions[i].ty, table[position].ty, types, edges, 1024, result, max_work)) {
+                    if (result.status != 0) { return result.status as i32; }
+                    return ir_verify_error(result, 3, i, definitions[i].ty, table[position].ty, definitions[i].id);
+                }
+                table[position].present = 2; break;
+            }
+            position = (position + 1) & (capacity - 1);
+        }
+        i += 1;
+    }
+    i = 0;
+    while (i < annotation_count) {
+        var position: u64 = (annotations[i].id ^ (annotations[i].id >> 16)) & (capacity - 1);
+        while (true) {
+            if (!ir_verify_charge(result, max_work)) { return 8; }
+            if (table[position].id == annotations[i].id) {
+                if (table[position].present == 1) { return ir_verify_error(result, 4, i, 0, 0, annotations[i].id); }
+                break;
+            }
+            position = (position + 1) & (capacity - 1);
+        }
+        i += 1;
+    }
+    return 0;
+}

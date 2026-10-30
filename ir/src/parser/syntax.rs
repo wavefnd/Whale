@@ -7,21 +7,36 @@ use super::{
 use crate::*;
 
 pub(super) struct Parser<'a> {
-    tokens: Vec<Token<'a>>,
-    at: usize,
+    pub(super) tokens: Vec<Token<'a>>,
+    #[cfg(whale_wave_ir)]
+    pub(super) raw_tokens: Vec<super::wave_text::RawToken>,
+    #[cfg(whale_wave_ir)]
+    pub(super) grammar_work: usize,
+    #[cfg(all(test, whale_wave_ir))]
+    pub(super) reference_types: bool,
+    pub(super) at: usize,
     pub limits: IrLimits,
-    nodes: usize,
+    pub(super) nodes: usize,
     pub(super) format_version: u32,
-    function_locations: std::collections::HashMap<String, super::SourceLocation>,
-    declaration_locations: std::collections::HashMap<String, super::SourceLocation>,
-    global_locations: std::collections::HashMap<String, super::SourceLocation>,
-    global_constant_locations: std::collections::HashMap<GlobalId, super::SourceLocation>,
+    pub(super) function_locations: std::collections::HashMap<String, super::SourceLocation>,
+    pub(super) declaration_locations: std::collections::HashMap<String, super::SourceLocation>,
+    pub(super) global_locations: std::collections::HashMap<String, super::SourceLocation>,
+    pub(super) global_constant_locations:
+        std::collections::HashMap<GlobalId, super::SourceLocation>,
 }
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token<'a>>, limits: IrLimits) -> Self {
+        #[cfg(whale_wave_ir)]
+        let raw_tokens = tokens.iter().map(super::wave_text::RawToken::from).collect();
         Self {
             tokens,
+            #[cfg(whale_wave_ir)]
+            raw_tokens,
+            #[cfg(whale_wave_ir)]
+            grammar_work: 0,
+            #[cfg(all(test, whale_wave_ir))]
+            reference_types: false,
             at: 0,
             limits,
             nodes: 0,
@@ -92,6 +107,12 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[cfg(whale_wave_ir)]
+    pub(super) fn backend(&self, component: &'static str) -> ParseError {
+        ParseError { location: self.location(), kind: ParseErrorKind::Backend(component) }
+    }
+
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn previous_error(&self, message: &str) -> ParseError {
         ParseError {
             location: self.tokens[self.at.saturating_sub(1)].location,
@@ -110,6 +131,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn node(&mut self) -> Result<(), ParseError> {
         if self.nodes >= self.limits.max_nodes {
             return Err(self.limit(Resource::Nodes, self.limits.max_nodes));
@@ -129,6 +151,7 @@ impl<'a> Parser<'a> {
         self.peek() == "<eof>"
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn eat(&mut self, s: &str) -> bool {
         if self.peek() == s {
             self.at += 1;
@@ -138,6 +161,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn expect(&mut self, s: &str) -> Result<(), ParseError> {
         if self.eat(s) {
             Ok(())
@@ -146,6 +170,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn word(&mut self) -> Result<&'a str, ParseError> {
         match self.tokens[self.at].kind {
             Kind::Word(s) => {
@@ -156,6 +181,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn string(&mut self) -> Result<String, ParseError> {
         match &mut self.tokens[self.at].kind {
             Kind::String(s) => {
@@ -167,6 +193,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn number<T: std::str::FromStr>(&mut self) -> Result<T, ParseError> {
         let s = self.peek();
         if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
@@ -177,6 +204,7 @@ impl<'a> Parser<'a> {
         Ok(value)
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn id(&mut self, prefix: &str) -> Result<u32, ParseError> {
         let s = self
             .peek()
@@ -190,24 +218,29 @@ impl<'a> Parser<'a> {
         Ok(id)
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn value(&mut self) -> Result<ValueId, ParseError> {
         self.id("%v").map(ValueId)
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn block_id(&mut self) -> Result<BlockId, ParseError> {
         self.id("%b").map(BlockId)
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn comma(&mut self) -> Result<(), ParseError> {
         self.expect(",")
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn align(&mut self) -> Result<u32, ParseError> {
         self.comma()?;
         self.expect("align")?;
         self.number()
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn convention(&mut self) -> Result<CallingConvention, ParseError> {
         match self.word()? {
             "whale" => Ok(CallingConvention::Whale),
@@ -216,6 +249,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     pub fn signature(&mut self, depth: usize) -> Result<FunctionSignature, ParseError> {
         let convention = self.convention()?;
         self.expect("(")?;
@@ -225,6 +259,7 @@ impl<'a> Parser<'a> {
         Ok(FunctionSignature { params, ret, convention, variadic: false })
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     fn types(&mut self, end: &str, depth: usize) -> Result<Vec<Type>, ParseError> {
         let mut types = Vec::new();
         if !self.eat(end) {
@@ -240,6 +275,34 @@ impl<'a> Parser<'a> {
     }
 
     pub fn ty(&mut self, depth: usize) -> Result<Type, ParseError> {
+        #[cfg(all(test, whale_wave_ir))]
+        if self.reference_types {
+            return self.ty_reference(depth);
+        }
+        #[cfg(whale_wave_ir)]
+        {
+            let parsed = super::wave_type::parse(
+                &self.tokens,
+                &self.raw_tokens,
+                super::wave_type::Options {
+                    start: self.at,
+                    depth,
+                    limits: self.limits,
+                    remaining_nodes: self.limits.max_nodes.saturating_sub(self.nodes),
+                    remaining_work: self.limits.max_analysis_work.saturating_sub(self.grammar_work),
+                },
+            )?;
+            self.at = parsed.next;
+            self.nodes += parsed.nodes;
+            self.grammar_work += parsed.work;
+            Ok(parsed.ty)
+        }
+        #[cfg(not(whale_wave_ir))]
+        self.ty_reference(depth)
+    }
+
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn ty_reference(&mut self, depth: usize) -> Result<Type, ParseError> {
         if depth > self.limits.max_type_depth {
             return Err(self.limit(Resource::TypeDepth, self.limits.max_type_depth));
         }
@@ -295,6 +358,29 @@ impl<'a> Parser<'a> {
     }
 
     pub fn literal(&mut self, ty: &Type) -> Result<ConstValue, ParseError> {
+        #[cfg(whale_wave_ir)]
+        {
+            #[cfg(test)]
+            if self.reference_types {
+                return self.literal_reference(ty);
+            }
+            let (value, work) = super::wave_literal::parse(
+                self.peek(),
+                ty,
+                self.limits.max_analysis_work.saturating_sub(self.grammar_work),
+                self.limits.max_analysis_work,
+            )
+            .map_err(|kind| ParseError { location: self.location(), kind })?;
+            self.grammar_work += work;
+            self.at += 1;
+            Ok(value)
+        }
+        #[cfg(not(whale_wave_ir))]
+        self.literal_reference(ty)
+    }
+
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn literal_reference(&mut self, ty: &Type) -> Result<ConstValue, ParseError> {
         let s = self.peek();
         let value = match ty {
             Type::Bool => match s {
@@ -335,8 +421,29 @@ impl<'a> Parser<'a> {
         Ok(value)
     }
 
-    pub fn equal_type(&self, left: &Type, right: &Type) -> Result<(), ParseError> {
-        if left == right {
+    pub fn equal_type(&mut self, left: &Type, right: &Type) -> Result<(), ParseError> {
+        #[cfg(whale_wave_ir)]
+        let equal = {
+            #[cfg(test)]
+            if self.reference_types {
+                return if left == right {
+                    Ok(())
+                } else {
+                    Err(self.error("conflicting type annotations"))
+                };
+            }
+            let (equal, work) = crate::verifier::wave_types_equal(
+                left,
+                right,
+                self.limits.max_analysis_work.saturating_sub(self.grammar_work),
+            )
+            .map_err(|_| self.limit(Resource::AnalysisWork, self.limits.max_analysis_work))?;
+            self.grammar_work += work;
+            equal
+        };
+        #[cfg(not(whale_wave_ir))]
+        let equal = left == right;
+        if equal {
             Ok(())
         } else {
             Err(self.error("conflicting type annotations"))
@@ -344,6 +451,35 @@ impl<'a> Parser<'a> {
     }
 
     pub fn expression(&mut self, depth: usize) -> Result<ConstExpr, ParseError> {
+        #[cfg(whale_wave_ir)]
+        {
+            #[cfg(test)]
+            if self.reference_types {
+                return self.expression_reference(depth);
+            }
+            let parsed = super::wave_expression::parse(
+                &self.tokens,
+                &self.raw_tokens,
+                super::wave_expression::Options {
+                    start: self.at,
+                    depth,
+                    format: self.format_version,
+                    limits: self.limits,
+                    remaining_nodes: self.limits.max_nodes.saturating_sub(self.nodes),
+                    remaining_work: self.limits.max_analysis_work.saturating_sub(self.grammar_work),
+                },
+            )?;
+            self.at = parsed.next;
+            self.nodes += parsed.nodes;
+            self.grammar_work += parsed.work;
+            Ok(parsed.expression)
+        }
+        #[cfg(not(whale_wave_ir))]
+        self.expression_reference(depth)
+    }
+
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn expression_reference(&mut self, depth: usize) -> Result<ConstExpr, ParseError> {
         if depth > self.limits.max_const_depth {
             return Err(self.limit(Resource::ConstantDepth, self.limits.max_const_depth));
         }
@@ -458,36 +594,63 @@ impl<'a> Parser<'a> {
     }
 
     pub fn module(&mut self) -> Result<Module, ParseError> {
-        self.expect("module")?;
-        self.expect("{")?;
-        self.expect("format_version")?;
-        let version: u32 = self.number()?;
-        if !(3..=IR_FORMAT_VERSION).contains(&version) {
-            return Err(self.previous_error("unsupported IR format version"));
+        #[cfg(all(test, whale_wave_ir))]
+        if self.reference_types {
+            return self.module_reference();
         }
-        self.format_version = version;
-        self.expect("semantics_version")?;
-        let semantics: u32 = self.number()?;
-        if semantics != SEMANTICS_VERSION {
-            return Err(self.previous_error("unsupported semantics version"));
+        #[cfg(whale_wave_ir)]
+        {
+            self.module_wave()
         }
-        self.expect("target")?;
-        let target = self.string()?;
-        self.expect("datalayout")?;
-        self.expect("{")?;
-        self.expect("ptr")?;
-        self.expect("=")?;
-        let ptr_bits = self.number()?;
-        self.comma()?;
-        self.expect("endian")?;
-        self.expect("=")?;
-        let endian = match self.word()? {
-            "little" => Endian::Little,
-            "big" => Endian::Big,
-            _ => return Err(self.previous_error("unknown byte order")),
+        #[cfg(not(whale_wave_ir))]
+        {
+            self.module_reference()
+        }
+    }
+
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn module_reference(&mut self) -> Result<Module, ParseError> {
+        #[cfg(whale_wave_ir)]
+        let (target, datalayout) = {
+            let (target, layout, version, next) = super::wave_header::parse(&self.tokens)?;
+            self.format_version = version;
+            self.at = next;
+            (target, layout)
         };
-        self.expect("}")?;
-        let mut module = Module::new(target, DataLayout { ptr_bits, endian });
+        #[cfg(not(whale_wave_ir))]
+        let (target, datalayout) = {
+            self.expect("module")?;
+            self.expect("{")?;
+            self.expect("format_version")?;
+            let version: u32 = self.number()?;
+            if !(3..=IR_FORMAT_VERSION).contains(&version) {
+                return Err(self.previous_error("unsupported IR format version"));
+            }
+            self.format_version = version;
+            self.expect("semantics_version")?;
+            let semantics: u32 = self.number()?;
+            if semantics != SEMANTICS_VERSION {
+                return Err(self.previous_error("unsupported semantics version"));
+            }
+            self.expect("target")?;
+            let target = self.string()?;
+            self.expect("datalayout")?;
+            self.expect("{")?;
+            self.expect("ptr")?;
+            self.expect("=")?;
+            let ptr_bits = self.number()?;
+            self.comma()?;
+            self.expect("endian")?;
+            self.expect("=")?;
+            let endian = match self.word()? {
+                "little" => Endian::Little,
+                "big" => Endian::Big,
+                _ => return Err(self.previous_error("unknown byte order")),
+            };
+            self.expect("}")?;
+            (target, DataLayout { ptr_bits, endian })
+        };
+        let mut module = Module::new(target, datalayout);
         while !self.eat("}") {
             self.node()?;
             match self.word()? {
@@ -648,6 +811,7 @@ impl<'a> Parser<'a> {
         Ok(module)
     }
 
+    #[cfg(any(not(whale_wave_ir), test))]
     fn function(&mut self) -> Result<Function, ParseError> {
         let id = FunctionId(self.id("@f")?);
         let location = self.tokens[self.at].location;

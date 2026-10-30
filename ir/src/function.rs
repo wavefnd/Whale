@@ -162,6 +162,7 @@ pub fn validate_signature_with_limits(
     Ok(())
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 pub(crate) fn validate_decl_with_limits(
     decl: &FunctionDecl,
     limits: crate::IrLimits,

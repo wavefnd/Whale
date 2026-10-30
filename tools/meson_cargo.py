@@ -35,9 +35,11 @@ def validate_features(features):
     return features
 
 
-def cargo_environment(target_dir, asmobj_directory, profile, optimization, debug_info):
+def cargo_environment(target_dir, asmobj_directory, profile, optimization, debug_info,
+                      wave_ir_directory=None):
     environment = os.environ.copy()
     environment.pop("WHALE_ASMOBJ_DIR", None)
+    environment.pop("WHALE_WAVE_IR_DIR", None)
     environment.pop("CARGO_BUILD_TARGET", None)
     environment["CARGO_TARGET_DIR"] = str(target_dir)
     environment["CARGO_INCREMENTAL"] = "0"
@@ -46,6 +48,8 @@ def cargo_environment(target_dir, asmobj_directory, profile, optimization, debug
     environment[prefix + "DEBUG"] = debug_info
     if asmobj_directory:
         environment["WHALE_ASMOBJ_DIR"] = str(asmobj_directory)
+    if wave_ir_directory:
+        environment["WHALE_WAVE_IR_DIR"] = str(wave_ir_directory)
     return environment
 
 
@@ -153,6 +157,7 @@ def source_dependencies(source, features):
             dependencies.update(path.iterdir())
     dependencies.add(source / "assembler/asmobj")
     dependencies.update((source / "assembler/asmobj").glob("*.wave"))
+    dependencies.update((source / "ir").glob("*.wave"))
     return dependencies
 
 
@@ -178,11 +183,13 @@ def build(arguments):
     output = arguments.output.parent.resolve() / arguments.output.name
     depfile = arguments.depfile.parent.resolve() / arguments.depfile.name
     asmobj_directory = arguments.asmobj_dir.resolve() if arguments.asmobj_dir else None
+    wave_ir_directory = arguments.wave_ir_dir.resolve() if arguments.wave_ir_dir else None
     features = validate_features(arguments.feature)
     if target_dir in [source, source / "target"]:
         raise BuildError("Meson requires its own private Cargo target directory")
     environment = cargo_environment(target_dir, asmobj_directory, arguments.profile,
-                                    arguments.opt_level, arguments.debug_info)
+                                    arguments.opt_level, arguments.debug_info,
+                                    wave_ir_directory)
     target = arguments.host_target or native_target(arguments.cargo, source, environment)
     if not TRIPLE.fullmatch(target):
         raise BuildError("cargo host target must be a Rust target triple")
@@ -200,6 +207,9 @@ def build(arguments):
     if asmobj_directory:
         archive = "whale_asmobj.lib" if "msvc" in target else "libwhale_asmobj.a"
         dependencies.update(asmobj_directory / name for name in [archive, "asmobj.meta"])
+    if wave_ir_directory:
+        archive = "whale_wave_ir.lib" if "msvc" in target else "libwhale_wave_ir.a"
+        dependencies.update(wave_ir_directory / name for name in [archive, "wave-ir.meta", "provenance.json"])
     contents = make_escape(output) + ": " + " ".join(make_escape(path) for path in sorted(dependencies)) + "\n"
     candidate = None
     candidate_depfile = None
@@ -303,6 +313,7 @@ def main(argv=None):
     compile_parser.add_argument("--offline", action="store_true")
     compile_parser.add_argument("--feature", action="append", default=[])
     compile_parser.add_argument("--asmobj-dir", type=Path)
+    compile_parser.add_argument("--wave-ir-dir", type=Path)
     smoke_parser = commands.add_parser("smoke")
     smoke_parser.add_argument("--binary", type=Path, required=True)
     smoke_parser.add_argument("--feature", action="append", default=[])

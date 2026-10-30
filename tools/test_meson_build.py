@@ -32,13 +32,18 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("--offline", command)
 
     def test_ambient_wave_and_cargo_target_cannot_change_selection(self):
-        with patch.dict(os.environ, {"WHALE_ASMOBJ_DIR": "old", "CARGO_BUILD_TARGET": "old"}):
+        with patch.dict(os.environ, {"WHALE_ASMOBJ_DIR": "old", "WHALE_WAVE_IR_DIR": "old",
+                                          "CARGO_BUILD_TARGET": "old"}):
             environment = cargo_environment("private", None, "dev", "2", "2")
         self.assertNotIn("WHALE_ASMOBJ_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_IR_DIR", environment)
         self.assertNotIn("CARGO_BUILD_TARGET", environment)
         self.assertEqual(environment["CARGO_TARGET_DIR"], "private")
         self.assertEqual(environment["CARGO_PROFILE_DEV_OPT_LEVEL"], "2")
         self.assertEqual(environment["CARGO_PROFILE_DEV_DEBUG"], "2")
+        selected = cargo_environment("private", "asmobj", "dev", "2", "2", "wave-ir")
+        self.assertEqual(selected["WHALE_ASMOBJ_DIR"], "asmobj")
+        self.assertEqual(selected["WHALE_WAVE_IR_DIR"], "wave-ir")
 
     def test_wave_is_explicit_and_unknown_features_fail(self):
         self.assertEqual(validate_features(["asm-amd64", "asm-amd64"]), ["asm-amd64"])
@@ -111,6 +116,8 @@ class DependencyTests(unittest.TestCase):
             for name in ["src", "toolchain/src", "assembler/amd64/src", "assembler/aarch64/src"]:
                 (source / name).mkdir(parents=True)
                 (source / name / "lib.rs").write_text("// source")
+            (source / "ir").mkdir()
+            (source / "ir/model.wave").write_text("// type graph")
             (source / "toolchain/src/assembly_object.rs").write_text("// ffi boundary")
             (source / "Cargo.toml").write_text("manifest")
             dependencies = source_dependencies(source, ["asm-aarch64"])
@@ -120,6 +127,7 @@ class DependencyTests(unittest.TestCase):
             self.assertNotIn(source / "assembler/amd64/src/lib.rs", dependencies)
             self.assertIn(source / "Cargo.toml", dependencies)
             self.assertIn(source / "toolchain/src/assembly_object.rs", dependencies)
+            self.assertIn(source / "ir/model.wave", dependencies)
 
 
 class PublicationTests(unittest.TestCase):
@@ -135,7 +143,7 @@ class PublicationTests(unittest.TestCase):
         self.depfile = self.root / "whale.d"
         self.depfile.write_bytes(b"previous dependencies")
         self.arguments = argparse.Namespace(source_root=self.source, target_dir=self.target,
-            output=self.output, depfile=self.depfile, asmobj_dir=None, feature=[],
+            output=self.output, depfile=self.depfile, asmobj_dir=None, wave_ir_dir=None, feature=[],
             profile="dev", opt_level="0", debug_info="2", host_target="x86_64-unknown-linux-gnu",
             cargo="explicit cargo", rustc="explicit rustc", offline=True, jobs=2,
             host_system="linux", host_cpu_family="x86_64")
