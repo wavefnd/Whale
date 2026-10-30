@@ -69,10 +69,13 @@ def validate_machine(data, target):
 
 def limited_read(path, limit):
     with path.open("rb") as stream:
-        data = stream.read(limit + 1)
-    if len(data) > limit:
-        raise ValueError(f"file exceeds byte budget: {path}")
-    return data
+        data = bytearray()
+        while len(data) <= limit:
+            chunk = stream.read(min(65536, limit + 1 - len(data)))
+            if not chunk:
+                return bytes(data)
+            data.extend(chunk)
+    raise ValueError(f"file exceeds byte budget: {path}")
 
 
 def publish_bytes(path, data):
@@ -147,6 +150,43 @@ def package(binary, output, version, target, source, socket=False, root=ROOT):
     return destination
 
 
+def preflight_ustar(raw):
+    """Reject unsupported tar metadata before tarfile allocates its payload."""
+    total = 0
+    members = 0
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
+            while True:
+                header = stream.read(512)
+                if len(header) != 512:
+                    raise ValueError("truncated release tar header")
+                total += len(header)
+                if header == bytes(512):
+                    return
+                if header[257:263] != b"ustar\0" or header[156:157] not in (b"0", b"\0"):
+                    raise ValueError("release tar requires regular USTAR members")
+                members += 1
+                if members > 4:
+                    raise ValueError("release tar has too many members")
+                field = header[124:136].strip(b"\0 ")
+                try:
+                    size = int(field, 8)
+                except ValueError as error:
+                    raise ValueError("invalid release tar member size") from error
+                padded = (size + 511) // 512 * 512
+                if total + padded > MAX_ARCHIVE:
+                    raise ValueError("release tar exceeds byte budget")
+                remaining = padded
+                while remaining:
+                    chunk = stream.read(min(65536, remaining))
+                    if not chunk:
+                        raise ValueError("truncated release tar member")
+                    remaining -= len(chunk)
+                    total += len(chunk)
+    except (EOFError, OSError) as error:
+        raise ValueError("invalid compressed release tar") from error
+
+
 def unpack(archive, directory, version, target, source):
     stem = identity(version, target, source)
     expected = {f"{stem}/{name}" for name in (binary_name(target), "LICENSE", "README.md", "manifest.json")}
@@ -172,6 +212,7 @@ def unpack(archive, directory, version, target, source):
                 with reader.open(info) as stream:
                     keep(info.filename, info.file_size, info.external_attr >> 16, stream)
     else:
+        preflight_ustar(raw)
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as reader:
             for info in reader:
                 if len(entries) >= 4 or not info.isfile():
@@ -182,8 +223,12 @@ def unpack(archive, directory, version, target, source):
         raise ValueError("incomplete release archive")
     manifest = json.loads(entries[f"{stem}/manifest.json"][0])
     required = {"format_version", "version", "target", "source_commit", "socket_cli", "binary", "binary_sha256"}
-    if (set(manifest) != required or manifest["format_version"] != 1
-            or type(manifest["socket_cli"]) is not bool or manifest["version"] != version
+    if (type(manifest) is not dict or set(manifest) != required
+            or type(manifest["format_version"]) is not int or manifest["format_version"] != 1
+            or type(manifest["socket_cli"]) is not bool
+            or any(type(manifest[key]) is not str for key in
+                   ("version", "target", "source_commit", "binary", "binary_sha256"))
+            or manifest["version"] != version
             or manifest["target"] != target or manifest["source_commit"] != source
             or manifest["binary"] != binary_name(target)):
         raise ValueError("archive manifest identity mismatch")

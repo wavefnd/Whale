@@ -1,3 +1,5 @@
+#![cfg(feature = "asm-amd64")]
+
 use std::{fs, path::PathBuf, process::Command};
 
 struct Scratch(PathBuf);

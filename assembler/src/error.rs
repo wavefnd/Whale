@@ -1,3 +1,5 @@
+use diagnostic::EscapedName;
+
 use std::fmt;
 
 /// Half-open UTF-8 byte range; line/column are one-based Unicode-scalar coordinates.
@@ -58,11 +60,23 @@ impl fmt::Display for AsmError {
             AsmError::Diagnostic { source_name, span, related, error } => {
                 write!(
                     f,
-                    "{error} at {source_name}: line {}, column {} (bytes {}..{})",
-                    span.line, span.column, span.start, span.end
+                    "{error} at {}: line {}, column {} (bytes {}..{})",
+                    EscapedName(source_name),
+                    span.line,
+                    span.column,
+                    span.start,
+                    span.end
                 )?;
                 if let Some(previous) = related {
-                    write!(f, "; previous declaration at {source_name}: line {}, column {} (bytes {}..{})", previous.line, previous.column, previous.start, previous.end)?;
+                    write!(
+                        f,
+                        "; previous declaration at {}: line {}, column {} (bytes {}..{})",
+                        EscapedName(source_name),
+                        previous.line,
+                        previous.column,
+                        previous.start,
+                        previous.end
+                    )?;
                 }
                 Ok(())
             },
@@ -76,5 +90,32 @@ impl std::error::Error for AsmError {
             Self::Diagnostic { error, .. } => Some(error.as_ref()),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_names_are_escaped_in_primary_and_related_locations() {
+        let span = SourceSpan { start: 0, end: 1, line: 1, column: 2 };
+        for control in ['\n', '\r', '\t', '\x1b'] {
+            let name = format!("경로/{control}file.s");
+            let error = AsmError::ParserError("bad".into()).at(&name, span, Some(span));
+            let rendered = error.to_string();
+            assert!(!rendered.contains(control), "{rendered:?}");
+            assert_eq!(rendered.matches(&control.escape_debug().to_string()).count(), 2);
+            assert!(rendered.contains("line 1, column 2 (bytes 0..1)"));
+            if let AsmError::Diagnostic { source_name, .. } = error {
+                assert_eq!(source_name, name);
+            } else {
+                panic!("expected located assembler error");
+            }
+        }
+        assert!(AsmError::ParserError("bad".into())
+            .at("경로/파일.s", span, None)
+            .to_string()
+            .contains("경로/파일.s"));
     }
 }

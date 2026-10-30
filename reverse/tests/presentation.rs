@@ -38,11 +38,11 @@ fn symbolic_relocations_suppress_placeholder_call_targets() {
         kind: object::RelocKind::PLT32,
     };
     let annotations = [&annotation];
-    let report = format::instruction_json(&instruction, 0x400000, &annotations);
+    let report = format::instruction_json(&instruction, 0x400000, &annotations).unwrap();
     assert!(report["target"].is_null());
     assert_eq!(report["relocations"][0]["symbol"], "external");
     assert_eq!(report["encoding"]["immediate"]["width_bytes"], 4);
-    let text = format::instruction_text(&instruction, 0x400000, &annotations);
+    let text = format::instruction_text(&instruction, 0x400000, &annotations).unwrap();
     assert!(text.contains("call reloc(external-4)"), "{text}");
     assert!(!text.contains("call 0x400005"));
 }
@@ -53,11 +53,35 @@ fn checked_target_and_address_rendering_preserves_overflow() {
     assert_eq!(instruction.relative_target(0x1000), Some(0x1005));
     assert_eq!(instruction.relative_target(u64::MAX), None);
     instruction.offset = 1;
-    let report = format::instruction_json(&instruction, u64::MAX, &[]);
+    let report = format::instruction_json(&instruction, u64::MAX, &[]).unwrap();
     assert!(report["address"].is_null());
     assert!(report["target"].is_null());
-    assert!(format::instruction_text(&instruction, u64::MAX, &[]).starts_with("overflow"));
-    assert_eq!(instruction.original_bytes(), [0xe8, 0, 0, 0, 0]);
+    assert!(format::instruction_text(&instruction, u64::MAX, &[]).unwrap().starts_with("overflow"));
+    assert_eq!(instruction.original_bytes().unwrap(), [0xe8, 0, 0, 0, 0]);
+}
+
+#[test]
+fn public_instruction_lengths_fail_before_text_or_json_rendering() {
+    let mut instruction = call();
+    for length in [0, 16, 255] {
+        instruction.length = length;
+        assert!(matches!(
+            instruction.original_bytes(),
+            Err(PresentationError::InvalidLength(actual)) if actual == length
+        ));
+        assert!(format::instruction_text(&instruction, 0, &[])
+            .unwrap_err()
+            .to_string()
+            .contains("expected 1..=15"));
+        assert!(format::instruction_json(&instruction, 0, &[]).is_err());
+    }
+    for length in [1, 5, 15] {
+        instruction.length = length;
+        assert_eq!(instruction.original_bytes().unwrap().len(), usize::from(length));
+        assert!(format::instruction_text(&instruction, 0, &[]).is_ok());
+        let report = format::instruction_json(&instruction, 0, &[]).unwrap();
+        assert_eq!(report["bytes"].as_array().unwrap().len(), usize::from(length));
+    }
 }
 
 #[test]

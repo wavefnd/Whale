@@ -151,6 +151,9 @@ pub fn negate(value: FloatBits) -> FloatBits {
 }
 
 pub fn arithmetic(op: &BinOp, lhs: FloatBits, rhs: FloatBits) -> Option<FloatBits> {
+    if !matches!(op, BinOp::FAdd | BinOp::FSub | BinOp::FMul | BinOp::FDiv | BinOp::FRem) {
+        return None;
+    }
     if lhs.width() != rhs.width() {
         return None;
     }

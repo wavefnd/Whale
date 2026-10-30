@@ -2,6 +2,8 @@
 
 use crate::{ConstValue, Type};
 
+use diagnostic::EscapedName;
+
 #[derive(Debug)]
 pub enum LowerError {
     Located { annotation: crate::SourceAnnotation, error: Box<LowerError> },
@@ -66,7 +68,7 @@ impl std::fmt::Display for LowerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Self::Located { annotation, error } = self {
             if let Some(source) = &annotation.source {
-                write!(f, "{}:{}:{}: ", source.file, source.line, source.column)?;
+                write!(f, "{}:{}:{}: ", EscapedName(&source.file), source.line, source.column)?;
             }
             write!(f, "original @n{}: {error}", annotation.id)
         } else {

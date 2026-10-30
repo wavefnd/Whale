@@ -287,8 +287,12 @@ pub struct Instruction {
 }
 
 impl Instruction {
-    pub fn original_bytes(&self) -> &[u8] {
-        &self.bytes[..self.length as usize]
+    /// Caller-supplied records use a checked length; decoders produce 1..=15.
+    pub fn original_bytes(&self) -> Result<&[u8], PresentationError> {
+        if !(1..=15).contains(&self.length) {
+            return Err(PresentationError::InvalidLength(self.length));
+        }
+        Ok(&self.bytes[..self.length as usize])
     }
 
     pub fn mnemonic(&self) -> String {
@@ -311,3 +315,21 @@ impl Instruction {
         u64::try_from(target).ok()
     }
 }
+
+/// An invalid caller-supplied instruction cannot be rendered as machine code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresentationError {
+    InvalidLength(u8),
+}
+
+impl std::fmt::Display for PresentationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidLength(length) => {
+                write!(f, "invalid instruction length {length}; expected 1..=15 bytes")
+            },
+        }
+    }
+}
+
+impl std::error::Error for PresentationError {}

@@ -49,6 +49,18 @@ class ItemSpacingTests(unittest.TestCase):
             'fn first() { let text = r##"{{{"##; }\n\nfn second() {}\n',
         )
 
+    def test_label_before_multiline_raw_string_preserves_literal_bytes(self):
+        source = "fn main(){'l:loop{print!(\"{}\",r\"'\nfn first() {}\nfn second() {}\n'\");break 'l;}}\n"
+        self.assertEqual(FORMAT_RUST.add_item_spacing(source), source)
+        self.assertEqual(FORMAT_RUST.add_item_spacing(FORMAT_RUST.add_item_spacing(source)), source)
+
+    def test_char_and_lifetime_before_raw_string_keep_item_spacing(self):
+        source = "fn first<'a>(value: &'a str) { let c = 'x'; let s = r\"text\"; }\nfn second() {}\n"
+        self.assertEqual(
+            FORMAT_RUST.add_item_spacing(source),
+            "fn first<'a>(value: &'a str) { let c = 'x'; let s = r\"text\"; }\n\nfn second() {}\n",
+        )
+
     def test_spaces_between_wave_items(self):
         source = "struct State {}\nfun first() {}\nexport(c) fun second() {}\n"
 

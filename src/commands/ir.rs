@@ -53,7 +53,9 @@ pub fn run(args: Vec<String>) {
                 if output.is_some() {
                     fail("duplicate -o option");
                 }
-                output = Some(args.next().unwrap_or_else(|| fail("-o requires a path")));
+                output = Some(args.next().filter(|value| !value.starts_with('-')).unwrap_or_else(
+                    || fail("-o requires a path; use ./--name for a dash-leading filename"),
+                ));
             },
             "--function" if command == "run" => {
                 if function.is_some() {

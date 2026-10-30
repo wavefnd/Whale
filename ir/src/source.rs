@@ -3,6 +3,8 @@
 //! does not infer a source location from SSA values, names or canonical text.
 use crate::{BlockId, FunctionId, GlobalId, Module};
 
+use diagnostic::EscapedName;
+
 use std::collections::{HashMap, HashSet};
 
 #[cfg_attr(feature = "socket", derive(serde::Serialize, serde::Deserialize))]
@@ -98,7 +100,7 @@ pub struct OriginalLocation {
 impl std::fmt::Display for OriginalLocation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some((file, span)) = &self.source {
-            write!(f, "{file}:{}:{} ", span.line, span.column)?;
+            write!(f, "{}:{}:{} ", EscapedName(file), span.line, span.column)?;
         }
         write!(f, "original @n{}", self.original)
     }

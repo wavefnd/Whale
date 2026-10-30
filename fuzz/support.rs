@@ -58,6 +58,9 @@ pub fn check(target: Target, bytes: &[u8]) -> bool {
     };
     match target {
         Target::Object => unreachable!("binary target handled before UTF-8 conversion"),
+        #[cfg(not(feature = "asm-amd64"))]
+        Target::Assembler => false,
+        #[cfg(feature = "asm-amd64")]
         Target::Assembler => {
             if let Ok(tokens) = assembler::tokens::tokenize(source) {
                 let _ = amd64::parser::parse(&tokens);

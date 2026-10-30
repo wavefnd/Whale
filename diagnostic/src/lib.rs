@@ -68,9 +68,10 @@ impl ToDiagnostic for Diagnostic {
 
 // Keep ordinary Unicode paths readable while preventing names from creating
 // new terminal lines or control sequences. Structured contexts stay lossless.
-struct ContextName<'a>(&'a str);
+/// Render a user-controlled name without terminal control characters.
+pub struct EscapedName<'a>(pub &'a str);
 
-impl fmt::Display for ContextName<'_> {
+impl fmt::Display for EscapedName<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use fmt::Write;
         for character in self.0.chars() {
@@ -90,12 +91,12 @@ impl fmt::Display for Diagnostic {
         for context in &self.contexts {
             match context {
                 Context::Source(s) => {
-                    write!(f, " at {}:{}:{}", ContextName(&s.source), s.line, s.column)?
+                    write!(f, " at {}:{}:{}", EscapedName(&s.source), s.line, s.column)?
                 },
                 Context::Object { name, member } => {
-                    write!(f, " in {}", ContextName(name))?;
+                    write!(f, " in {}", EscapedName(name))?;
                     if let Some(m) = member {
-                        write!(f, "({})", ContextName(m))?;
+                        write!(f, "({})", EscapedName(m))?;
                     }
                 },
                 Context::Input(i) => write!(f, " input {i}")?,

@@ -130,6 +130,15 @@ def strip_lexical_content(line, state):
             continue
 
         if line[i] == "'":
+            # A Rust label or lifetime starts with an identifier but has no
+            # closing apostrophe. A later quote can belong to a raw string on
+            # the same line, so do not use it as this token's terminator.
+            lifetime = re.match(r"'[A-Za-z_]\w*", line[i:])
+            if lifetime and not line.startswith("'", i + len(lifetime.group(0))):
+                result.append("'")
+                i += 1
+                continue
+
             closing_quote = line.find("'", i + 1)
             is_char_literal = (
                 closing_quote != -1

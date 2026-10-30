@@ -18,7 +18,9 @@ fn run(mode: &str, input: &Path, output: &Path) -> std::process::Output {
 
 fn cases() -> Vec<(&'static str, &'static [u8])> {
     #[allow(unused_mut)]
-    let mut cases: Vec<(&str, &[u8])> = vec![("asm", b"section .text\nret\n"), ("object", b"\xc3")];
+    let mut cases: Vec<(&str, &[u8])> = vec![("object", b"\xc3")];
+    #[cfg(feature = "asm-amd64")]
+    cases.push(("asm", b"section .text\nret\n"));
     #[cfg(feature = "socket-cli")]
     cases.push(("ir", br#"{"format_version":2,"semantics_version":1,"features":[],"program":{"declarations":[],"globals":[],"functions":[]}}"#));
     cases

@@ -72,6 +72,59 @@ fn chain(count: u32) -> Module {
     module(Type::Void, blocks, vec![(ValueId(7), Type::Bool)])
 }
 
+fn independent_calls(count: u32) -> Module {
+    let mut m = Module::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+    let signature = FunctionSignature::whale(vec![], Type::Void);
+    for n in 0..count {
+        let id = FunctionId(n);
+        let name = format!("function_{n}");
+        m.declarations.push(FunctionDecl {
+            id,
+            name: name.clone(),
+            signature: signature.clone(),
+            linkage: Linkage::Internal,
+            link_name: None,
+        });
+        m.functions.push(Function {
+            id,
+            name,
+            params: vec![],
+            ret_ty: Type::Void,
+            entry: BlockId(0),
+            blocks: vec![BasicBlock {
+                id: BlockId(0),
+                name: "entry".into(),
+                instructions: vec![
+                    Instruction::FunctionAddr {
+                        dst: ValueId(0),
+                        function: FunctionId(0),
+                        signature: signature.clone(),
+                    },
+                    Instruction::Call {
+                        convention: CallingConvention::Whale,
+                        dst: None,
+                        ret_ty: Type::Void,
+                        callee: Callee::Direct(FunctionId(0)),
+                        args: vec![],
+                    },
+                ],
+                terminator: Some(Terminator::Ret { ty: Type::Void, value: None }),
+            }],
+            value_types: vec![(ValueId(0), Type::FnPtr(Box::new(signature.clone())))],
+        });
+    }
+    m
+}
+
+#[test]
+fn declaration_and_direct_call_lookup_work_scales_with_function_count() {
+    for count in [100, 200, 400, 800] {
+        let m = independent_calls(count);
+        let stats = verify_module_with_stats(&m, IrLimits::default()).unwrap();
+        assert_eq!(stats.declaration_work, 6 * count as usize, "{stats:?}");
+    }
+}
+
 #[test]
 fn lookup_and_dominance_work_grow_linearly_without_reordering_ir() {
     for constructor in [moves, chain] {

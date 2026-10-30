@@ -1,3 +1,5 @@
+#![cfg(feature = "asm-amd64")]
+
 #[path = "../object/tests/common/mod.rs"]
 mod elf;
 

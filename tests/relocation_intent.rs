@@ -1,3 +1,5 @@
+#![cfg(feature = "asm-amd64")]
+
 use std::{fs, process::Command};
 
 fn u32_at(bytes: &[u8], offset: usize) -> u32 {

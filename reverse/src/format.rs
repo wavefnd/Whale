@@ -1,5 +1,5 @@
 //! Deterministic human and structured rendering of decoded facts.
-use crate::{image::Annotation, Instruction, Operand};
+use crate::{image::Annotation, Instruction, Operand, PresentationError};
 
 use serde_json::{json, Value};
 
@@ -55,9 +55,14 @@ pub fn operand_text(operand: &Operand, inst: &Instruction, base: u64) -> String 
     }
 }
 
-pub fn instruction_text(inst: &Instruction, base: u64, annotations: &[&Annotation]) -> String {
+/// Fallible because public instruction records can contain invalid lengths.
+pub fn instruction_text(
+    inst: &Instruction,
+    base: u64,
+    annotations: &[&Annotation],
+) -> Result<String, PresentationError> {
     let bytes =
-        inst.original_bytes().iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+        inst.original_bytes()?.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
     let operands = inst
         .operands
         .iter()
@@ -83,10 +88,16 @@ pub fn instruction_text(inst: &Instruction, base: u64, annotations: &[&Annotatio
         result
             .push_str(&format!(" ; {:?} {}{:+} @section+{}", a.kind, a.symbol, a.addend, a.offset));
     }
-    result
+    Ok(result)
 }
 
-pub fn instruction_json(inst: &Instruction, base: u64, annotations: &[&Annotation]) -> Value {
+/// Fallible because public instruction records can contain invalid lengths.
+pub fn instruction_json(
+    inst: &Instruction,
+    base: u64,
+    annotations: &[&Annotation],
+) -> Result<Value, PresentationError> {
+    let bytes = inst.original_bytes()?;
     let operands=inst.operands.iter().map(|o|match o{
   Operand::Register(r)=>json!({"kind":"register","name":r.name(),"class":format!("{:?}",r.class),"index":r.index,"width":r.width,"high8":r.high8}),
   Operand::Immediate(i)=>json!({"kind":"immediate","bits":i.value,"width":i.width,"encoded_width":i.encoded_width,"sign_extended":i.sign_extended}),
@@ -96,5 +107,7 @@ pub fn instruction_json(inst: &Instruction, base: u64, annotations: &[&Annotatio
     let field = |f: Option<crate::EncodingField>| {
         f.map(|f| json!({"offset":f.offset,"width_bytes":f.width,"bits":f.bits}))
     };
-    json!({"offset":inst.offset,"address":base.checked_add(inst.offset as u64),"length":inst.length,"bytes":inst.original_bytes(),"mnemonic":inst.mnemonic(),"operands":operands,"flow":format!("{:?}",inst.flow),"target":if annotations.is_empty(){inst.relative_target(base)}else{None},"encoding":{"prefixes":inst.encoding.prefixes,"rex":inst.encoding.rex,"opcode_offset":inst.encoding.opcode_offset,"opcode_length":inst.encoding.opcode_len,"modrm":inst.encoding.modrm.map(|b|json!({"offset":b.offset,"value":b.value})),"sib":inst.encoding.sib.map(|b|json!({"offset":b.offset,"value":b.value})),"displacement":field(inst.encoding.displacement),"immediate":field(inst.encoding.immediate)},"relocations":annotations.iter().map(|a|json!({"offset":a.offset,"symbol":a.symbol,"addend":a.addend,"kind":format!("{:?}",a.kind),"width_bytes":a.width})).collect::<Vec<_>>()})
+    Ok(
+        json!({"offset":inst.offset,"address":base.checked_add(inst.offset as u64),"length":inst.length,"bytes":bytes,"mnemonic":inst.mnemonic(),"operands":operands,"flow":format!("{:?}",inst.flow),"target":if annotations.is_empty(){inst.relative_target(base)}else{None},"encoding":{"prefixes":inst.encoding.prefixes,"rex":inst.encoding.rex,"opcode_offset":inst.encoding.opcode_offset,"opcode_length":inst.encoding.opcode_len,"modrm":inst.encoding.modrm.map(|b|json!({"offset":b.offset,"value":b.value})),"sib":inst.encoding.sib.map(|b|json!({"offset":b.offset,"value":b.value})),"displacement":field(inst.encoding.displacement),"immediate":field(inst.encoding.immediate)},"relocations":annotations.iter().map(|a|json!({"offset":a.offset,"symbol":a.symbol,"addend":a.addend,"kind":format!("{:?}",a.kind),"width_bytes":a.width})).collect::<Vec<_>>() }),
+    )
 }

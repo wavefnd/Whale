@@ -46,6 +46,18 @@ def validate_record(record, phase, count):
     return record
 
 
+def measurement_index(report, label):
+    measurements = {}
+    for entry in report["measurements"]:
+        name = entry["name"]
+        if type(name) is not str or not name:
+            raise ValueError(f"{label} has an invalid measurement name")
+        if name in measurements:
+            raise ValueError(f"{label} has a duplicate measurement: {name}")
+        measurements[name] = entry
+    return measurements
+
+
 def compare_reports(previous, current):
     # Timing comparisons need identical workloads/build mode/toolchain/host.
     # Different revisions and executable hashes are intentional, other changes
@@ -58,8 +70,8 @@ def compare_reports(previous, current):
     after_inputs = [{key: item[key] for key in workload_keys} for item in current.get("workloads", [])]
     if before_inputs != after_inputs:
         raise ValueError("comparison requires identical input and expected artifact hashes")
-    old = {entry["name"]: entry for entry in previous["measurements"]}
-    new = {entry["name"]: entry for entry in current["measurements"]}
+    old = measurement_index(previous, "baseline")
+    new = measurement_index(current, "current report")
     if old.keys() != new.keys():
         raise ValueError("comparison requires the same phases")
     comparison = {}

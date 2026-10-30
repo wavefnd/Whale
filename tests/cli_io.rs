@@ -13,6 +13,7 @@ fn version_forms_use_package_metadata() {
     }
 }
 
+#[cfg(feature = "asm-amd64")]
 #[test]
 fn artifact_input_budgets_check_boundaries_and_preserve_output() {
     let directory = tempfile::tempdir().unwrap();
@@ -160,7 +161,7 @@ fn closed_stdout(command: &mut Command) -> std::process::Output {
     command.stdout(Stdio::from(OwnedFd::from(writer))).output().unwrap()
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "asm-amd64"))]
 #[test]
 fn closed_artifact_stdout_preserves_completed_output_without_panicking() {
     let directory = tempfile::tempdir().unwrap();

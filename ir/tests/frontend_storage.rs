@@ -76,6 +76,51 @@ fn deref(e: a::Expr) -> a::Expr {
 }
 
 #[test]
+fn aggregate_assignment_snapshots_aliasing_rhs_without_changing_explicit_memcpy() {
+    let assignments = [
+        a::Stmt::Assign { name: "a".into(), value: var("a") },
+        a::Stmt::Store { place: var("a"), value: var("a") },
+        a::Stmt::Store { place: deref(address(var("a"))), value: var("a") },
+    ];
+    for assignment in assignments {
+        let m = lower(vec![function(
+            "array_alias",
+            uint(32),
+            vec![
+                decl("a", array(), literal()),
+                assignment,
+                a::Stmt::Return(Some(index(var("a"), n(8, 1)))),
+            ],
+        )])
+        .unwrap();
+        assert_eq!(interpret(&m, FunctionId(0), &[]).unwrap().value, Some(ConstValue::U(20)));
+    }
+    let init = a::Expr::Struct {
+        ty: record(),
+        fields: vec![
+            a::FieldInit { name: "byte".into(), value: n(8, 1) },
+            a::FieldInit { name: "wide".into(), value: n(64, 42) },
+        ],
+    };
+    for assignment in [
+        a::Stmt::Assign { name: "s".into(), value: var("s") },
+        a::Stmt::Store { place: deref(address(var("s"))), value: var("s") },
+    ] {
+        let m = lower(vec![function(
+            "struct_alias",
+            uint(64),
+            vec![
+                decl("s", record(), init.clone()),
+                assignment,
+                a::Stmt::Return(Some(field(var("s"), "wide"))),
+            ],
+        )])
+        .unwrap();
+        assert_eq!(interpret(&m, FunctionId(0), &[]).unwrap().value, Some(ConstValue::U(42)));
+    }
+}
+
+#[test]
 fn padded_structs_construct_copy_read_and_update_without_host_layout() {
     let init = a::Expr::Struct {
         ty: record(),

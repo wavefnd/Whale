@@ -42,6 +42,21 @@ class PublicationTests(unittest.TestCase):
                 for name, data in original.items():
                     (output / name).write_bytes(data)
             calls = []
+            publication_names = {
+                "publish-archive": archive_name,
+                "publish-provenance": "provenance.json",
+                "publish-meta": "asmobj.meta",
+            }
+            real_replace = os.replace
+            injected = False
+
+            def replace(source_path, destination):
+                nonlocal injected
+                if (not injected and failure in publication_names
+                        and Path(destination) == output / publication_names[failure]):
+                    injected = True
+                    raise OSError("injected publication failure")
+                return real_replace(source_path, destination)
 
             def fake_bootstrap(*args, **kwargs):
                 self.assertEqual(args, (source, output / "bootstrap-cache"))
@@ -90,10 +105,12 @@ class PublicationTests(unittest.TestCase):
             with patch.object(sys, "argv", arguments), \
                     patch.object(helper, "ensure_bootstrap", side_effect=fake_bootstrap), \
                     patch.object(helper, "run", side_effect=fake_run), \
+                    patch.object(helper.os, "replace", side_effect=replace), \
                     patch.dict(os.environ, {"AR": "asmobj-test-ar"}), \
                     contextlib.redirect_stdout(io.StringIO()):
                 if failure:
-                    with self.assertRaises(subprocess.CalledProcessError):
+                    expected = OSError if failure in publication_names else subprocess.CalledProcessError
+                    with self.assertRaises(expected):
                         helper.main()
                 else:
                     helper.main()
@@ -135,6 +152,16 @@ class PublicationTests(unittest.TestCase):
 
     def test_failed_first_build_never_publishes_partial_artifacts(self):
         for failure in ("bootstrap", "compile", "archive"):
+            with self.subTest(failure=failure):
+                self.publication(failure=failure, existing=False)
+
+    def test_each_publication_failure_rolls_back_last_good_set(self):
+        for failure in ("publish-archive", "publish-provenance", "publish-meta"):
+            with self.subTest(failure=failure):
+                self.publication(failure=failure)
+
+    def test_each_failed_first_publication_leaves_no_artifact_set(self):
+        for failure in ("publish-archive", "publish-provenance", "publish-meta"):
             with self.subTest(failure=failure):
                 self.publication(failure=failure, existing=False)
 

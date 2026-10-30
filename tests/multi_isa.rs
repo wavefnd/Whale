@@ -10,6 +10,13 @@ fn assemble(arch: &str, source: &str) -> AssemblerOutput {
         .unwrap_or_else(|e| panic!("{arch}: {source:?}: {e}"))
 }
 
+fn selected(arch: &str) -> bool {
+    (cfg!(feature = "asm-aarch64") && matches!(arch, "aarch64" | "arm64"))
+        || (cfg!(feature = "asm-riscv64") && arch == "riscv64")
+        || (cfg!(feature = "asm-loongarch64") && arch == "loongarch64")
+        || (cfg!(feature = "asm-amd64") && arch == "amd64")
+}
+
 fn u16_at(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
 }
@@ -48,7 +55,10 @@ fn section<'a>(bytes: &'a [u8], name: &str) -> (usize, &'a [u8]) {
 
 #[test]
 fn forward_backward_labels_and_numeric_branch_limits_are_checked() {
-    for (arch, branch) in [("aarch64", "b"), ("riscv64", "j"), ("loongarch64", "b")] {
+    for (arch, branch) in [("aarch64", "b"), ("riscv64", "j"), ("loongarch64", "b")]
+        .into_iter()
+        .filter(|(arch, _)| selected(arch))
+    {
         let out =
             assemble(arch, &format!(".text\n_42: {branch} end\nnop\nend: {branch} _42\nret\n"));
         let forward = assemble(arch, &format!("{branch} 8"));
@@ -69,7 +79,10 @@ fn canonical_numeric_registers_preserve_bytes_and_reject_malformed_names() {
         ("aarch64", "add", "x", [0x41, 0x00, 0x03, 0x8b]),
         ("riscv64", "add", "x", [0xb3, 0x00, 0x31, 0x00]),
         ("loongarch64", "add.d", "$r", [0x41, 0x8c, 0x10, 0x00]),
-    ] {
+    ]
+    .into_iter()
+    .filter(|(arch, _, _, _)| selected(arch))
+    {
         let source = format!("{mnemonic} {prefix}1,{prefix}2,{prefix}3");
         let out = assemble(arch, &source);
         assert_eq!(out.sections[0].data, expected);
@@ -100,6 +113,8 @@ fn cli_rejects_malformed_register_names_without_replacing_output() {
     let output = directory.path().join("register.o");
     for (arch, mnemonic, prefix) in
         [("aarch64", "add", "x"), ("riscv64", "add", "x"), ("loongarch64", "add.d", "$r")]
+            .into_iter()
+            .filter(|(arch, _, _)| selected(arch))
     {
         fs::write(&input, format!("{mnemonic} {prefix}1,{prefix}2,{prefix}3\n")).unwrap();
         let valid = Command::new(env!("CARGO_BIN_EXE_whale"))
@@ -136,7 +151,10 @@ fn elf_identity_symbol_relocations_and_sparse_bss_are_preserved() {
         ("aarch64", Machine::AArch64, 183, "bl", 283),
         ("riscv64", Machine::RiscV64, 243, "jal ra,", 17),
         ("loongarch64", Machine::LoongArch64, 258, "bl", 66),
-    ] {
+    ]
+    .into_iter()
+    .filter(|(arch, _, _, _, _)| selected(arch))
+    {
         let source=format!(".text\n.global entry\n.extern external\nentry: {call} external+4\nret\n.data\npayload: .quad entry+8\n.word external-4\n.bss\n.balign 4096\nstorage: .zero 1099511627776\n");
         let output = assemble(arch, &source);
         let target = ObjectTarget::elf64(machine);
@@ -183,7 +201,10 @@ fn cross_section_branches_keep_target_specific_relocations() {
         ("aarch64", "b.eq target+4"),
         ("riscv64", "beq a0,a1,target+4"),
         ("loongarch64", "beqz $a0,target+4"),
-    ] {
+    ]
+    .into_iter()
+    .filter(|(arch, _)| selected(arch))
+    {
         let out = assemble(arch, &format!("{instruction}\n.data\ntarget: .quad 0"));
         assert_eq!(out.sections[0].relocs.len(), 1);
         assert_eq!(out.sections[0].relocs[0].addend, 4);
@@ -262,7 +283,7 @@ fn invalid_operands_ranges_and_unimplemented_extensions_fail_explicitly() {
             ],
         ),
     ];
-    for (arch, inputs) in cases {
+    for (arch, inputs) in cases.into_iter().filter(|(arch, _)| selected(arch)) {
         for input in inputs {
             let err = registry
                 .assemble(arch, "bad.s", input, &AssemblyLimits::default())
@@ -278,7 +299,7 @@ fn invalid_operands_ranges_and_unimplemented_extensions_fail_explicitly() {
 #[test]
 fn shared_directives_limits_diagnostics_and_symbol_validation() {
     let registry = whale::builtins::registry();
-    for arch in ["aarch64", "riscv64", "loongarch64"] {
+    for arch in ["aarch64", "riscv64", "loongarch64"].into_iter().filter(|arch| selected(arch)) {
         let out=assemble(arch,".text\r\n.global start\r\nstart: nop // Unicode 주석\r\n.data\n.byte -1,255\n.hword 0x1234\n.word -1\n.quad 0xffffffffffffffff\n.bss\n.zero 8192\n");
         assert_eq!(out.sections[1].data, [vec![255, 255, 0x34, 0x12], vec![255; 12]].concat());
         assert_eq!(out.sections[2].zero_fill, 8192);
@@ -342,6 +363,7 @@ fn shared_directives_limits_diagnostics_and_symbol_validation() {
     }
 }
 
+#[cfg(feature = "asm-aarch64")]
 #[test]
 fn mismatched_relocation_namespaces_and_symbol_sections_never_serialize() {
     let mut out = assemble("aarch64", ".extern x\nbl x");
@@ -359,7 +381,10 @@ fn cli_assembles_three_isas_and_keeps_existing_output_on_failure() {
     let directory = tempfile::tempdir().unwrap();
     let input = directory.path().join("input.s");
     let output = directory.path().join("output.o");
-    for (arch, elf) in [("aarch64", 183), ("arm64", 183), ("riscv64", 243), ("loongarch64", 258)] {
+    for (arch, elf) in [("aarch64", 183), ("arm64", 183), ("riscv64", 243), ("loongarch64", 258)]
+        .into_iter()
+        .filter(|(arch, _)| selected(arch))
+    {
         fs::write(&input, ".global entry\nentry: nop\nret\n").unwrap();
         let result = Command::new(env!("CARGO_BIN_EXE_whale"))
             .args(["asm", &format!("--{arch}")])
@@ -405,7 +430,8 @@ fn parser_mutations_and_public_field_guards_never_panic() {
             bytes[index] = (state >> 24) as u8;
         }
         let text = String::from_utf8_lossy(&bytes);
-        for arch in ["aarch64", "riscv64", "loongarch64"] {
+        for arch in ["aarch64", "riscv64", "loongarch64"].into_iter().filter(|arch| selected(arch))
+        {
             let _ = registry.assemble(
                 arch,
                 "mutation.s",
@@ -422,42 +448,49 @@ fn parser_mutations_and_public_field_guards_never_panic() {
     assert!(assembler::fixed::displacement(0, 26, 0).is_err());
     assert_eq!(assembler::fixed::signed("-1", 32).unwrap(), u32::MAX);
     assert_eq!(assembler::fixed::unsigned("0xffffffff", 32).unwrap(), u32::MAX);
-    assert_eq!(
-        assemble("aarch64", "add x0,x1,# 1").sections[0].data,
-        assemble("aarch64", "add x0,x1,#1").sections[0].data
-    );
+    if selected("aarch64") {
+        assert_eq!(
+            assemble("aarch64", "add x0,x1,# 1").sections[0].data,
+            assemble("aarch64", "add x0,x1,#1").sections[0].data
+        );
+    }
 }
 
 #[test]
 fn fixed_source_metadata_and_input_ceiling_precede_allocation() {
     let registry = whale::builtins::registry();
-    let huge = " ".repeat(8 * 1024 * 1024 + 1);
-    assert!(registry
-        .assemble("aarch64", "large.s", &huge, &AssemblyLimits::default())
-        .err()
-        .unwrap()
-        .to_string()
-        .contains("input exceeds"));
-    let sections: String = (0..4096).map(|i| format!(".section s{i}\n")).collect();
-    assert!(registry
-        .assemble("riscv64", "many.s", &sections, &AssemblyLimits::default())
-        .err()
-        .unwrap()
-        .to_string()
-        .contains("section count"));
+    if selected("aarch64") {
+        let huge = " ".repeat(8 * 1024 * 1024 + 1);
+        assert!(registry
+            .assemble("aarch64", "large.s", &huge, &AssemblyLimits::default())
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("input exceeds"));
+    }
+    if selected("riscv64") {
+        let sections: String = (0..4096).map(|i| format!(".section s{i}\n")).collect();
+        assert!(registry
+            .assemble("riscv64", "many.s", &sections, &AssemblyLimits::default())
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("section count"));
+    }
 }
 
 #[test]
 fn registry_driven_cli_selection_checks_identity_before_reading_input() {
     let registry = whale::builtins::registry();
-    assert_eq!(
-        registry.assembler_ids().collect::<Vec<_>>(),
-        ["aarch64", "amd64", "loongarch64", "riscv64"]
-    );
+    let expected = ["aarch64", "amd64", "loongarch64", "riscv64"]
+        .into_iter()
+        .filter(|arch| selected(arch))
+        .collect::<Vec<_>>();
+    assert_eq!(registry.assembler_ids().collect::<Vec<_>>(), expected);
     let directory = tempfile::tempdir().unwrap();
     let input = directory.path().join("source.s");
     let output = directory.path().join("out.o");
-    for arch in ["aarch64", "riscv64", "loongarch64"] {
+    for arch in ["aarch64", "riscv64", "loongarch64"].into_iter().filter(|arch| selected(arch)) {
         fs::write(&input, "nop\nret").unwrap();
         let result = Command::new(env!("CARGO_BIN_EXE_whale"))
             .args(["asm", "--arch", arch])
@@ -468,6 +501,7 @@ fn registry_driven_cli_selection_checks_identity_before_reading_input() {
             .unwrap();
         assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     }
+    fs::write(&input, "nop\nret").unwrap();
     fs::remove_file(&input).unwrap();
     fs::write(&output, b"previous").unwrap();
     let result = Command::new(env!("CARGO_BIN_EXE_whale"))
@@ -480,6 +514,18 @@ fn registry_driven_cli_selection_checks_identity_before_reading_input() {
     assert!(!result.status.success());
     assert!(String::from_utf8_lossy(&result.stderr).contains("unregistered assembler"));
     assert_eq!(fs::read(&output).unwrap(), b"previous");
+    for arch in ["aarch64", "riscv64", "loongarch64"].into_iter().filter(|arch| !selected(arch)) {
+        let result = Command::new(env!("CARGO_BIN_EXE_whale"))
+            .args(["asm", "--arch", arch])
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(String::from_utf8_lossy(&result.stderr).contains("unregistered assembler"));
+        assert_eq!(fs::read(&output).unwrap(), b"previous");
+    }
     for args in [
         vec!["asm", "--arch"],
         vec!["asm", "--arch", "riscv64", "--amd64"],

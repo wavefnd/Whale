@@ -66,6 +66,67 @@ fn repeated_or_conflicting_architecture_options_fail_before_reading_input() {
 }
 
 #[test]
+fn ir_output_flags_reject_option_shaped_paths_before_publication() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = directory.path().join("input.wir");
+    fs::write(&input, include_str!("../ir/tests/fixtures/wave-control-v3.wir")).unwrap();
+    let lower_input = directory.path().join("input.json");
+    if cfg!(feature = "socket-cli") {
+        fs::write(&lower_input, include_str!("../ir/tests/fixtures/ast-v2-u128.json")).unwrap();
+    }
+    let output = directory.path().join("output with spaces.wir");
+    let mut modes = vec![("print", &input)];
+    if cfg!(feature = "socket-cli") {
+        modes.push(("lower", &lower_input));
+    }
+    for (mode, source) in modes {
+        fs::write(&output, b"previous output").unwrap();
+        for arguments in [vec!["-o"], vec!["-o", "--unexpected"]] {
+            let result = Command::new(env!("CARGO_BIN_EXE_whale"))
+                .current_dir(directory.path())
+                .args(["ir", mode])
+                .arg(source)
+                .args(arguments)
+                .output()
+                .unwrap();
+            assert_eq!(result.status.code(), Some(1), "{result:?}");
+            assert!(String::from_utf8_lossy(&result.stderr).contains("-o requires a path"));
+            assert_eq!(fs::read(&output).unwrap(), b"previous output");
+            assert!(!directory.path().join("--unexpected").exists());
+        }
+        let duplicate = Command::new(env!("CARGO_BIN_EXE_whale"))
+            .args(["ir", mode])
+            .arg(source)
+            .arg("-o")
+            .arg(&output)
+            .args(["-o", "again.wir"])
+            .output()
+            .unwrap();
+        assert!(!duplicate.status.success());
+        assert!(String::from_utf8_lossy(&duplicate.stderr).contains("duplicate -o"));
+        assert_eq!(fs::read(&output).unwrap(), b"previous output");
+        let valid = Command::new(env!("CARGO_BIN_EXE_whale"))
+            .args(["ir", mode])
+            .arg(source)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(valid.status.success(), "{valid:?}");
+        assert_ne!(fs::read(&output).unwrap(), b"previous output");
+        let dash_name = Command::new(env!("CARGO_BIN_EXE_whale"))
+            .current_dir(directory.path())
+            .args(["ir", mode])
+            .arg(source)
+            .args(["-o", "./--name"])
+            .output()
+            .unwrap();
+        assert!(dash_name.status.success(), "{dash_name:?}");
+        assert!(directory.path().join("--name").is_file());
+    }
+}
+
+#[test]
 fn help_describes_available_commands_and_object_options() {
     for args in [vec![], vec!["--help"], vec!["-h"]] {
         let result = Command::new(env!("CARGO_BIN_EXE_whale")).args(args).output().unwrap();

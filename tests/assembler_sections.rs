@@ -1,3 +1,5 @@
+#![cfg(feature = "asm-amd64")]
+
 use std::{collections::HashMap, fs, process::Command};
 
 fn u32_at(b: &[u8], n: usize) -> u32 {

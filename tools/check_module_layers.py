@@ -26,7 +26,7 @@ CORE = {
 
 def production_dependencies(manifest):
     for section in ("dependencies", "build-dependencies"):
-        yield from manifest.get(section, {}).values()
+        yield from manifest.get(section, {}).items()
     for conditional in manifest.get("target", {}).values():
         yield from production_dependencies(conditional)
 
@@ -34,6 +34,7 @@ def production_dependencies(manifest):
 def audit(root=ROOT):
     root = Path(root).resolve()
     workspace = tomllib.loads((root / "Cargo.toml").read_text())
+    inherited = workspace.get("workspace", {}).get("dependencies", {})
     members = set(workspace["workspace"]["members"]) | {"."}
     packages = {}
     for member in sorted(members):
@@ -47,11 +48,20 @@ def audit(root=ROOT):
     edges = {}
     for name, (location, manifest) in sorted(packages.items()):
         dependencies = set()
-        for dep in production_dependencies(manifest):
+        for alias, dep in production_dependencies(manifest):
+            base = location
+            if isinstance(dep, dict) and dep.get("workspace") is True:
+                if alias not in inherited:
+                    raise ValueError(f"{name}: missing workspace dependency {alias}")
+                dep = inherited[alias]
+                base = root
             if isinstance(dep, dict) and "path" in dep:
-                path = (location / dep["path"]).resolve()
+                path = (base / dep["path"]).resolve()
                 if path not in names:
                     raise ValueError(f"{name}: unclassified local dependency {path}")
+                expected = dep.get("package", alias)
+                if names[path] != expected:
+                    raise ValueError(f"{name}: dependency {alias} names {expected}, but {path} is {names[path]}")
                 dependencies.add(names[path])
         edges[name] = sorted(dependencies)
         if name in CORE:
