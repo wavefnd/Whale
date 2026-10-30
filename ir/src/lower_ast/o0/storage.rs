@@ -41,11 +41,22 @@ pub(super) fn write(
     fb.charge_lower_type(ty)?;
     let layout = crate::layout_of(ty, target).map_err(LowerError::Layout)?;
     if aggregate(ty) {
+        if ptr == value {
+            return Ok(());
+        }
+        // A frontend assignment may alias through an address expression.
+        // Snapshot the RHS before writing the destination; explicit IR memcpy
+        // keeps its overlap trap.
+        let temporary = fb.alloca_in_entry(ty.clone(), layout.align);
         let byte_ptr = Type::ptr_to(Type::U8);
         let dst = fb.cast(crate::CastOp::Bitcast, Type::ptr_to(ty.clone()), byte_ptr.clone(), ptr);
-        let src = fb.cast(crate::CastOp::Bitcast, Type::ptr_to(ty.clone()), byte_ptr, value);
+        let src =
+            fb.cast(crate::CastOp::Bitcast, Type::ptr_to(ty.clone()), byte_ptr.clone(), value);
+        let snapshot =
+            fb.cast(crate::CastOp::Bitcast, Type::ptr_to(ty.clone()), byte_ptr, temporary);
         let size = fb.const_uint(Type::U64, layout.size.into());
-        fb.memcpy(dst, src, size, layout.align);
+        fb.memcpy(snapshot, src, size, layout.align);
+        fb.memcpy(dst, snapshot, size, layout.align);
     } else {
         fb.store(ty.clone(), value, ptr, layout.align);
     }

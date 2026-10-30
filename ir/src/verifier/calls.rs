@@ -1,13 +1,34 @@
 // SPDX-License-Identifier: MPL-2.0
-use crate::{CallError, Callee, Instruction, Module, Type, VerifyError};
+use crate::{CallError, Callee, FunctionDecl, FunctionId, Instruction, Module, Type, VerifyError};
 
-use std::collections::HashSet;
+use std::cell::Cell;
+
+use std::collections::{HashMap, HashSet};
+
+pub(super) struct DeclarationIndex<'a> {
+    by_id: HashMap<FunctionId, &'a FunctionDecl>,
+    work: Cell<usize>,
+}
+
+impl<'a> DeclarationIndex<'a> {
+    fn get(&self, id: FunctionId) -> Option<&'a FunctionDecl> {
+        self.work.set(self.work.get().saturating_add(1));
+        self.by_id.get(&id).copied()
+    }
+
+    pub(super) fn work(&self) -> usize {
+        self.work.get()
+    }
+}
 
 fn error(name: &str, reason: CallError) -> VerifyError {
     VerifyError::Call { func: name.into(), reason }
 }
 
-pub(super) fn verify_declarations(m: &Module, limits: crate::IrLimits) -> Result<(), VerifyError> {
+pub(super) fn verify_declarations(
+    m: &Module,
+    limits: crate::IrLimits,
+) -> Result<DeclarationIndex<'_>, VerifyError> {
     for f in &m.functions {
         for (_, ty) in &f.value_types {
             validate_pointer_types(ty, limits).map_err(|e| error(&f.name, e))?;
@@ -24,6 +45,8 @@ pub(super) fn verify_declarations(m: &Module, limits: crate::IrLimits) -> Result
     let mut ids = HashSet::new();
     let mut names = HashSet::new();
     let mut links = HashSet::new();
+    let body_ids: HashSet<_> = m.functions.iter().map(|f| f.id).collect();
+    let mut by_id = HashMap::new();
     for decl in &m.declarations {
         crate::function::validate_decl_with_limits(decl, limits)
             .map_err(|e| error(&decl.name, e))?;
@@ -35,21 +58,22 @@ pub(super) fn verify_declarations(m: &Module, limits: crate::IrLimits) -> Result
                 return Err(error(&decl.name, CallError::LinkNameCollision(link.clone())));
             }
         }
-        if decl.linkage == crate::Linkage::Internal && !m.functions.iter().any(|f| f.id == decl.id)
-        {
+        if decl.linkage == crate::Linkage::Internal && !body_ids.contains(&decl.id) {
             return Err(error(&decl.name, CallError::MissingDefinition(decl.id)));
         }
+        by_id.insert(decl.id, decl);
     }
+    let index = DeclarationIndex {
+        by_id,
+        work: Cell::new(m.functions.len().saturating_add(m.declarations.len().saturating_mul(2))),
+    };
     let mut bodies = HashSet::new();
     for f in &m.functions {
         if !bodies.insert(f.id) {
             return Err(error(&f.name, CallError::DuplicateDefinition(f.id)));
         }
-        let decl = m
-            .declarations
-            .iter()
-            .find(|d| d.id == f.id)
-            .ok_or_else(|| error(&f.name, CallError::UnknownFunction(f.id)))?;
+        let decl =
+            index.get(f.id).ok_or_else(|| error(&f.name, CallError::UnknownFunction(f.id)))?;
         if decl.name != f.name
             || decl.signature.ret != f.ret_ty
             || decl.signature.params != f.params.iter().map(|p| p.ty.clone()).collect::<Vec<_>>()
@@ -57,11 +81,11 @@ pub(super) fn verify_declarations(m: &Module, limits: crate::IrLimits) -> Result
             return Err(error(&f.name, CallError::DefinitionMismatch(f.id)));
         }
     }
-    Ok(())
+    Ok(index)
 }
 
 pub(super) fn verify_instruction(
-    m: &Module,
+    declarations: &DeclarationIndex<'_>,
     f: &super::IndexedFunction<'_>,
     ins: &Instruction,
     limits: crate::IrLimits,
@@ -72,11 +96,8 @@ pub(super) fn verify_instruction(
                 crate::function::validate_signature_with_limits(signature, limits)?
             },
             Instruction::FunctionAddr { function, signature, .. } => {
-                let decl = m
-                    .declarations
-                    .iter()
-                    .find(|d| d.id == *function)
-                    .ok_or(CallError::UnknownFunction(*function))?;
+                let decl =
+                    declarations.get(*function).ok_or(CallError::UnknownFunction(*function))?;
                 if &decl.signature != signature {
                     return Err(CallError::AddressTypeMismatch);
                 }
@@ -84,11 +105,7 @@ pub(super) fn verify_instruction(
             Instruction::Call { dst, ret_ty, convention, callee, args } => {
                 let sig = match callee {
                     Callee::Direct(id) => {
-                        &m.declarations
-                            .iter()
-                            .find(|d| d.id == *id)
-                            .ok_or(CallError::UnknownFunction(*id))?
-                            .signature
+                        &declarations.get(*id).ok_or(CallError::UnknownFunction(*id))?.signature
                     },
                     Callee::Indirect(value) => match f.value_type(*value) {
                         Some(Type::FnPtr(sig)) => sig,

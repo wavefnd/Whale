@@ -22,6 +22,7 @@ use std::cell::Cell;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct VerificationStats {
     pub value_type_lookups: usize,
+    pub declaration_work: usize,
     pub dominance_queries: usize,
     pub analysis_work: usize,
 }
@@ -345,7 +346,7 @@ pub fn verify_module_for_target_with_stats(
             return Err(VerifyError::DuplicateFunction { name: f.name.clone() });
         }
     }
-    calls::verify_declarations(m, limits)?;
+    let declarations = calls::verify_declarations(m, limits)?;
     for f in &indexed {
         let mut blocks = HashSet::new();
         for block in &f.blocks {
@@ -548,13 +549,14 @@ pub fn verify_module_for_target_with_stats(
                         });
                     }
                 }
-                calls::verify_instruction(m, f, instruction, limits)?;
+                calls::verify_instruction(&declarations, f, instruction, limits)?;
                 operands::verify_instruction(f, instruction)?;
             }
         }
     }
     Ok(VerificationStats {
         value_type_lookups: indexed.iter().map(|f| f.queries.get()).sum(),
+        declaration_work: declarations.work(),
         dominance_queries: analysis.queries.get(),
         analysis_work: analysis.work.get(),
     })

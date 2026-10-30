@@ -22,6 +22,32 @@ fn scalar(ty: &str, input: &str) -> ConstValue {
 }
 
 #[test]
+fn public_float_conversion_rejects_invalid_types_and_payloads() {
+    let f16 = ConstValue::F(FloatBits::F16(0x3c00));
+    let f32 = ConstValue::F(FloatBits::F32(0x3f800000));
+    let f64 = ConstValue::F(FloatBits::F64(0x3ff0000000000000));
+    for (op, src, dst, value) in [
+        (CastOp::FTrunc, Type::F64, Type::F32, f16.clone()),
+        (CastOp::FTrunc, Type::F64, Type::F32, ConstValue::I(1)),
+        (CastOp::FExt, Type::F64, Type::F32, f64.clone()),
+        (CastOp::FTrunc, Type::F16, Type::F32, f16.clone()),
+        (CastOp::FExt, Type::F32, Type::F32, f32.clone()),
+        (CastOp::FExt, Type::F16, Type::U32, f16.clone()),
+        (CastOp::IToF_S, Type::U32, Type::F32, ConstValue::U(1)),
+        (CastOp::IToF_U, Type::I32, Type::F32, ConstValue::I(1)),
+        (CastOp::IToF_S, Type::I8, Type::F32, ConstValue::I(128)),
+        (CastOp::IToF_U, Type::U8, Type::F32, ConstValue::F(FloatBits::F32(0))),
+        (CastOp::FToI_S, Type::F32, Type::U32, f32.clone()),
+        (CastOp::FToI_U, Type::F32, Type::I32, f32.clone()),
+        (CastOp::FToI_S, Type::F32, Type::I32, ConstValue::U(1)),
+        (CastOp::Bitcast, Type::F32, Type::F32, f32.clone()),
+    ] {
+        assert_eq!(float::arithmetic::convert(&op, &src, &dst, &value), None, "{op:?}");
+    }
+    assert_eq!(float::arithmetic::convert(&CastOp::FExt, &Type::F16, &Type::F32, &f16), Some(f32));
+}
+
+#[test]
 fn independent_conversion_vectors_cover_every_width_pair_and_trap_site() {
     let mut modules = std::collections::HashMap::new();
     let mut traps = 0;

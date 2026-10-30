@@ -20,6 +20,37 @@ fn op(name: &str) -> BinOp {
 }
 
 #[test]
+fn non_float_opcodes_never_use_the_nan_fast_path() {
+    for op in [
+        BinOp::Add,
+        BinOp::Sub,
+        BinOp::Mul,
+        BinOp::UDiv,
+        BinOp::SDiv,
+        BinOp::URem,
+        BinOp::SRem,
+        BinOp::And,
+        BinOp::Or,
+        BinOp::Xor,
+        BinOp::Shl,
+        BinOp::LShr,
+        BinOp::AShr,
+    ] {
+        for raw in [0x3f800000, 0x7f800000, 0x7fc00000, 0x7f800001] {
+            assert_eq!(
+                float::arithmetic::arithmetic(&op, FloatBits::F32(raw), FloatBits::F32(0)),
+                None,
+                "{op:?} {raw:x}"
+            );
+        }
+        assert_eq!(
+            float::arithmetic::arithmetic(&op, FloatBits::F16(0x7e00), FloatBits::F32(0)),
+            None
+        );
+    }
+}
+
+#[test]
 fn exact_fraction_vectors_execute_at_every_declared_precision() {
     let mut modules = std::collections::HashMap::new();
     for row in include_str!("fixtures/float-arithmetic.txt").lines().filter(|l| !l.starts_with('#'))
