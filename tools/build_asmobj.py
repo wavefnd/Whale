@@ -77,8 +77,28 @@ def main():
             'bootstrap_provenance': str(bootstrap.provenance)}, indent=2) + '\n')
         fingerprint = temporary / 'asmobj.meta'
         fingerprint.write_text(metadata(source, archive.read_bytes(), args.target))
-        for path in (archive, provenance, fingerprint):
-            os.replace(path, output / path.name)
+        staged = (archive, provenance, fingerprint)
+        previous = {}
+        for path in staged:
+            destination = output / path.name
+            if destination.exists():
+                backup = temporary / (path.name + '.previous')
+                os.link(destination, backup)
+                previous[destination] = backup
+        published = []
+        try:
+            for path in staged:
+                destination = output / path.name
+                os.replace(path, destination)
+                published.append(destination)
+        except OSError:
+            for destination in reversed(published):
+                backup = previous.get(destination)
+                if backup is None:
+                    destination.unlink()
+                else:
+                    os.replace(backup, destination)
+            raise
     print(f'WHALE_ASMOBJ_DIR={output}')
 
 if __name__ == '__main__':

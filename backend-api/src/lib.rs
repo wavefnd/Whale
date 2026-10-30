@@ -24,7 +24,8 @@ pub enum Support {
 }
 
 pub struct Artifact {
-    /// Relative portable path, with Windows-compatible components. Paths in one
+    /// Relative portable path, with components at most 255 UTF-8 bytes and
+    /// 255 UTF-16 code units. Paths in one
     /// artifact set must be distinct under ASCII case folding and cannot be
     /// component-wise ancestors of one another. Unicode case folding is not applied.
     /// Validated before returning artifacts to callers.
@@ -200,6 +201,8 @@ pub fn compile(
 
 fn portable_component(part: &str) -> bool {
     if part.is_empty()
+        || part.len() > 255
+        || part.encode_utf16().count() > 255
         || part == "."
         || part == ".."
         || part.ends_with(['.', ' '])
@@ -421,5 +424,20 @@ mod tests {
         ];
         let artifacts = compile_names(&names).unwrap();
         assert_eq!(artifacts.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), names);
+    }
+
+    #[test]
+    fn artifact_components_obey_portable_encoded_length_limits() {
+        let ascii_255 = "x".repeat(255);
+        let ascii_256 = "x".repeat(256);
+        assert!(compile_names(&[&ascii_255]).is_ok());
+        let errors = compile_names(&[&ascii_256]).err().unwrap();
+        assert_eq!(errors[0].code, "backend.artifact");
+        assert!(compile_names(&[&format!("nested/{ascii_255}/file.o")]).is_ok());
+        assert!(compile_names(&[&format!("nested/{ascii_256}/file.o")]).is_err());
+        assert!(compile_names(&[&"é".repeat(127)]).is_ok());
+        assert!(compile_names(&[&"é".repeat(128)]).is_err());
+        assert!(compile_names(&[&"🦀".repeat(63)]).is_ok());
+        assert!(compile_names(&[&"🦀".repeat(64)]).is_err());
     }
 }
