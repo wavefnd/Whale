@@ -83,6 +83,28 @@ class BenchmarkChecks(unittest.TestCase):
         broken["workloads"][0]["sha256"]["input.asm"] = "b"
         with self.assertRaises(ValueError):
             benchmark.compare_reports(base, broken)
+
+    def test_comparison_rejects_duplicate_measurements_in_either_report(self):
+        entry = {"name": "small/asm-encode", "fingerprint": benchmark.fingerprint(record()),
+                 "median": {"phase_seconds": 2.0, "peak_rss_bytes": 1024}}
+        base = {"format_version": 1, "generator": "v1", "profile": "release", "rustc": "rustc", "host": {"cpu": "CPU"},
+                "build_environment": {"CARGO_INCREMENTAL": "0"}, "warmups": 1, "runs": 3,
+                "counts": [64, 32768], "measurements": [entry], "workloads": []}
+        current = copy.deepcopy(base)
+        self.assertIn("small/asm-encode", benchmark.compare_reports(base, current))
+        for side in ("baseline", "current"):
+            for position in (0, 1):
+                for same_fingerprint in (True, False):
+                    with self.subTest(side=side, position=position, same=same_fingerprint):
+                        before = copy.deepcopy(base)
+                        after = copy.deepcopy(current)
+                        target = before if side == "baseline" else after
+                        duplicate = copy.deepcopy(entry)
+                        if not same_fingerprint:
+                            duplicate["fingerprint"]["result_digest"] = "wrong"
+                        target["measurements"].insert(position, duplicate)
+                        with self.assertRaisesRegex(ValueError, "duplicate measurement"):
+                            benchmark.compare_reports(before, after)
         broken = copy.deepcopy(after)
         broken["measurements"][0]["fingerprint"]["output_bytes"] += 1
         with self.assertRaises(ValueError):
