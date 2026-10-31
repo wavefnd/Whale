@@ -33,7 +33,7 @@ else
     error('-Dasmobj-dir must be absolute.')
   endif
   archive_name = host_machine.system() == 'windows' ? 'whale_asmobj.lib' : 'libwhale_asmobj.a'
-  foreach artifact : [archive_name, 'asmobj.meta']
+  foreach artifact : [archive_name, 'asmobj.meta', 'provenance.json']
     if not fs.is_file(asmobj_directory / artifact)
       error('Missing asmobj module artifact: ' + (asmobj_directory / artifact))
     endif

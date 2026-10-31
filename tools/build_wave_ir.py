@@ -100,6 +100,9 @@ ABI_SOURCES = (
     'ir/src/printer_wave.rs',
     'ir/src/verifier/wave_cfg.rs',
     'ir/src/verifier/wave_shape.rs',
+    'ir/src/lib.rs',
+    'ir/src/function.rs',
+    'ir/src/global_storage.rs',
 )
 TARGETS = (
     'x86_64-unknown-linux-gnu',

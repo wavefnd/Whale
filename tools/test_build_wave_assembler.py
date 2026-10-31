@@ -103,7 +103,7 @@ class GuardTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    def test_plain_cargo_is_available_and_all_stale_or_corrupt_inputs_are_rejected(self):
+    def test_reference_is_explicit_and_all_stale_or_corrupt_inputs_are_rejected(self):
         for module, config in helper.MODULES.items():
             with self.subTest(module=module), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp).resolve()
@@ -126,12 +126,19 @@ class GuardTests(unittest.TestCase):
                     helper.abi_bytes(root, module), archive.read_bytes(), provenance.read_bytes(), NATIVE, "2")
                 metadata.write_text(original)
                 env = os.environ.copy()
-                for variable in ("WHALE_WAVE_ASSEMBLER_DIR", "WHALE_WAVE_AMD64_DIR"):
+                for variable in (f"WHALE_WAVE_{config['name'].upper()}_DIR"
+                                 for config in helper.MODULES.values()):
                     env.pop(variable, None)
                 env.update(CARGO_MANIFEST_DIR=str(source), TARGET=NATIVE)
+                env.pop("CARGO_FEATURE_RUST_REFERENCE", None)
                 plain = subprocess.run([str(self.guards[module])], env=env, capture_output=True)
-                self.assertEqual(plain.returncode, 0, plain.stderr)
-                self.assertNotIn(b"rustc-link-lib", plain.stdout)
+                self.assertNotEqual(plain.returncode, 0, plain.stderr)
+                self.assertIn(b"requires its Wave module", plain.stderr)
+                env["CARGO_FEATURE_RUST_REFERENCE"] = "1"
+                reference = subprocess.run([str(self.guards[module])], env=env, capture_output=True)
+                self.assertEqual(reference.returncode, 0, reference.stderr)
+                self.assertNotIn(b"rustc-link-lib", reference.stdout)
+                env.pop("CARGO_FEATURE_RUST_REFERENCE")
                 env["WHALE_WAVE_ASSEMBLER_DIR"] = str(output)
                 env[f"WHALE_WAVE_{name.upper()}_DIR"] = str(output)
 

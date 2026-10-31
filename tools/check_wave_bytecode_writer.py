@@ -9,9 +9,13 @@ native loader, verifier, printer, Rust interpreter, or writer helpers.
 import argparse
 import ctypes as c
 import hashlib
+import json
 import random
 import struct
+import sys
 from pathlib import Path
+
+from fuzz_checkpoint import Checkpoint
 
 U64 = c.c_uint64
 MISSING = (1 << 64) - 1
@@ -83,7 +87,16 @@ class Limits(c.Structure):
 class Result(c.Structure):
     _fields_ = [
         (name, U64)
-        for name in ["status", "code", "table", "index", "work", "decoded_bytes", "scratch_words"]
+        for name in [
+            "status",
+            "code",
+            "table",
+            "index",
+            "work",
+            "decoded_bytes",
+            "scratch_words",
+            "estimated_workspace_bytes",
+        ]
     ] + [("counts", U64 * 16)]
 
 
@@ -184,20 +197,112 @@ def expected_image(tables):
     return header + b"".join(directory) + b"".join(bodies)
 
 
+def snapshot(packet):
+    tables = []
+    for name, width in zip(PROGRAM_FIELDS, NATIVE_WORDS):
+        count = getattr(packet, name + "_count")
+        address = getattr(packet, name)
+        if width == 0:
+            tables.append(list(c.string_at(address, count)))
+        else:
+            words = c.cast(address, c.POINTER(U64))
+            tables.append(
+                [list(words[index * width : (index + 1) * width]) for index in range(count)]
+            )
+    return tables
+
+
+def replay(native, path):
+    with path.open("rb") as stream:
+        original = stream.read((64 << 20) + 1)
+    if len(original) > 64 << 20:
+        raise ValueError("writer replay exceeds 64 MiB")
+    record = json.loads(original)
+    if not isinstance(record, dict):
+        raise TypeError("writer replay must be an object")
+    if record.get("schema") != 1 or record.get("operation") not in ("verify", "write"):
+        raise ValueError("unsupported writer replay schema")
+    tables = record["tables"]
+    if not isinstance(tables, list) or len(tables) != 16:
+        raise ValueError("writer replay requires 16 raw semantic tables")
+    amount = 0
+    for rows, width in zip(tables, NATIVE_WORDS):
+        if not isinstance(rows, list):
+            raise TypeError("invalid writer replay table")
+        amount += len(rows) * (width * 8 if width else 1)
+        if amount > 64 << 20:
+            raise ValueError("writer replay table allocation exceeds 64 MiB")
+        for row in rows:
+            values = [row] if width == 0 else row
+            if not isinstance(values, list) or len(values) != (width if width else 1):
+                raise ValueError("invalid writer replay row")
+            maximum = MISSING if width else 255
+            if any(type(value) is not int or not 0 <= value <= maximum for value in values):
+                raise ValueError("invalid writer replay unsigned field")
+    tables[10] = bytes(tables[10])
+    raw_limits = record["limits"]
+    if (
+        not isinstance(raw_limits, dict)
+        or set(raw_limits) != {name for name, _ in Limits._fields_}
+        or any(type(value) is not int or not 0 <= value <= MISSING for value in raw_limits.values())
+    ):
+        raise ValueError("invalid writer replay limits")
+    limits = Limits(**raw_limits)
+    capacity, words = record["capacity"], record["scratch_words"]
+    if any(
+        type(value) is not int or not 0 <= value <= maximum
+        for value, maximum in ((capacity, 64 << 20), (words, (128 << 20) // 8))
+    ):
+        raise ValueError("invalid writer replay capacity")
+    expected = record["expected_status"]
+    if type(expected) is not int or not -1 <= expected <= 5:
+        raise ValueError("invalid writer replay expectation")
+    packet, keep = native.packet(tables)
+    scratch = (U64 * words)()
+    native.phase = "replay/" + record["operation"]
+    if record["operation"] == "verify":
+        result = Result()
+        status = native.verify(c.byref(packet), scratch, words, c.byref(limits), c.byref(result))
+        assert status == result.status and result.work <= limits.max_work, vars_result(result)
+    else:
+        query = record["query"]
+        if type(query) is not bool or (query and capacity != 0):
+            raise ValueError("invalid writer replay query")
+        status, required, output, result = native.publish(
+            packet, scratch, limits, capacity, query=query, expected_status=expected
+        )
+        if status == 0:
+            image = expected_image(tables)
+            assert required == len(image)
+            if not query:
+                assert output[:required] == image
+                assert output[required:] == bytes([0xA5]) * (capacity - required)
+        else:
+            assert output is None or output == bytes([0xA5]) * capacity
+    if expected == -1:
+        assert status != 0, vars_result(result)
+    else:
+        assert status == expected, vars_result(result)
+    assert keep
+
+
 class Native:
-    def __init__(self, library):
+    def __init__(self, library, checkpoint=None):
+        self.checkpoint = checkpoint
+        self.phase = "admission"
+        self.case = 0
         self.library = c.CDLL(str(library.resolve()))
-        self.verify = self.library.whale_ir_bytecode_verify
-        self.verify.argtypes = [
+        self._verify = self.library.whale_ir_bytecode_verify
+        self._verify.argtypes = [
             c.POINTER(Program),
             c.POINTER(U64),
             U64,
             c.POINTER(Limits),
             c.POINTER(Result),
         ]
-        self.verify.restype = c.c_int32
-        self.write = self.library.whale_ir_bytecode_write
-        self.write.argtypes = [
+        self._verify.restype = c.c_int32
+        self._write = self.library.whale_ir_bytecode_write
+        self._write.argtypes = [
             c.POINTER(Program),
             c.POINTER(c.c_uint8),
             U64,
@@ -207,7 +312,35 @@ class Native:
             c.POINTER(Limits),
             c.POINTER(Result),
         ]
-        self.write.restype = c.c_int32
+        self._write.restype = c.c_int32
+
+    def remember(
+        self, operation, packet, limits, capacity, scratch_words, expected_status, query=False
+    ):
+        if self.checkpoint is None:
+            return
+        tables = snapshot(packet)
+        record = {
+            "schema": 1,
+            "operation": operation,
+            "tables": tables,
+            "limits": {name: getattr(limits, name) for name, _ in Limits._fields_},
+            "capacity": capacity,
+            "scratch_words": scratch_words,
+            "expected_status": expected_status,
+            "query": query,
+        }
+        original = (json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n").encode()
+        self.checkpoint.before(
+            original, seed=0x363_2026, case=self.case, phase=self.phase, operation=operation
+        )
+        self.case += 1
+
+    def verify(self, packet, scratch, capacity, limits, result):
+        program = c.cast(packet, c.POINTER(Program)).contents
+        settings = c.cast(limits, c.POINTER(Limits)).contents
+        self.remember("verify", program, settings, 0, capacity, 2 if capacity == 0 else 0)
+        return self._verify(packet, scratch, capacity, limits, result)
 
     def packet(self, tables):
         packet = Program()
@@ -228,6 +361,8 @@ class Native:
         result = Result()
         status = self.verify(c.byref(packet), None, 0, c.byref(limits), c.byref(result))
         assert status == result.status == 2 and result.scratch_words > 0, vars_result(result)
+        assert result.decoded_bytes + result.scratch_words * 8 <= result.estimated_workspace_bytes
+        assert result.estimated_workspace_bytes <= limits.max_workspace_bytes
         scratch = (U64 * result.scratch_words)()
         status = self.verify(
             c.byref(packet), scratch, len(scratch), c.byref(limits), c.byref(result)
@@ -235,11 +370,12 @@ class Native:
         assert status == result.status == 0, vars_result(result)
         return scratch
 
-    def publish(self, packet, scratch, limits, capacity, *, query=False):
+    def publish(self, packet, scratch, limits, capacity, *, query=False, expected_status=0):
         output = None if query else (c.c_uint8 * capacity)(*([0xA5] * capacity))
         required = U64(MISSING)
         result = Result()
-        status = self.write(
+        self.remember("write", packet, limits, capacity, len(scratch), expected_status, query)
+        status = self._write(
             c.byref(packet),
             output,
             capacity,
@@ -276,6 +412,7 @@ def golden_cases(native, output_dir):
     ]
     hashes = {}
     for name, tables in cases:
+        native.phase = "golden/" + name
         packet, keep = native.packet(tables)
         limits = Limits()
         scratch = native.admitted(packet, limits)
@@ -285,6 +422,9 @@ def golden_cases(native, output_dir):
         status, required, actual, result = native.publish(packet, scratch, limits, required)
         assert status == 0 and required == len(expected), (name, vars_result(result))
         assert actual == expected, name
+        status, needed, padded, result = native.publish(packet, scratch, limits, required + 17)
+        assert status == 0 and needed == required, vars_result(result)
+        assert padded[:required] == expected and padded[required:] == bytes([0xA5]) * 17
         assert keep  # Keep all borrowed native arrays alive through both calls.
         hashes[name] = hashlib.sha256(expected).hexdigest()
         if output_dir:
@@ -294,17 +434,23 @@ def golden_cases(native, output_dir):
         text_end = struct.unpack_from("<Q", actual, 64 + 10 * 32 + 8)[0] + 3
         assert text_end % 8 == 3
         for capacity in (0, 1, len(expected) - 1):
-            status, needed, unchanged, failure = native.publish(packet, scratch, limits, capacity)
+            status, needed, unchanged, failure = native.publish(
+                packet, scratch, limits, capacity, expected_status=2
+            )
             assert status == 2 and needed == len(expected), vars_result(failure)
             assert unchanged == bytes([0xA5]) * capacity
         # The exact query cost admits verification but cannot admit the complete
         # publish pass. Reject before changing even byte zero of a large buffer.
         work_limits = Limits(max_work=query.work)
-        status, _, unchanged, failure = native.publish(packet, scratch, work_limits, len(expected))
+        status, _, unchanged, failure = native.publish(
+            packet, scratch, work_limits, len(expected), expected_status=3
+        )
         assert status == 3 and failure.work <= query.work, vars_result(failure)
         assert unchanged == bytes([0xA5]) * len(expected)
         short_limits = Limits(max_input_bytes=len(expected) - 1)
-        status, _, unchanged, failure = native.publish(packet, scratch, short_limits, len(expected))
+        status, _, unchanged, failure = native.publish(
+            packet, scratch, short_limits, len(expected), expected_status=-1
+        )
         assert status != 0, vars_result(failure)
         assert unchanged == bytes([0xA5]) * len(expected)
     # A fixed digest protects this independently authored fixture from accidental
@@ -337,11 +483,14 @@ def mutations(native, cases):
         (types, 10 + 4, 3),
         (values, 0, 1 << 32),
     ]
-    for _ in range(cases):
+    for case in range(cases):
+        native.phase = f"mutation/{case}"
         array, index, invalid = randomizer.choice(choices)
         previous = array[index]
         array[index] = invalid
-        status, _, unchanged, result = native.publish(packet, scratch, limits, size)
+        status, _, unchanged, result = native.publish(
+            packet, scratch, limits, size, expected_status=-1
+        )
         assert status != 0, (index, invalid, vars_result(result))
         assert unchanged == bytes([0xA5]) * size
         array[index] = previous
@@ -368,13 +517,16 @@ def mutations(native, cases):
         (import_fixture(referenced=True), 102, 0),
         (import_fixture(referenced=True, sysv=True), 103, 0),
     ):
+        native.phase = f"unsupported/{code}"
         packet, keep = native.packet(rejected)
         query = Result()
         status = native.verify(c.byref(packet), None, 0, c.byref(limits), c.byref(query))
         assert status == 2
         scratch = (U64 * query.scratch_words)()
         size = len(expected_image(rejected))
-        status, _, unchanged, result = native.publish(packet, scratch, limits, size)
+        status, _, unchanged, result = native.publish(
+            packet, scratch, limits, size, expected_status=5
+        )
         assert (status, result.code, result.table, result.index) == (5, code, 5, index), (
             vars_result(result)
         )
@@ -387,12 +539,34 @@ def main():
     parser.add_argument("--library", type=Path, required=True)
     parser.add_argument("--cases", type=int, default=2000)
     parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--artifacts", type=Path, default=Path("target/bytecode-writer-artifacts"))
+    parser.add_argument("--replay", type=Path)
     args = parser.parse_args()
     if not 0 <= args.cases <= 100_000:
         parser.error("--cases must be between 0 and 100000")
-    native = Native(args.library)
+    with args.library.open("rb") as stream:
+        library_digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    checkpoint = Checkpoint(
+        args.artifacts.resolve() / library_digest[:16],
+        "writer",
+        [
+            sys.executable,
+            Path(__file__).resolve(),
+            "--library",
+            args.library.resolve(),
+            "--artifacts",
+            args.artifacts.resolve(),
+        ],
+    )
+    native = Native(args.library, checkpoint)
+    if args.replay:
+        replay(native, args.replay)
+        checkpoint.finish(replayed=str(args.replay), calls=native.case)
+        print(f"bytecode writer replay passed: {args.replay}")
+        return
     hashes = golden_cases(native, args.output_dir)
     mutations(native, args.cases)
+    checkpoint.finish(goldens=len(hashes), mutations=args.cases, calls=native.case)
     print(
         f"bytecode writer: {len(hashes)} exact-byte goldens, "
         f"{args.cases} bounded rejected mutations; capacity/work/size atomicity passed"

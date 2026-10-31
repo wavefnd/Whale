@@ -4,7 +4,7 @@ use assembler::fixed::{native, Context, Instruction};
 
 use assembler::{AsmError, AssemblerOutput, AssemblyLimits};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rust-reference"))]
 use native::FixedText;
 
 use native::{FixedContext, FixedInput, FixedInstruction, FixedResult};
@@ -18,10 +18,10 @@ unsafe extern "C" {
         result: *mut FixedResult,
     ) -> i32;
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "rust-reference"))]
     fn whale_riscv64_operand(mode: u64, text: *const FixedText, result: *mut FixedResult) -> i32;
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "rust-reference"))]
     fn whale_riscv64_branch(
         jump: u64,
         f3: u64,
@@ -59,7 +59,7 @@ pub(crate) fn encode(
     native::encode(instruction, context, whale_riscv64_instruction, render)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rust-reference"))]
 fn operand(mode: u64, text: &str) -> Result<(u64, u64), AsmError> {
     let text_record = FixedText::new(text);
     let mut result = FixedResult::new();
@@ -68,7 +68,7 @@ fn operand(mode: u64, text: &str) -> Result<(u64, u64), AsmError> {
     Ok((result.word, result.detail))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rust-reference"))]
 pub(crate) fn reg(text: &str) -> Result<u32, AsmError> {
     let (word, detail) = operand(0, text)?;
     if word >= 32 || detail != 0 {
@@ -77,7 +77,7 @@ pub(crate) fn reg(text: &str) -> Result<u32, AsmError> {
     Ok(word as u32)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rust-reference"))]
 pub(crate) fn memory(text: &str) -> Result<(u32, u32), AsmError> {
     let (word, detail) = operand(1, text)?;
     if word >= 32 || detail >= 4096 {
@@ -86,7 +86,7 @@ pub(crate) fn memory(text: &str) -> Result<(u32, u32), AsmError> {
     Ok((word as u32, detail as u32))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rust-reference"))]
 pub(crate) fn fence_mask(text: &str) -> Result<u32, AsmError> {
     let (word, detail) = operand(2, text)?;
     if word >= 16 || detail != 0 {
@@ -95,7 +95,7 @@ pub(crate) fn fence_mask(text: &str) -> Result<u32, AsmError> {
     Ok(word as u32)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rust-reference"))]
 pub(crate) fn branch(
     jump: bool,
     f3: u32,

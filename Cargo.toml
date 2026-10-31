@@ -33,6 +33,7 @@ asm-riscv64 = ["dep:riscv64"]
 asm-loongarch64 = ["dep:loongarch64"]
 socket-cli = ["ir/socket"]
 native-linker = ["dep:linker"]
+rust-reference = ["assembler/rust-reference", "ir/rust-reference", "toolchain/rust-reference", "amd64?/rust-reference", "aarch64?/rust-reference", "riscv64?/rust-reference", "loongarch64?/rust-reference"]
 
 [dependencies]
 assembler = { path = "assembler" }
@@ -52,6 +53,9 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 same-file = "1"
 tempfile = "3"
+
+[build-dependencies]
+serde_json = "1"
 
 [[example]]
 name = "benchmark_probe"

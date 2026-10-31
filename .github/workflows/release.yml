@@ -44,6 +44,12 @@ jobs:
       version: ${{ steps.identity.outputs.version }}
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+      WHALE_WAVE_IR_DIR: ${{ github.workspace }}/.ci-wave/ir
+      WHALE_WAVE_ASSEMBLER_DIR: ${{ github.workspace }}/.ci-wave/common
+      WHALE_WAVE_AMD64_DIR: ${{ github.workspace }}/.ci-wave/amd64
+      WHALE_WAVE_AARCH64_DIR: ${{ github.workspace }}/.ci-wave/aarch64
+      WHALE_WAVE_RISCV64_DIR: ${{ github.workspace }}/.ci-wave/riscv64
+      WHALE_WAVE_LOONGARCH64_DIR: ${{ github.workspace }}/.ci-wave/loongarch64
     steps:
       - name: Check input syntax before checkout
         env:
@@ -65,6 +71,11 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
+      - name: Download native Wave source modules
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - name: Validate exact commit, Cargo version and existing tag
         id: identity
         env:
@@ -95,21 +106,33 @@ jobs:
           - os: ubuntu-24.04
             host: x86_64-unknown-linux-gnu
             binary: target/release/whale
+            features: socket-cli
+            package_flags: --require-wave
           - os: ubuntu-24.04-arm
             host: aarch64-unknown-linux-gnu
             binary: target/release/whale
+            features: socket-cli,rust-reference
+            package_flags: ''
           - os: macos-15-intel
             host: x86_64-apple-darwin
             binary: target/release/whale
+            features: socket-cli,rust-reference
+            package_flags: ''
           - os: macos-15
             host: aarch64-apple-darwin
             binary: target/release/whale
+            features: socket-cli,rust-reference
+            package_flags: ''
           - os: windows-2025
             host: x86_64-pc-windows-msvc
             binary: target/release/whale.exe
+            features: socket-cli,rust-reference
+            package_flags: ''
           - os: windows-11-arm
             host: aarch64-pc-windows-msvc
             binary: target/release/whale.exe
+            features: socket-cli,rust-reference
+            package_flags: ''
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/${{ matrix.host }}
       SOURCE: ${{ needs.source.outputs.source }}
@@ -125,18 +148,34 @@ jobs:
         with:
           name: ${{ needs.asmobj.outputs.artifact_name }}
           path: .ci-asmobj
+      - name: Download validated native Wave source modules
+        if: matrix.host == 'x86_64-unknown-linux-gnu'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
+      - name: Select the native Wave product
+        if: matrix.host == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          echo "WHALE_WAVE_IR_DIR=$GITHUB_WORKSPACE/.ci-wave/ir" >> "$GITHUB_ENV"
+          echo "WHALE_WAVE_ASSEMBLER_DIR=$GITHUB_WORKSPACE/.ci-wave/common" >> "$GITHUB_ENV"
+          for module in AMD64 AARCH64 RISCV64 LOONGARCH64; do
+            directory=$(echo "$module" | tr '[:upper:]' '[:lower:]')
+            echo "WHALE_WAVE_${module}_DIR=$GITHUB_WORKSPACE/.ci-wave/$directory" >> "$GITHUB_ENV"
+          done
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
       - run: rustup toolchain install stable-${{ matrix.host }} --profile minimal
       - run: python tools/ci.py host --expected ${{ matrix.host }}
-      - run: python tools/ci.py run --name build -- cargo build --release --workspace --all-features --locked
+      - run: python tools/ci.py run --name build -- cargo build --release --workspace --features ${{ matrix.features }} --locked
       - name: Test each native package producer
         run: python -m unittest discover -s tools -p test_release.py -v
       - name: Create deterministic native archive
-        run: python tools/release.py package --binary ${{ matrix.binary }} --directory dist --target ${{ matrix.host }} --version ${{ env.VERSION }} --source ${{ env.SOURCE }} --socket-cli
+        run: python tools/release.py package --binary ${{ matrix.binary }} --directory dist --target ${{ matrix.host }} --version ${{ env.VERSION }} --source ${{ env.SOURCE }} --socket-cli ${{ matrix.package_flags }}
       - name: Execute the extracted binary outside the checkout
-        run: python tools/release.py validate --directory dist --target ${{ matrix.host }} --version ${{ env.VERSION }} --source ${{ env.SOURCE }}
+        run: python tools/release.py validate --directory dist --target ${{ matrix.host }} --version ${{ env.VERSION }} --source ${{ env.SOURCE }} ${{ matrix.package_flags }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-${{ github.run_id }}-${{ matrix.host }}

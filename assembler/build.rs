@@ -31,5 +31,6 @@ const ABI_SOURCES: &[&str] = &[
     "assembler/src/tokens_wave.rs",
     "assembler/src/fixed.rs",
     "assembler/src/fixed_wave.rs",
+    "assembler/src/lib.rs",
 ];
 include!("build_support.rs");

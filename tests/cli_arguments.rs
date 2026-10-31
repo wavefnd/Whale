@@ -134,7 +134,7 @@ fn help_describes_available_commands_and_object_options() {
         let text = String::from_utf8(result.stdout).unwrap();
         assert!(text.contains("whale asm --amd64"));
         assert!(text.contains("raw bytes"));
-        assert!(text.contains("Static Linux AMD64"));
+        assert_eq!(text.contains("Static Linux AMD64"), cfg!(feature = "native-linker"));
         assert!(text.contains("run"));
         for flag in ["--aarch64", "--riscv64", "--loongarch64"] {
             assert!(text.contains(flag));

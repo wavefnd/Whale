@@ -42,5 +42,6 @@ const ABI_SOURCES: &[&str] = &[
     "assembler/amd64/src/encoding/modrm.rs",
     "assembler/amd64/src/encoding/rex.rs",
     "assembler/amd64/src/encoding/sib.rs",
+    "assembler/amd64/src/lib.rs",
 ];
 include!("../build_support.rs");

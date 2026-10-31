@@ -584,7 +584,7 @@ pub(super) fn return_value(
     }
 }
 
-pub(super) fn global_storage(
+fn global_storage_policy(
     global: &crate::GlobalStorage,
     budget: &AnalysisBudget,
 ) -> Result<(), VerifyError> {
@@ -621,7 +621,58 @@ pub(super) fn global_storage(
         24 => crate::GlobalStorageError::ReadOnlyUninitialized,
         _ => return Err(resource_error(budget)),
     };
-    Err(VerifyError::GlobalStorage { name: global.name.clone(), global: global.id, reason })
+    Err(VerifyError::GlobalStorage { name: String::new(), global: global.id, reason })
+}
+
+fn boundary_budget(limits: crate::IrLimits) -> AnalysisBudget {
+    AnalysisBudget {
+        limit: limits.max_analysis_work,
+        work: std::cell::Cell::new(0),
+        queries: std::cell::Cell::new(0),
+    }
+}
+
+pub(super) fn global_storage(
+    global: &crate::GlobalStorage,
+    budget: &AnalysisBudget,
+) -> Result<(), VerifyError> {
+    global_storage_policy(global, budget).map_err(|error| match error {
+        VerifyError::GlobalStorage { global: id, reason, .. } => {
+            VerifyError::GlobalStorage { name: global.name.clone(), global: id, reason }
+        },
+        other => other,
+    })
+}
+
+pub(crate) fn validate_global_boundary(
+    global: &crate::GlobalStorage,
+    limits: crate::IrLimits,
+) -> Result<(), crate::GlobalStorageError> {
+    crate::limits::Budget::new(limits)
+        .and_then(|mut budget| budget.ty(&global.ty))
+        .map_err(crate::GlobalStorageError::ResourceLimit)?;
+    global_storage_policy(global, &boundary_budget(limits)).map_err(|error| match error {
+        VerifyError::GlobalStorage { reason, .. } => reason,
+        VerifyError::ResourceLimit(limit) => crate::GlobalStorageError::ResourceLimit(limit),
+        _ => crate::GlobalStorageError::ResourceLimit(crate::LimitError {
+            resource: crate::Resource::AnalysisWork,
+            limit: limits.max_analysis_work,
+        }),
+    })
+}
+
+pub(crate) fn validate_signature_boundary(
+    sig: &crate::FunctionSignature,
+    limits: crate::IrLimits,
+) -> Result<(), CallError> {
+    signature(sig, limits, &boundary_budget(limits)).map_err(|error| match error {
+        VerifyError::Call { reason, .. } => reason,
+        VerifyError::ResourceLimit(limit) => CallError::ResourceLimit(limit),
+        _ => CallError::ResourceLimit(crate::LimitError {
+            resource: crate::Resource::AnalysisWork,
+            limit: limits.max_analysis_work,
+        }),
+    })
 }
 
 fn signature_error(status: u64, detail: u64) -> CallError {

@@ -1031,6 +1031,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "rust-reference")]
     fn public_context_relative_transport_matches_reference_and_appends_only_native_relocations() {
         let span = SourceSpan { start: 0, end: 1, line: 1, column: 1 };
         let symbols = BTreeMap::from([
@@ -1072,6 +1073,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "rust-reference")]
     fn common_numeric_and_operand_facades_match_explicit_rust_reference() {
         for text in [
             "0",

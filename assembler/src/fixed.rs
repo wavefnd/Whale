@@ -49,6 +49,7 @@ pub struct Context<'a> {
 }
 
 #[doc(hidden)]
+#[cfg(feature = "rust-reference")]
 #[path = "fixed_reference.rs"]
 pub mod reference;
 
@@ -66,6 +67,7 @@ impl Context<'_> {
     }
 
     #[doc(hidden)]
+    #[cfg(feature = "rust-reference")]
     pub fn pc_relative_reference(&mut self, operand: &str, code: u32) -> Result<i64, AsmError> {
         reference::pc_relative(self, operand, code)
     }
@@ -129,5 +131,33 @@ pub fn assemble(
     if let Some(output) = isa.native_assemble(name, source, limits) {
         return output;
     }
-    reference::assemble(isa, name, source, limits)
+    #[cfg(not(whale_wave_assembler))]
+    return reference::assemble(isa, name, source, limits);
+    #[cfg(whale_wave_assembler)]
+    Err(AsmError::Backend("selected ISA has no Wave source driver"))
+}
+
+#[cfg(all(test, whale_wave_assembler))]
+mod driver_selection_tests {
+    use super::*;
+
+    struct Missing;
+
+    impl FixedIsa for Missing {
+        fn id(&self) -> &'static str {
+            "missing"
+        }
+
+        fn encode(&self, _: &Instruction, _: &mut Context<'_>) -> Result<u32, AsmError> {
+            panic!("a missing native driver cannot invoke Rust encoding")
+        }
+    }
+
+    #[test]
+    fn missing_wave_driver_never_uses_the_reference_parser() {
+        assert!(matches!(
+            assemble(&Missing, "input.s", "nop", &AssemblyLimits::default()),
+            Err(AsmError::Backend("selected ISA has no Wave source driver"))
+        ));
+    }
 }

@@ -34,7 +34,12 @@ fn hash_file(path: &std::path::Path, maximum: Option<u64>) -> String {
 fn main() {
     println!("cargo:rustc-check-cfg=cfg({CFG})");
     println!("cargo:rerun-if-env-changed={ENV}");
-    let Some(directory) = env::var_os(ENV) else { return };
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_RUST_REFERENCE");
+    let Some(directory) = env::var_os(ENV) else {
+        assert!(env::var_os("CARGO_FEATURE_RUST_REFERENCE").is_some(),
+            "{CFG} requires its Wave module; build with Meson or select rust-reference explicitly for comparison");
+        return;
+    };
     if CFG != "whale_wave_assembler" {
         assert!(
             env::var_os("WHALE_WAVE_ASSEMBLER_DIR").is_some(),

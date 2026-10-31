@@ -21,6 +21,7 @@ if wave_assembler_directory == '' and wave_source != ''
     output: [archive_name, 'wave-assembler.meta', 'provenance.json'],
     command: [python, files('../tools/build_wave_assembler.py'), arguments],
     depend_files: files(
+      'src/lib.rs',
       'model.wave',
       'unicode.wave',
       'numeric.wave',

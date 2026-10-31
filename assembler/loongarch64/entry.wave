@@ -26,3 +26,8 @@ export(c) fun whale_loongarch64_assemble(packet: ptr<FixedInput>,
     }
     return 0;
 }
+
+// Distinct compiled identity used by product composition checks.
+export(c) fun whale_loongarch64_module_identity() -> u64 {
+    return 6289348675458842881;
+}

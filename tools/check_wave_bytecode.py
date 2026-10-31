@@ -4,6 +4,10 @@
 import argparse
 import ctypes as C
 import json
+import os
+import sys
+
+from fuzz_checkpoint import Checkpoint
 from pathlib import Path
 import random
 import struct
@@ -38,7 +42,7 @@ class Limits(C.Structure):
 
 class Result(C.Structure):
     _fields_ = [(field, U) for field in
-                'status code table index work decoded_bytes scratch_words'.split()] + [('counts', U * 16)]
+                'status code table index work decoded_bytes scratch_words estimated_workspace_bytes'.split()] + [('counts', U * 16)]
 
 
 def words(*values):
@@ -180,7 +184,9 @@ def fixtures():
 
 
 class Native:
-    def __init__(self, path):
+    def __init__(self, path, checkpoint=None):
+        self.checkpoint = checkpoint
+        self.context = {}
         self.library = C.CDLL(str(path))
         self.probe = self.library.whale_ir_bytecode_probe
         self.probe.argtypes = [C.c_void_p, U, C.POINTER(Limits), C.POINTER(Result)]
@@ -196,12 +202,16 @@ class Native:
 
     def admit(self, data, limits=None):
         limits = limits or Limits()
+        if self.checkpoint:
+            self.checkpoint.before(data, **self.context,
+                                   limits={key: getattr(limits, key) for key, _ in Limits._fields_})
         raw, result = C.create_string_buffer(data), Result()
         status = self.probe(raw, len(data), C.byref(limits), C.byref(result))
         assert status == result.status and result.work <= limits.max_work
         if status:
             assert status != 4, ('file caused transport error', status, result.code)
             return status, result, None
+        assert result.estimated_workspace_bytes == result.decoded_bytes + result.scratch_words * 8
         program, buffers = Program(), []
         for name, count, stride in zip(FIELDS, result.counts, NATIVE_STRIDES):
             buffer = (U * max(1, (count * stride + 7) // 8))()
@@ -213,7 +223,29 @@ class Native:
                            C.byref(limits), C.byref(result))
         assert status == result.status and result.work <= limits.max_work
         assert status != 4, ('file caused transport error', status, result.code, result.table, result.index)
+        if status == 0:
+            assert result.estimated_workspace_bytes == workspace_estimate(data, result)
+            assert result.estimated_workspace_bytes <= limits.max_workspace_bytes
         return status, result, (program, buffers, scratch)
+
+
+def workspace_estimate(data, result):
+    tables = parse_directory(data)
+    rows = [list(struct.iter_unpack('<' + 'Q' * (stride // 8), table))
+            if stride != 1 else table for table, stride in zip(tables, STRIDES)]
+    expanded = []
+    for kind, child, first, count, _ in rows[0]:
+        if kind in (17, 19):
+            expanded.append(1 + expanded[child])
+        elif kind in (18, 20, 21):
+            expanded.append(1 + sum(expanded[rows[1][first + i][0]] for i in range(count)))
+        else:
+            expanded.append(1)
+    owned = 512 * (sum(expanded) + sum(expanded[function[1]] for function in rows[2]))
+    owned += len(tables[10]) + sum(rows[9][file[1]][1] for file in rows[11])
+    for table, allowance in [(8, 64), (9, 32), (11, 96), (12, 96), (13, 96), (15, 16)]:
+        owned += len(rows[table]) * allowance
+    return result.decoded_bytes + result.scratch_words * 8 + owned
 
 
 def main():
@@ -221,8 +253,14 @@ def main():
     parser.add_argument('--library', type=Path)
     parser.add_argument('--cases', type=int, default=10000)
     parser.add_argument('--scale', type=int, default=0)
+    parser.add_argument('--seed', type=int, default=0x57424331)
+    parser.add_argument('--artifacts', type=Path,
+                        default=None)
+    parser.add_argument('--replay', type=Path)
     parser.add_argument('--write-fixtures', type=Path)
     args = parser.parse_args()
+    if not 0 <= args.cases <= 100000 or not 0 <= args.scale <= 32768 or not 0 <= args.seed < 2**64:
+        parser.error('cases must be 0..100000, scale 0..32768 and seed an unsigned 64-bit integer')
     cases = fixtures()
     if args.write_fixtures:
         args.write_fixtures.mkdir(parents=True, exist_ok=True)
@@ -231,17 +269,43 @@ def main():
     if not args.library:
         assert args.write_fixtures, 'provide --library or --write-fixtures'
         return
-    native, checked = Native(args.library), 0
+    if args.artifacts is None:
+        import hashlib
+        root = Path(os.environ.get('WHALE_FUZZ_ARTIFACT_DIR', '.ci-artifacts/bytecode'))
+        args.artifacts = root / hashlib.sha256(args.library.read_bytes()).hexdigest()[:16]
+    args.artifacts = args.artifacts.resolve()
+    checkpoint = Checkpoint(args.artifacts, 'admission',
+                            [sys.executable, str(Path(__file__).resolve()), '--library', str(args.library.resolve())])
+    native, checked = Native(args.library, checkpoint), 0
+    if args.replay:
+        metadata_path = args.replay.with_suffix('.json')
+        record = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
+        with args.replay.open('rb') as stream:
+            data = stream.read((64 << 20) + 1)
+        native.context = {key: record[key] for key in ('case', 'seed', 'expected') if key in record}
+        status, _, _ = native.admit(data, Limits(**record.get('limits', {})))
+        if record.get('expected') is not None:
+            assert (status == 0) == record['expected']
+        checkpoint.finish(replay=str(args.replay), status=status)
+        print(json.dumps(dict(replay=str(args.replay), status=status)))
+        return
     for name, (data, expected) in cases.items():
+        native.context = dict(case=name, expected=expected)
         status, result, _ = native.admit(data)
         assert (status == 0) == expected, (name, status, result.code, result.table, result.index)
         if expected:
             parse_directory(data)
         checked += 1
+    native.context = dict(case='resource-boundaries', expected=None)
     valid = cases['return42.wbc'][0]
     status, result, _ = native.admit(valid)
     assert status == 0
     exact_work = result.work
+    exact_workspace = result.estimated_workspace_bytes
+    for maximum, expected in [(exact_workspace, 0), (exact_workspace - 1, 2)]:
+        status, _, _ = native.admit(valid, Limits(max_workspace_bytes=maximum))
+        assert status == expected, ('full workspace estimate', maximum, status, expected)
+        checked += 1
     for maximum, expected in [(exact_work, 0), (exact_work - 1, 3), (575, 3), (0, 3)]:
         status, _, _ = native.admit(valid, Limits(max_work=maximum))
         assert status == expected, ('cumulative work', maximum, status, expected)
@@ -249,6 +313,17 @@ def main():
     if args.scale:
         status, result, _ = native.admit(image(scale_tables(args.scale)))
         assert status == 0, ('scale', args.scale, status, result.code, result.table, result.index)
+        checked += 1
+        tables = simple_tables()
+        tables[0] += words(7, 0, 0, 0, 0) * min(args.scale * 8, 262144)
+        status, result, _ = native.admit(image(tables), Limits(max_workspace_bytes=256 << 20))
+        assert status == 0, ('flat type O0 stack bound', status, result.code)
+        checked += 1
+        tables = simple_tables()
+        tables[9], tables[10] = words(0, 2 << 20), b'x' * (2 << 20)
+        tables[11] = words(1, 0)
+        status, result, _ = native.admit(image(tables), Limits(max_workspace_bytes=8 << 20))
+        assert status == 0, ('large UTF8 O0 stack bound', status, result.code)
         checked += 1
     # Small shared type DAGs cannot trigger exponentially expanded host Types.
     tables = simple_tables()
@@ -266,9 +341,10 @@ def main():
     status, _, _ = native.admit(image(tables), Limits(max_workspace_bytes=256 << 10))
     assert status == 2, ('repeated filename budget', status)
     checked += 1
-    rng = random.Random(0x57424331)
+    rng = random.Random(args.seed)
     accepted = 0
-    for _ in range(args.cases):
+    for case in range(args.cases):
+        native.context = dict(case=case, seed=args.seed, expected=None)
         data = bytearray(valid)
         for _ in range(rng.randrange(1, 5)):
             at = rng.randrange(len(data))
@@ -278,6 +354,7 @@ def main():
             parse_directory(data)
             accepted += 1
         checked += 1
+    checkpoint.finish(checked=checked, mutations=args.cases, seed=args.seed)
     print(json.dumps(dict(status='passed', checked=checked, mutations=args.cases,
                           accepted_mutations=accepted, exact_valid_work=exact_work)))
 

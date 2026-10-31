@@ -1,10 +1,9 @@
 # Building Whale with Meson
 
-Meson configures the product, compiles the Wave `asmobj` and IR sources, then
-builds Rust components with Cargo. `assembler/asmobj/` is entirely Wave. IR model,
-text, verification, numeric semantics, passes and execution run in Wave when
-its archive is selected;
-Rust supplies typed transport and retained reference implementations.
+Meson builds the Wave IR, shared assembler, selected ISA modules and `asmobj`,
+then uses Cargo for Rust data transport, files, object formats and CLI components.
+IR and assembler production algorithms run in Wave. Rust references require the
+explicit `rust-reference` feature and are for comparison tests.
 Generated files and Cargo outputs stay in the selected build directory.
 
 ## Build, test and install
@@ -14,6 +13,7 @@ and a native linker. Building `asmobj` also requires LLVM 21 development
 libraries, `ar`, and installed Rust **1.89.0** for the pinned Wave compiler.
 The initial executable host for the linked module is **Linux x86_64 GNU**.
 Whale's Rust MSRV and the Wave bootstrap's Rust version are separate requirements.
+`whale build-info --json` reports linked module identities and build fingerprints.
 
 Provide a Wave Git repository containing commit
 `e0952ed65d07e14c6ed0aa64f3c9a5532dd7533b`. The helper reads that commit with
@@ -31,6 +31,7 @@ meson setup /tmp/whale-build \
   -Dwave-rust-toolchain=1.89
 meson compile -C /tmp/whale-build
 meson test -C /tmp/whale-build --print-errorlogs
+/tmp/whale-build/whale build-info --json
 DESTDIR=/tmp/whale-install meson install -C /tmp/whale-build
 /tmp/whale-install/usr/local/bin/whale --version
 ```
@@ -52,54 +53,62 @@ source list and artifact metadata. A compiler/std cache can be shared through
 `wave-bootstrap-dir`; cache identities and hashes are validated before reuse.
 Do not use the source tree's `target/` as a Meson build directory.
 
-## Reuse a built module
+## Reuse built modules or run Cargo checks
 
-Build the complete module directly when an existing archive is preferable:
+The helpers read the pinned Wave commit without changing its checkout:
+
+| Helper | Module |
+| --- | --- |
+| `tools/build_asmobj.py` | Assembly-to-object mapping |
+| `tools/build_wave_ir.py` | IR, passes, interpreter and bytecode |
+| `tools/build_wave_assembler.py --module common` | Shared assembler |
+| `tools/build_wave_assembler.py --module amd64` | Selected ISA; also `aarch64`, `riscv64`, `loongarch64` |
+
+Each accepts `--wave-source`, `--out-dir`, `--bootstrap-dir` and
+`--rust-toolchain` as in this example:
 
 ```sh
-LLVM_SYS_211_PREFIX=/usr/lib64/llvm21 python3 tools/build_asmobj.py \
-  --wave-source /absolute/path/to/Wave --out-dir /tmp/whale-asmobj \
-  --bootstrap-dir /tmp/whale-bootstrap --rust-toolchain 1.89
-meson setup /tmp/whale-prebuilt -Dasmobj-dir=/tmp/whale-asmobj
-meson compile -C /tmp/whale-prebuilt
-meson test -C /tmp/whale-prebuilt --print-errorlogs
+python3 tools/build_wave_ir.py --wave-source /absolute/path/to/Wave \
+  --out-dir /tmp/whale-ir --bootstrap-dir /tmp/whale-bootstrap --rust-toolchain 1.89
 ```
 
-Meson requires either `wave-source` or `asmobj-dir`; `asmobj` is part of the
-product. Explicit archive metadata is checked before linking. The helper records
-the pinned compiler, std, Rust/LLVM bootstrap requirements, ABI, source and archive
-hashes. Changing the Rust/Wave boundary requires rebuilding the archive. Failed
-compilation or archiving preserves the previous complete publication. Ambient environment
-variables cannot select a different module for a Meson product.
-Source builds also compile Wave IR parsing, printing, verification, numeric
-semantics, constant evaluation, verified passes and execution.
-With a prebuilt `asmobj`, pass `-Dwave-ir-dir=/absolute/path/to/built-wave-ir`
-to use them. Ordinary Cargo keeps the Rust reference during the IR migration.
-The Wave numeric core uses two 64-bit words for 128-bit integers and exact
-IEEE rounding; it does not depend on host floating-point arithmetic.
+Prebuilt Meson products require `-Dasmobj-dir=...`, `-Dwave-ir-dir=...`,
+`-Dwave-assembler-dir=...` and `-Dwave-ARCH-dir=...` for every selected ISA.
+Unselected ISA archives are not linked. Meson requires all selected modules;
+ambient environment variables cannot replace its explicit selections.
 
-Source builds also compile the shared Wave assembler and selected ISA modules.
-Prebuilt builds select them with `-Dwave-assembler-dir=...` and
-`-Dwave-ARCH-dir=...` for each selected ISA; unselected archives are not linked.
-For focused Cargo tests, `tools/build_wave_assembler.py --module common|amd64|aarch64|riscv64|loongarch64`
-produces the corresponding archive. Set `WHALE_WAVE_ASSEMBLER_DIR` and
-the corresponding `WHALE_WAVE_ARCH_DIR` explicitly; Cargo does not invoke Wave.
-
-For work confined to Rust components, ordinary Cargo builds remain available:
+For direct native Cargo checks, select those same archives explicitly:
 
 ```sh
-cargo build --workspace --locked
-cargo test -p ir --all-features --locked
-# Include the complete Wave module for assembly-to-object integration tests.
-export WHALE_ASMOBJ_DIR=/tmp/whale-asmobj
+export WHALE_ASMOBJ_DIR=/path/to/asmobj
+export WHALE_WAVE_IR_DIR=/path/to/ir
+export WHALE_WAVE_ASSEMBLER_DIR=/path/to/common
+export WHALE_WAVE_AMD64_DIR=/path/to/amd64
+export WHALE_WAVE_AARCH64_DIR=/path/to/aarch64
+export WHALE_WAVE_RISCV64_DIR=/path/to/riscv64
+export WHALE_WAVE_LOONGARCH64_DIR=/path/to/loongarch64
 cargo test --workspace --all-features --locked
 ```
 
-Cargo never bootstraps or downloads Wave automatically. A build without the
-module can inspect objects and use Rust IR APIs; assembly-to-object commands
-return an explicit unavailable error. There is no Rust implementation of the
-`asmobj` policies selected in its place. A linked executable needs no `wavec`
-at runtime.
+Source, ABI, archive and pinned compiler/std fingerprints are checked before
+linking; rebuild the affected archive after changing its boundary or Wave source.
+Failed compilation or archiving preserves the previous complete publication.
+Cargo never bootstraps or downloads Wave automatically. A linked executable
+needs no `wavec` at runtime. The numeric core uses two 64-bit words for 128-bit
+integers and exact IEEE rounding without host floating-point arithmetic.
+
+For deliberate Rust reference checks, omit the `WHALE_WAVE_*` variables and use
+`cargo test --workspace --all-features --locked`, or select `--features rust-reference`
+on the component being tested. For a reference CLI:
+
+```sh
+cargo build --no-default-features \
+  --features asm-amd64,socket-cli,native-linker,rust-reference
+```
+
+Supplying a Wave archive selects Wave even with `rust-reference` enabled.
+Missing production archives fail with setup instructions. `asmobj` has no Rust
+implementation; reference CLI assembly-to-object checks still need its archive.
 
 ## Select assembler outputs and host machines
 
@@ -107,7 +116,7 @@ Architecture selection controls generated code independently of the machine
 running Whale. For an AArch64-only product:
 
 ```sh
-meson setup /tmp/whale-aarch64 -Dasmobj-dir=/tmp/whale-asmobj \
+meson setup /tmp/whale-aarch64 -Dwave-source=/absolute/path/to/Wave \
   -Dasm-amd64=false -Dasm-riscv64=false -Dasm-loongarch64=false
 meson compile -C /tmp/whale-aarch64
 ```

@@ -112,6 +112,7 @@ pub enum CallError {
     ForbiddenFunctionPointerCast,
 }
 
+#[cfg(any(not(whale_wave_ir), feature = "socket"))]
 pub(crate) fn validate_signature(sig: &FunctionSignature) -> Result<(), CallError> {
     validate_signature_with_limits(sig, crate::IrLimits::default())
 }
@@ -120,46 +121,53 @@ pub fn validate_signature_with_limits(
     sig: &FunctionSignature,
     limits: crate::IrLimits,
 ) -> Result<(), CallError> {
-    crate::limits::Budget::new(limits)
-        .and_then(|mut b| b.signature(sig))
-        .map_err(CallError::ResourceLimit)?;
-    let invalid = || {
-        CallError::InvalidSignature(
-            "void parameters, malformed types and variadic calls are unsupported".into(),
-        )
-    };
-    let mut signatures = vec![sig];
-    while let Some(sig) = signatures.pop() {
-        if sig.variadic {
-            return Err(invalid());
-        }
-        if sig.convention == CallingConvention::SysV64
-            && sig
-                .params
-                .iter()
-                .chain(std::iter::once(&sig.ret))
-                .any(|t| matches!(t, Type::Array(..) | Type::Struct(..) | Type::Tuple(..)))
-        {
-            return Err(CallError::InvalidSignature(
-                "SysV64 aggregate signatures are unsupported".into(),
-            ));
-        }
-        let mut types: Vec<_> = sig.params.iter().collect();
-        if sig.ret != Type::Void {
-            types.push(&sig.ret);
-        }
-        while let Some(ty) = types.pop() {
-            match ty {
-                Type::Void => return Err(invalid()),
-                Type::FnPtr(sig) => signatures.push(sig),
-                Type::Ptr(t) if **t == Type::Void => {},
-                Type::Ptr(t) | Type::Array(t, _) => types.push(t),
-                Type::Struct(ts) | Type::Tuple(ts) => types.extend(ts),
-                _ => {},
+    #[cfg(whale_wave_ir)]
+    {
+        crate::verifier::wave_semantics::validate_signature_boundary(sig, limits)
+    }
+    #[cfg(not(whale_wave_ir))]
+    {
+        crate::limits::Budget::new(limits)
+            .and_then(|mut b| b.signature(sig))
+            .map_err(CallError::ResourceLimit)?;
+        let invalid = || {
+            CallError::InvalidSignature(
+                "void parameters, malformed types and variadic calls are unsupported".into(),
+            )
+        };
+        let mut signatures = vec![sig];
+        while let Some(sig) = signatures.pop() {
+            if sig.variadic {
+                return Err(invalid());
+            }
+            if sig.convention == CallingConvention::SysV64
+                && sig
+                    .params
+                    .iter()
+                    .chain(std::iter::once(&sig.ret))
+                    .any(|t| matches!(t, Type::Array(..) | Type::Struct(..) | Type::Tuple(..)))
+            {
+                return Err(CallError::InvalidSignature(
+                    "SysV64 aggregate signatures are unsupported".into(),
+                ));
+            }
+            let mut types: Vec<_> = sig.params.iter().collect();
+            if sig.ret != Type::Void {
+                types.push(&sig.ret);
+            }
+            while let Some(ty) = types.pop() {
+                match ty {
+                    Type::Void => return Err(invalid()),
+                    Type::FnPtr(sig) => signatures.push(sig),
+                    Type::Ptr(t) if **t == Type::Void => {},
+                    Type::Ptr(t) | Type::Array(t, _) => types.push(t),
+                    Type::Struct(ts) | Type::Tuple(ts) => types.extend(ts),
+                    _ => {},
+                }
             }
         }
+        Ok(())
     }
-    Ok(())
 }
 
 #[cfg(any(not(whale_wave_ir), test))]

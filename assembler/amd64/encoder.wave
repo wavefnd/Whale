@@ -384,3 +384,8 @@ export(c) fun whale_amd64_condition(name: ptr<AsmName>, output: ptr<u64>) -> i32
     }
     return 1;
 }
+
+// Distinct compiled identity used by product composition checks.
+export(c) fun whale_amd64_module_identity() -> u64 {
+    return 6289348675458125057;
+}

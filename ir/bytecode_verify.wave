@@ -286,7 +286,7 @@ fun ir_bytecode_verify_impl(program: ptr<IrBytecodeProgram>, words: ptr<u64>, ca
     scratch.used = 0;
     var context: IrBytecodeVerifier;
     context.program = program;
-    context.owned_bytes = program.text_byte_count;
+    context.owned_bytes = 0;
     context.limits = limits;
     context.result = result;
     context.scratch = &scratch;
@@ -295,7 +295,8 @@ fun ir_bytecode_verify_impl(program: ptr<IrBytecodeProgram>, words: ptr<u64>, ca
     context.operand_capacity = program.operand_count + 3;
     context.operands = ir_bytecode_take(&scratch, context.operand_capacity * 5, result) as ptr<IrVerifyOperand>;
     if (result.status != 0) { return result.status as i32; }
-    if (!ir_bytecode_verify_types(program, &scratch, limits, result)
+    if (!ir_bytecode_metadata(&context)
+        || !ir_bytecode_verify_types(program, &scratch, limits, result)
         || !ir_bytecode_layouts(&context)) { return result.status as i32; }
     var base: u64 = scratch.used;
     var total: u64 = program.function_count + program.block_count + program.value_type_count
@@ -324,6 +325,8 @@ fun ir_bytecode_verify_impl(program: ptr<IrBytecodeProgram>, words: ptr<u64>, ca
     if (!ir_bytecode_verify_sources(&context) || !ir_bytecode_inventory(program, limits, result)) {
         return result.status as i32;
     }
+    result.estimated_workspace_bytes = result.decoded_bytes + result.scratch_words * 8
+        + context.owned_bytes;
     result.table = 0;
     result.index = 0;
     return 0;

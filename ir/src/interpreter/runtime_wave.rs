@@ -353,6 +353,15 @@ enum TypeView<'a> {
     Signature(&'a FunctionSignature),
 }
 
+pub(crate) struct ArgumentCheckpoint {
+    types: usize,
+    edges: usize,
+    type_capacity: usize,
+    edge_capacity: usize,
+    cache_capacity: usize,
+    signature_capacity: usize,
+}
+
 pub(crate) struct Program<'a> {
     module: Option<&'a Module>,
     pub(crate) sources: SourceMetadata,
@@ -1265,11 +1274,31 @@ impl Program<'_> {
         Ok(ids)
     }
 
-    pub(crate) fn rollback_argument_types(&mut self, types: usize, edges: usize) {
-        self.types.truncate(types);
-        self.edges.truncate(edges);
-        self.cached_types.retain(|id, _| *id < types as u64);
-        self.signature_arcs.retain(|id, _| *id < types as u64);
+    pub(crate) fn argument_checkpoint(&self) -> ArgumentCheckpoint {
+        ArgumentCheckpoint {
+            types: self.types.len(),
+            edges: self.edges.len(),
+            type_capacity: self.types.capacity(),
+            edge_capacity: self.edges.capacity(),
+            cache_capacity: self.cached_types.capacity(),
+            signature_capacity: self.signature_arcs.capacity(),
+        }
+    }
+
+    pub(crate) fn argument_spare_bytes(&self) -> u64 {
+        ((self.types.capacity() - self.types.len()) as u64) * 40
+            + ((self.edges.capacity() - self.edges.len()) as u64) * 8
+    }
+
+    pub(crate) fn rollback_argument_types(&mut self, checkpoint: ArgumentCheckpoint) {
+        self.types.truncate(checkpoint.types);
+        self.edges.truncate(checkpoint.edges);
+        self.cached_types.retain(|id, _| *id < checkpoint.types as u64);
+        self.signature_arcs.retain(|id, _| *id < checkpoint.types as u64);
+        self.types.shrink_to(checkpoint.type_capacity);
+        self.edges.shrink_to(checkpoint.edge_capacity);
+        self.cached_types.shrink_to(checkpoint.cache_capacity);
+        self.signature_arcs.shrink_to(checkpoint.signature_capacity);
     }
 
     pub(crate) fn function_record(&self, id: FunctionId) -> Option<&RawFunction> {
@@ -1296,12 +1325,18 @@ impl Program<'_> {
     /// Materialize verified structural type records for the typed memory adapter.
     /// The loader has already bounded depth and expanded metadata size.
     pub(crate) fn materialize_types(&mut self) -> Result<()> {
-        map_reserve(&mut self.cached_types, self.types.len())?;
-        map_reserve(&mut self.declaration_ids, self.functions.len())?;
-        for (index, function) in self.functions.iter().enumerate() {
-            self.declaration_ids.insert(FunctionId(function.id as u32), index as u64);
+        let missing = self.types.len().saturating_sub(self.cached_types.len());
+        map_reserve(&mut self.cached_types, missing)?;
+        if self.declaration_ids.is_empty() {
+            map_reserve(&mut self.declaration_ids, self.functions.len())?;
+            for (index, function) in self.functions.iter().enumerate() {
+                self.declaration_ids.insert(FunctionId(function.id as u32), index as u64);
+            }
         }
         for (index, raw) in self.types.iter().enumerate() {
+            if self.cached_types.contains_key(&(index as u64)) {
+                continue;
+            }
             let child = |id: u64| self.cached_types.get(&id).cloned().ok_or_else(|| backend(None));
             let fields = || -> Result<Vec<Type>> {
                 let first = usize::try_from(raw.first).map_err(|_| backend(None))?;

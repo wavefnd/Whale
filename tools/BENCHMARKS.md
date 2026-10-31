@@ -1,8 +1,54 @@
 # Assembly and IR performance measurements
 
+## Actual Wave CLI pipelines
+
+Select the native Wave archives from [BUILDING.md](../BUILDING.md#reuse-built-modules-or-run-cargo-checks), then run on an otherwise idle Linux host:
+
+```sh
+python3 tools/benchmark_cli.py --output /tmp/whale-bench/cli.json --runs 3 --warmups 1
+```
+
+This builds a release CLI with `socket-cli` and all four ISAs, locked/offline
+with two Cargo jobs. Repeat `--isa amd64`, `--isa aarch64`, etc. to measure a
+selected product; selections must match its `build-info` architecture list.
+The driver requires Wave identities for every selected module and `socket-cli`.
+Missing, reference or mixed implementations fail the run. `--skip-build --cli PATH`
+measures an existing product; its hash is recorded, without claiming that the
+harness built it from the reported revision or profile.
+
+Each size runs these real commands in separate processes:
+
+| Commands | Correctness gate outside the timed process |
+| --- | --- |
+| `asm --arch ID` for each selected ISA | ELF machine and exact independently specified instruction bytes |
+| `ir verify`, `bytecode verify` | Successful verification of the retained input |
+| `ir lower` | All unused O0 loads remain in order; execution returns `i32 42` |
+| `ir fold` | Constant values and SSA IDs match; execution returns 42 and a second fold is identical |
+| `ir emit` | Canonical bytecode tables, literal bits, instructions and SSA IDs; deterministic output and result 42 |
+| `bytecode run` | Exact `i32 42` result |
+
+The fixed defaults are 64 and 32,768 operations. Assembly adds zero repeatedly.
+IR folding/compilation use dependent i32 add-zero chains. Lowering uses flat
+unused scalar-parameter references, which fit existing AST limits and deliberately
+retain O0 loads. These are scalar pipeline workloads, not a claim about all IR
+or ISA performance.
+
+Reports retain every measured sample, medians, process wall time, peak RSS,
+commands, input/output SHA256, source revision/dirty state, executable/driver
+hashes, host/toolchains, build flags, complete `build-info --json` and selected
+archive fingerprints. GNU
+`time` RSS covers the timed CLI process; validation subprocesses are excluded.
+Outputs are removed before each sample. A failed command, changed input, wrong
+result or nondeterministic output preserves the previous report.
+`--compare PREVIOUS.json` requires matching workloads, environment and verified
+results, then reports median time/RSS ratios without timing pass/fail thresholds.
+
+## Public library phases
+
 Issue #76 is measured with real public library calls and CLI processes. The
 harness currently requires Linux, Python 3.13+, GNU `/usr/bin/time`, and the Rust
-toolchain. It needs no external assembler, linker, release credentials or network.
+toolchain. Select native Wave archives as above; it needs no external assembler, release
+credentials or network.
 Ordinary Cargo builds do not run benchmarks. Run from the repository root on an
 otherwise idle host; CPU contention and frequency changes affect short samples.
 

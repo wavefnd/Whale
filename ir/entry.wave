@@ -61,3 +61,8 @@ export(c) fun whale_ir_layout(storage: ptr<IrStorage>, nodes: ptr<IrTypeNode>, n
     result.index = root;
     return 0;
 }
+
+// Distinct compiled identity used by product composition checks.
+export(c) fun whale_ir_module_identity() -> u64 {
+    return 6289348675458650625;
+}

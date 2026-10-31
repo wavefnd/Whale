@@ -10,6 +10,7 @@ pub enum Target {
     Ir,
     Ast,
     Object,
+    Bytecode,
 }
 
 impl Target {
@@ -19,6 +20,7 @@ impl Target {
             "ir" => Some(Self::Ir),
             "ast" => Some(Self::Ast),
             "object" => Some(Self::Object),
+            "bytecode" => Some(Self::Bytecode),
             _ => None,
         }
     }
@@ -29,6 +31,7 @@ impl Target {
             Self::Ir => "ir",
             Self::Ast => "ast",
             Self::Object => "object",
+            Self::Bytecode => "bytecode",
         }
     }
 }
@@ -53,11 +56,36 @@ pub fn check(target: Target, bytes: &[u8]) -> bool {
     if matches!(target, Target::Object) {
         return check_object(bytes);
     }
+    if matches!(target, Target::Bytecode) {
+        let limits = ir::bytecode::BytecodeLimits {
+            max_input_bytes: MAX_INPUT as u64,
+            max_decoded_bytes: 65536,
+            max_records: 4096,
+            max_work: 131072,
+            max_type_depth: 32,
+            max_workspace_bytes: 4 * 1024 * 1024,
+        };
+        return match ir::bytecode::verify_bytes(bytes, limits) {
+            Ok(info) => {
+                assert!(info.decoded_bytes <= limits.max_decoded_bytes);
+                true
+            },
+            Err(ir::bytecode::BytecodeError::Backend(reason)) => {
+                panic!("bytecode transport: {reason}")
+            },
+            Err(ir::bytecode::BytecodeError::Unavailable) => {
+                panic!("bytecode requires the Wave IR module")
+            },
+            Err(_) => false,
+        };
+    }
     let Ok(source) = std::str::from_utf8(bytes) else {
         return false;
     };
     match target {
-        Target::Object => unreachable!("binary target handled before UTF-8 conversion"),
+        Target::Object | Target::Bytecode => {
+            unreachable!("binary target handled before UTF-8 conversion")
+        },
         #[cfg(not(feature = "asm-amd64"))]
         Target::Assembler => false,
         #[cfg(feature = "asm-amd64")]

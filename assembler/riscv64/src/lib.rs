@@ -7,13 +7,13 @@ use assembler::{
 
 mod encoder;
 
-#[cfg(any(test, not(whale_wave_riscv64)))]
+#[cfg(any(all(test, feature = "rust-reference"), not(whale_wave_riscv64)))]
 mod encoding;
 
-#[cfg(any(test, not(whale_wave_riscv64)))]
+#[cfg(any(all(test, feature = "rust-reference"), not(whale_wave_riscv64)))]
 mod parser;
 
-#[cfg(any(test, not(whale_wave_riscv64)))]
+#[cfg(any(all(test, feature = "rust-reference"), not(whale_wave_riscv64)))]
 mod tables;
 
 #[cfg(whale_wave_riscv64)]
@@ -67,7 +67,7 @@ impl FixedIsa for RiscV64 {
     }
 }
 
-#[cfg(all(test, whale_wave_riscv64))]
+#[cfg(all(test, whale_wave_riscv64, feature = "rust-reference"))]
 mod wave_tests {
     use super::*;
 
@@ -171,5 +171,36 @@ mod wave_tests {
             .unwrap();
             assert_eq!(actual.to_string(), expected.to_string(), "{source}");
         }
+    }
+}
+
+/// The implementation actually selected by this owning module.
+pub fn module_identity() -> &'static str {
+    #[cfg(whale_wave_riscv64)]
+    {
+        unsafe extern "C" {
+            fn whale_riscv64_module_identity() -> u64;
+        }
+        // This no-argument stamp is exported by this module's guarded archive.
+        if unsafe { whale_riscv64_module_identity() } == 6289348675459241473 {
+            "wave"
+        } else {
+            "invalid-wave"
+        }
+    }
+    #[cfg(not(whale_wave_riscv64))]
+    {
+        "rust-reference"
+    }
+}
+
+#[cfg(test)]
+mod implementation_identity_tests {
+    #[test]
+    fn selected_implementation_has_its_own_compiled_identity() {
+        assert_eq!(
+            super::module_identity(),
+            if cfg!(whale_wave_riscv64) { "wave" } else { "rust-reference" }
+        );
     }
 }

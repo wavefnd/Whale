@@ -21,6 +21,7 @@ pub fn run() {
     match cmd.as_str() {
         "--help" | "-h" => print_help(),
         "--version" | "-V" => println!("whale {}", env!("CARGO_PKG_VERSION")),
+        "build-info" => crate::build_info::run(args.collect()),
         "asm" => commands::asm::run(args.collect()),
         "object" => commands::object::run(args.collect()),
         #[cfg(feature = "native-linker")]
@@ -54,6 +55,7 @@ fn print_help() {
     println!("  whale disasm [--amd64] <file.o|executable> [--json]");
     println!("  whale reverse inspect|cfg|xrefs <file> [options]");
     println!("  whale --version | -V");
+    println!("  whale build-info [--json]");
     println!();
     println!("Commands:");
     println!(
@@ -66,5 +68,9 @@ fn print_help() {
     println!("  disasm  Disassembly entry point (core currently unavailable)");
     println!("  reverse ELF inspection; CFG/xrefs core currently unavailable");
     println!("  ir      IR verify/print/fold/run/emit; socket-cli enables AST lower");
-    println!("  bytecode Versioned Whale bytecode verification and tracked execution");
+    if ir::bytecode::available() {
+        println!("  bytecode Versioned Whale bytecode verification and tracked execution");
+    } else {
+        println!("  bytecode Unavailable: this reference build does not link Wave IR");
+    }
 }

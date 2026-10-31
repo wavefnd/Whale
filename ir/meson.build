@@ -19,6 +19,7 @@ if wave_ir_directory == '' and wave_source != ''
     output: [archive_name, 'wave-ir.meta', 'provenance.json'],
     command: [python, files('../tools/build_wave_ir.py'), arguments],
     depend_files: files(
+      'src/lib.rs',
       'model.wave',
       'layout.wave',
       'lexer.wave',
@@ -103,6 +104,8 @@ if wave_ir_directory == '' and wave_source != ''
       'src/printer_wave.rs',
       'src/verifier/wave_cfg.rs',
       'src/verifier/wave_shape.rs',
+      'src/function.rs',
+      'src/global_storage.rs',
       '../tools/build_wave_ir.py',
       '../tools/wave_bootstrap.py',
     ),

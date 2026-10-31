@@ -5,6 +5,9 @@ mod fuzz;
 fn deterministic_seed_and_mutation_smoke_is_bounded() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/corpus");
     let mut targets = vec![fuzz::Target::Ir, fuzz::Target::Object];
+    if ir::bytecode::available() {
+        targets.push(fuzz::Target::Bytecode);
+    }
     if cfg!(feature = "asm-amd64") {
         targets.push(fuzz::Target::Assembler);
     }

@@ -325,6 +325,7 @@ mod native {
         work: u64,
         decoded_bytes: u64,
         scratch_words: u64,
+        estimated_workspace_bytes: u64,
         counts: Counts
     });
     #[repr(C)]
@@ -417,6 +418,20 @@ mod native {
         {
             return Err(BytecodeError::Backend(BACKEND));
         }
+        if status == 0
+            && (result.estimated_workspace_bytes > limits.max_workspace_bytes
+                || result
+                    .decoded_bytes
+                    .checked_add(
+                        result
+                            .scratch_words
+                            .checked_mul(8)
+                            .ok_or(BytecodeError::Backend(BACKEND))?,
+                    )
+                    .is_none_or(|base| base > result.estimated_workspace_bytes))
+        {
+            return Err(BytecodeError::Backend(BACKEND));
+        }
         if status != 0 {
             return Err(BytecodeError::Invalid {
                 status: result.status,
@@ -439,6 +454,7 @@ mod native {
         constant_globals: Vec<u64>,
         scratch: Vec<u64>,
         decoded_bytes: u64,
+        estimated_workspace_bytes: u64,
     }
 
     impl<'a> Owned<'a> {
@@ -464,6 +480,7 @@ mod native {
                 constant_globals: buffer(counts.constant_global_ids)?,
                 scratch: Vec::new(),
                 decoded_bytes: 0,
+                estimated_workspace_bytes: 0,
             })
         }
 
@@ -514,6 +531,29 @@ mod native {
             if status != 2 || result.status != 2 {
                 return check(status, &result, limits);
             }
+            if result.scratch_words == 0 {
+                return check(status, &result, limits);
+            }
+            let previous_base = self
+                .decoded_bytes
+                .checked_add(
+                    (self.scratch.len() as u64).checked_mul(8).ok_or(BytecodeError::Allocation)?,
+                )
+                .ok_or(BytecodeError::Allocation)?;
+            let retained = self.estimated_workspace_bytes.saturating_sub(previous_base);
+            let preview = result
+                .estimated_workspace_bytes
+                .checked_add(retained)
+                .and_then(|n| n.checked_add(self.runtime.argument_spare_bytes()))
+                .ok_or(BytecodeError::Allocation)?;
+            if preview > limits.max_workspace_bytes {
+                return Err(BytecodeError::Invalid {
+                    status: 2,
+                    code: 4,
+                    table: 0,
+                    index: preview,
+                });
+            }
             self.scratch = Vec::new();
             self.scratch = buffer(result.scratch_words)?;
             let status = unsafe {
@@ -527,6 +567,7 @@ mod native {
             };
             check(status, &result, limits)?;
             self.decoded_bytes = result.decoded_bytes;
+            self.estimated_workspace_bytes = result.estimated_workspace_bytes;
             Ok(())
         }
 
@@ -690,15 +731,16 @@ mod native {
         where
             'a: 'static,
         {
-            argument_preflight(arguments, limits, self.decoded_bytes, self.scratch.len())?;
+            argument_preflight(arguments, limits, self.estimated_workspace_bytes)?;
             let inputs = arguments
                 .iter()
                 .map(|value| (&value.value, value.origin == identity))
                 .collect::<Vec<_>>();
-            let original_types = self.runtime.types.len();
-            let original_edges = self.runtime.edges.len();
+            let checkpoint = self.runtime.argument_checkpoint();
+            let original_estimate = self.estimated_workspace_bytes;
             let original_decoded = self.decoded_bytes;
             let original_scratch = self.scratch.len();
+            let original_scratch_capacity = self.scratch.capacity();
             let outcome = (|| -> Result<crate::RuntimeInterpreterResult<'static>> {
                 let ids = self.runtime.prepare_argument_types(&inputs)?;
                 self.verify(limits)?;
@@ -723,9 +765,11 @@ mod native {
                 )
                 .map_err(BytecodeError::from)
             })();
-            self.runtime.rollback_argument_types(original_types, original_edges);
+            self.runtime.rollback_argument_types(checkpoint);
             self.decoded_bytes = original_decoded;
+            self.estimated_workspace_bytes = original_estimate;
             self.scratch.truncate(original_scratch);
+            self.scratch.shrink_to(original_scratch_capacity);
             let result = outcome?;
             Ok(BytecodeRunResult {
                 value: result.value.map(|value| BytecodeValue { value, origin: identity }),
@@ -756,7 +800,10 @@ mod native {
         };
         check(status, &result, limits)?;
         native.decoded_bytes = result.decoded_bytes;
+        native.estimated_workspace_bytes = result.estimated_workspace_bytes;
         native.materialize()?;
+        // try_update is unavailable on our Rust 1.86 MSRV.
+        #[allow(deprecated)]
         let identity = NEXT_IDENTITY
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .map_err(|_| BytecodeError::Backend("bytecode program identity exhausted"))?;
@@ -766,8 +813,7 @@ mod native {
     fn argument_preflight(
         arguments: &[BytecodeValue],
         limits: BytecodeLimits,
-        decoded: u64,
-        scratch_words: usize,
+        estimated_workspace: u64,
     ) -> Result<()> {
         let limited = || BytecodeError::Invalid {
             status: 2,
@@ -775,11 +821,8 @@ mod native {
             table: 0,
             index: limits.max_workspace_bytes,
         };
-        let available = limits
-            .max_workspace_bytes
-            .checked_sub(decoded)
-            .and_then(|n| n.checked_sub((scratch_words as u64).checked_mul(8)?))
-            .ok_or_else(limited)?;
+        let available =
+            limits.max_workspace_bytes.checked_sub(estimated_workspace).ok_or_else(limited)?;
         let nodes = (available / 1024).min(limits.max_records).min(limits.max_work / 16);
         let ir_limits = crate::IrLimits {
             max_nodes: usize::try_from(nodes)
@@ -938,6 +981,7 @@ mod native {
             constant_globals: module.globals.iter().map(|global| u64::from(global.id.0)).collect(),
             scratch: Vec::new(),
             decoded_bytes: 0,
+            estimated_workspace_bytes: 0,
         };
         owned.sites = owned
             .runtime
@@ -1016,6 +1060,13 @@ mod native {
         check(status, &result, limits)?;
         if required > limits.max_input_bytes {
             return Err(BytecodeError::Backend(BACKEND));
+        }
+        if owned
+            .estimated_workspace_bytes
+            .checked_add(required)
+            .is_none_or(|peak| peak > limits.max_workspace_bytes)
+        {
+            return Err(BytecodeError::Invalid { status: 2, code: 4, table: 0, index: required });
         }
         let mut output = buffer(required)?;
         let status = unsafe {

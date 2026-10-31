@@ -3,7 +3,7 @@
 #[cfg(test)]
 use assembler::AsmError;
 
-#[cfg(any(test, not(whale_wave_riscv64)))]
+#[cfg(any(all(test, feature = "rust-reference"), not(whale_wave_riscv64)))]
 #[path = "parser_reference.rs"]
 pub(crate) mod reference;
 

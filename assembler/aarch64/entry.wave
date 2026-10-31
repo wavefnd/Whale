@@ -41,3 +41,8 @@ export(c) fun whale_aarch64_assemble(packet: ptr<FixedInput>, result: ptr<FixedR
     }
     return 0;
 }
+
+// Distinct compiled identity used by product composition checks.
+export(c) fun whale_aarch64_module_identity() -> u64 {
+    return 6289348675458121985;
+}

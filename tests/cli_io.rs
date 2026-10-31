@@ -214,9 +214,15 @@ fn closed_artifact_stdout_preserves_completed_output_without_panicking() {
             .arg("-o")
             .arg(&executable),
     );
-    assert!(result.status.success(), "{result:?}");
-    assert!(result.stderr.is_empty(), "{result:?}");
-    assert!(fs::read(executable).unwrap().starts_with(b"\x7fELF"));
+    if cfg!(feature = "native-linker") {
+        assert!(result.status.success(), "{result:?}");
+        assert!(result.stderr.is_empty(), "{result:?}");
+        assert!(fs::read(executable).unwrap().starts_with(b"\x7fELF"));
+    } else {
+        assert_eq!(result.status.code(), Some(2), "{result:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("native linker is not included"));
+        assert!(!executable.exists());
+    }
 }
 
 #[cfg(unix)]
@@ -230,8 +236,15 @@ fn closed_help_stdout_and_real_command_failures_keep_their_exit_policy() {
         vec!["link", "--help"],
     ] {
         let result = closed_stdout(Command::new(env!("CARGO_BIN_EXE_whale")).args(&arguments));
-        assert!(result.status.success(), "{arguments:?}: {result:?}");
-        assert!(result.stderr.is_empty(), "{result:?}");
+        if arguments[0] == "link" && !cfg!(feature = "native-linker") {
+            assert_eq!(result.status.code(), Some(2), "{result:?}");
+            assert!(
+                String::from_utf8_lossy(&result.stderr).contains("native linker is not included")
+            );
+        } else {
+            assert!(result.status.success(), "{arguments:?}: {result:?}");
+            assert!(result.stderr.is_empty(), "{result:?}");
+        }
     }
     let directory = tempfile::tempdir().unwrap();
     let input = directory.path().join("invalid");
@@ -264,9 +277,14 @@ fn ordinary_artifact_stdout_failures_are_diagnostics() {
             .stdout(full)
             .output()
             .unwrap();
-        assert_eq!(result.status.code(), Some(1));
         let diagnostic = String::from_utf8_lossy(&result.stderr);
-        assert!(diagnostic.contains("failed to write stdout"), "{diagnostic}");
+        if command == "link" && !cfg!(feature = "native-linker") {
+            assert_eq!(result.status.code(), Some(2), "{result:?}");
+            assert!(diagnostic.contains("native linker is not included"), "{diagnostic}");
+        } else {
+            assert_eq!(result.status.code(), Some(1), "{result:?}");
+            assert!(diagnostic.contains("failed to write stdout"), "{diagnostic}");
+        }
         assert!(!diagnostic.contains("panicked"), "{diagnostic}");
     }
 }

@@ -43,58 +43,67 @@ impl GlobalStorage {
     }
 
     pub fn validate_with_limits(&self, limits: IrLimits) -> Result<(), GlobalStorageError> {
-        crate::limits::Budget::new(limits)
-            .and_then(|mut b| b.ty(&self.ty))
-            .map_err(GlobalStorageError::ResourceLimit)?;
-        if !matches!(
-            self.ty,
-            Type::Bool
-                | Type::I1
-                | Type::U1
-                | Type::I8
-                | Type::U8
-                | Type::I16
-                | Type::U16
-                | Type::I32
-                | Type::U32
-                | Type::I64
-                | Type::U64
-                | Type::I128
-                | Type::U128
-                | Type::F16
-                | Type::F32
-                | Type::F64
-                | Type::Ptr(_)
-                | Type::FnPtr(_)
-        ) {
-            return Err(GlobalStorageError::InvalidType);
+        #[cfg(whale_wave_ir)]
+        {
+            crate::verifier::wave_semantics::validate_global_boundary(self, limits)
         }
-        crate::function::validate_signature_with_limits(
-            &crate::FunctionSignature::whale(vec![self.ty.clone()], Type::Void),
-            limits,
-        )
-        .map_err(|error| match error {
-            crate::CallError::ResourceLimit(error) => GlobalStorageError::ResourceLimit(error),
-            _ => GlobalStorageError::InvalidType,
-        })?;
-        if !self.align.is_power_of_two() {
-            return Err(GlobalStorageError::InvalidAlignment);
-        }
-        match &self.init {
-            GlobalStorageInit::Value(value)
-                if !crate::constant::valid_constant(&self.ty, value) =>
-            {
-                return Err(GlobalStorageError::InvalidInitializer)
-            },
-            GlobalStorageInit::Uninitialized if self.readonly => {
-                return Err(GlobalStorageError::ReadOnlyUninitialized)
-            },
-            _ => {},
-        }
-        match (&self.linkage, &self.link_name) {
-            (Linkage::Internal, None) => Ok(()),
-            (Linkage::External, Some(name)) if !name.is_empty() && !name.contains('\0') => Ok(()),
-            _ => Err(GlobalStorageError::InvalidLinkName),
+        #[cfg(not(whale_wave_ir))]
+        {
+            crate::limits::Budget::new(limits)
+                .and_then(|mut b| b.ty(&self.ty))
+                .map_err(GlobalStorageError::ResourceLimit)?;
+            if !matches!(
+                self.ty,
+                Type::Bool
+                    | Type::I1
+                    | Type::U1
+                    | Type::I8
+                    | Type::U8
+                    | Type::I16
+                    | Type::U16
+                    | Type::I32
+                    | Type::U32
+                    | Type::I64
+                    | Type::U64
+                    | Type::I128
+                    | Type::U128
+                    | Type::F16
+                    | Type::F32
+                    | Type::F64
+                    | Type::Ptr(_)
+                    | Type::FnPtr(_)
+            ) {
+                return Err(GlobalStorageError::InvalidType);
+            }
+            crate::function::validate_signature_with_limits(
+                &crate::FunctionSignature::whale(vec![self.ty.clone()], Type::Void),
+                limits,
+            )
+            .map_err(|error| match error {
+                crate::CallError::ResourceLimit(error) => GlobalStorageError::ResourceLimit(error),
+                _ => GlobalStorageError::InvalidType,
+            })?;
+            if !self.align.is_power_of_two() {
+                return Err(GlobalStorageError::InvalidAlignment);
+            }
+            match &self.init {
+                GlobalStorageInit::Value(value)
+                    if !crate::constant::valid_constant(&self.ty, value) =>
+                {
+                    return Err(GlobalStorageError::InvalidInitializer)
+                },
+                GlobalStorageInit::Uninitialized if self.readonly => {
+                    return Err(GlobalStorageError::ReadOnlyUninitialized)
+                },
+                _ => {},
+            }
+            match (&self.linkage, &self.link_name) {
+                (Linkage::Internal, None) => Ok(()),
+                (Linkage::External, Some(name)) if !name.is_empty() && !name.contains('\0') => {
+                    Ok(())
+                },
+                _ => Err(GlobalStorageError::InvalidLinkName),
+            }
         }
     }
 }

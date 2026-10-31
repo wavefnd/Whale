@@ -413,3 +413,34 @@ pub use parser::{
 };
 
 mod diagnostic;
+
+/// The implementation actually selected by this owning module.
+pub fn module_identity() -> &'static str {
+    #[cfg(whale_wave_ir)]
+    {
+        unsafe extern "C" {
+            fn whale_ir_module_identity() -> u64;
+        }
+        // This no-argument stamp is exported by this module's guarded archive.
+        if unsafe { whale_ir_module_identity() } == 6289348675458650625 {
+            "wave"
+        } else {
+            "invalid-wave"
+        }
+    }
+    #[cfg(not(whale_wave_ir))]
+    {
+        "rust-reference"
+    }
+}
+
+#[cfg(test)]
+mod implementation_identity_tests {
+    #[test]
+    fn selected_implementation_has_its_own_compiled_identity() {
+        assert_eq!(
+            super::module_identity(),
+            if cfg!(whale_wave_ir) { "wave" } else { "rust-reference" }
+        );
+    }
+}

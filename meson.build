@@ -23,6 +23,9 @@ endif
 if get_option('native-linker')
   selected_features += ['native-linker']
 endif
+if get_option('rust-reference')
+  selected_features += ['rust-reference']
+endif
 
 cargo_host_target = get_option('cargo-host-target')
 if meson.is_cross_build() and cargo_host_target == ''
@@ -32,6 +35,17 @@ endif
 # asmobj is one complete Wave source module. Cargo only links it through the
 # data transport in toolchain; there is no Rust implementation or fallback.
 wave_source = get_option('wave-source')
+if not get_option('rust-reference') and wave_source == ''
+  required_modules = ['asmobj-dir', 'wave-ir-dir', 'wave-assembler-dir']
+  foreach arch : assembler_outputs
+    required_modules += ['wave-' + arch + '-dir']
+  endforeach
+  foreach module : required_modules
+    if get_option(module) == ''
+      error('The default Wave product requires -Dwave-source=/absolute/Wave or every selected prebuilt module; missing -D' + module + '. Rust reference builds require explicit -Drust-reference=true.')
+    endif
+  endforeach
+endif
 wave_cache = get_option('wave-bootstrap-dir')
 if wave_cache == ''
   wave_cache = meson.project_build_root() / 'wave-bootstrap'
@@ -154,5 +168,6 @@ summary({
   'Assembler output modules': assembler_outputs,
   'Complete Wave module': 'assembler/asmobj',
   'Wave IR sources': wave_ir_directory == '' ? 'Rust compatibility path' : wave_ir_directory,
+  'Rust reference algorithms allowed': get_option('rust-reference'),
   'Cargo offline': get_option('cargo-offline'),
 }, section: 'Whale source modules')

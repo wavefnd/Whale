@@ -55,6 +55,9 @@ fun ir_bytecode_sizes(counts: ptr<IrBytecodeCounts>, limits: ptr<IrBytecodeLimit
     }
     result.decoded_bytes = total;
     result.scratch_words = words;
+    // Probe/query excludes semantic metadata; full admission adds its retained
+    // and transient clone allowance before reporting a successful estimate.
+    result.estimated_workspace_bytes = total + words * 8;
     return true;
 }
 
@@ -111,7 +114,23 @@ export(c) fun whale_ir_bytecode_probe(data: ptr<u8>, count: u64,
 export(c) fun whale_ir_bytecode_load(data: ptr<u8>, count: u64,
     program: ptr<IrBytecodeProgram>, scratch: ptr<u64>, capacity: u64,
     limits: ptr<IrBytecodeLimits>, result: ptr<IrBytecodeResult>) -> i32 {
-    var status: i32 = whale_ir_bytecode_probe(data, count, limits, result);
+    // Reuse loop storage at O0; file-controlled iterations must not grow the stack.
+    var status: i32;
+    var counts: ptr<u64>;
+    var table: u64;
+    var offset: u64;
+    var records: u64;
+    var i: u64;
+    var stride: u64;
+    var destination: ptr<u64>;
+    var native_words: u64;
+    var word: u64;
+    var inst: ptr<IrRuntimeInstruction>;
+    var fields: ptr<u64>;
+    var file_word: u64;
+    var global: ptr<IrRuntimeGlobal>;
+
+    status = whale_ir_bytecode_probe(data, count, limits, result);
     if (status != 0) { return status; }
     if (program == null || !ir_span_valid(scratch as ptr<u8>, capacity, 8)) {
         ir_bytecode_fail(result, 4, 1, 0, 0);
@@ -121,8 +140,8 @@ export(c) fun whale_ir_bytecode_load(data: ptr<u8>, count: u64,
         ir_bytecode_fail(result, 2, 4, 0, capacity);
         return result.status as i32;
     }
-    var counts: ptr<u64> = &result.counts as ptr<u64>;
-    var table: u64 = 1;
+    counts = &result.counts as ptr<u64>;
+    table = 1;
     while (table <= 16) {
         if (ir_bytecode_count(program, table) != counts[table - 1]
             || !ir_span_valid(ir_bytecode_data(program, table), counts[table - 1],
@@ -134,9 +153,9 @@ export(c) fun whale_ir_bytecode_load(data: ptr<u8>, count: u64,
     }
     table = 1;
     while (table <= 16) {
-        var offset: u64 = ir_bytecode_read(data, 64 + (table - 1) * 32 + 8);
-        var records: u64 = counts[table - 1];
-        var i: u64 = 0;
+        offset = ir_bytecode_read(data, 64 + (table - 1) * 32 + 8);
+        records = counts[table - 1];
+        i = 0;
         if (table == 11) {
             if (!ir_bytecode_charge(result, limits, records)) { return result.status as i32; }
             while (i < records) {
@@ -147,20 +166,20 @@ export(c) fun whale_ir_bytecode_load(data: ptr<u8>, count: u64,
             while (i < records) {
                 result.table = table;
                 result.index = i;
-                var stride: u64 = ir_bytecode_stride(table);
+                stride = ir_bytecode_stride(table);
                 if (!ir_bytecode_charge(result, limits, stride)) { return result.status as i32; }
-                var destination: ptr<u64> = ir_bytecode_data(program, table) as ptr<u64>;
-                var native_words: u64 = ir_bytecode_native_stride(table) / 8;
-                var word: u64 = 0;
+                destination = ir_bytecode_data(program, table) as ptr<u64>;
+                native_words = ir_bytecode_native_stride(table) / 8;
+                word = 0;
                 while (word < native_words) {
                     destination[i * native_words + word] = 0;
                     word += 1;
                 }
                 if (table == 5) {
-                    var inst: ptr<IrRuntimeInstruction> = &program.instructions[i];
-                    var fields: ptr<u64> = inst as ptr<u64>;
+                    inst = &program.instructions[i];
+                    fields = inst as ptr<u64>;
                     word = 0;
-                    var file_word: u64 = 0;
+                    file_word = 0;
                     while (word < 21) {
                         if (word != 9 && word != 10 && word != 19 && word != 20) {
                             fields[word] = ir_bytecode_read(data, offset + i * stride + file_word * 8);
@@ -169,7 +188,7 @@ export(c) fun whale_ir_bytecode_load(data: ptr<u8>, count: u64,
                         word += 1;
                     }
                 } else if (table == 8) {
-                    var global: ptr<IrRuntimeGlobal> = &program.globals[i];
+                    global = &program.globals[i];
                     global.id = ir_bytecode_read(data, offset + i * stride);
                     global.ty = ir_bytecode_read(data, offset + i * stride + 8);
                     global.align = ir_bytecode_read(data, offset + i * stride + 16);

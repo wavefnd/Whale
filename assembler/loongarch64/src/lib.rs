@@ -8,7 +8,7 @@ use assembler::{
 #[cfg(not(whale_wave_loongarch64))]
 mod encoder;
 
-#[cfg(all(test, whale_wave_loongarch64))]
+#[cfg(all(test, whale_wave_loongarch64, feature = "rust-reference"))]
 #[path = "encoder.rs"]
 mod reference_encoder;
 
@@ -18,13 +18,13 @@ mod wave;
 #[cfg(not(whale_wave_loongarch64))]
 use assembler::fixed;
 
-#[cfg(any(test, not(whale_wave_loongarch64)))]
+#[cfg(any(all(test, feature = "rust-reference"), not(whale_wave_loongarch64)))]
 mod encoding;
 
-#[cfg(any(test, not(whale_wave_loongarch64)))]
+#[cfg(any(all(test, feature = "rust-reference"), not(whale_wave_loongarch64)))]
 mod parser;
 
-#[cfg(any(test, not(whale_wave_loongarch64)))]
+#[cfg(any(all(test, feature = "rust-reference"), not(whale_wave_loongarch64)))]
 mod tables;
 
 pub struct LoongArch64;
@@ -86,7 +86,7 @@ impl FixedIsa for LoongArch64 {
     }
 }
 
-#[cfg(all(test, whale_wave_loongarch64))]
+#[cfg(all(test, whale_wave_loongarch64, feature = "rust-reference"))]
 mod wave_tests {
     use super::*;
 
@@ -190,5 +190,36 @@ mod wave_tests {
             let offset = (((state >> 28) % 65536) as i64 - 32768) * 4;
             compare(&format!("add.d $r{rd},$r{rj},$r{rk}\naddi.d $r{rd},$r{rj},{immediate}\nbeq $r{rj},$r{rd},{offset}"), AssemblyLimits::default());
         }
+    }
+}
+
+/// The implementation actually selected by this owning module.
+pub fn module_identity() -> &'static str {
+    #[cfg(whale_wave_loongarch64)]
+    {
+        unsafe extern "C" {
+            fn whale_loongarch64_module_identity() -> u64;
+        }
+        // This no-argument stamp is exported by this module's guarded archive.
+        if unsafe { whale_loongarch64_module_identity() } == 6289348675458842881 {
+            "wave"
+        } else {
+            "invalid-wave"
+        }
+    }
+    #[cfg(not(whale_wave_loongarch64))]
+    {
+        "rust-reference"
+    }
+}
+
+#[cfg(test)]
+mod implementation_identity_tests {
+    #[test]
+    fn selected_implementation_has_its_own_compiled_identity() {
+        assert_eq!(
+            super::module_identity(),
+            if cfg!(whale_wave_loongarch64) { "wave" } else { "rust-reference" }
+        );
     }
 }

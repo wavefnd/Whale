@@ -91,6 +91,9 @@ const ABI_SOURCES: &[&str] = &[
     "src/printer_wave.rs",
     "src/verifier/wave_cfg.rs",
     "src/verifier/wave_shape.rs",
+    "src/lib.rs",
+    "src/function.rs",
+    "src/global_storage.rs",
 ];
 
 fn update(hash: u64, bytes: &[u8]) -> u64 {
@@ -123,7 +126,12 @@ fn hash_file(path: &std::path::Path, maximum: Option<u64>) -> String {
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(whale_wave_ir)");
     println!("cargo:rerun-if-env-changed=WHALE_WAVE_IR_DIR");
-    let Some(directory) = env::var_os("WHALE_WAVE_IR_DIR") else { return };
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_RUST_REFERENCE");
+    let Some(directory) = env::var_os("WHALE_WAVE_IR_DIR") else {
+        assert!(env::var_os("CARGO_FEATURE_RUST_REFERENCE").is_some(),
+            "IR requires its Wave module; build with Meson or select rust-reference explicitly for comparison");
+        return;
+    };
     let directory = PathBuf::from(directory).canonicalize().expect("WHALE_WAVE_IR_DIR must exist");
     let target = env::var("TARGET").expect("Cargo target required");
     let archive = directory.join(if target.contains("msvc") {

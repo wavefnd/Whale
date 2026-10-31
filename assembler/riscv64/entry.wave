@@ -62,3 +62,8 @@ export(c) fun whale_riscv64_entry(packet: ptr<FixedInput>, result: ptr<FixedResu
     }
     return 2;
 }
+
+// Distinct compiled identity used by product composition checks.
+export(c) fun whale_riscv64_module_identity() -> u64 {
+    return 6289348675459241473;
+}

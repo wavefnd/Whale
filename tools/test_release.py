@@ -19,6 +19,22 @@ VERSION = "0.1.0"
 SOURCE = "a" * 40
 
 
+def product(target, socket=False, reference=False):
+    implementations = {name: "wave" for name in ("ir", "assembler", "asmobj", "amd64")}
+    if reference:
+        implementations.update(ir="rust-reference", assembler="rust-reference", amd64="rust-reference")
+    provenance = {"wave_revision": release.WAVE_REVISION, "target": target, "opt_level": "2",
+                  "source_sha256": "1" * 64, "abi_sha256": "2" * 64,
+                  "archive_sha256": "3" * 64, "compiler_sha256": "4" * 64, "std_sha256": "5" * 64,
+                  "bootstrap_rust_version": "1.89.0", "required_llvm_major": 21}
+    return {"schema_version": 1, "version": VERSION, "source_commit": SOURCE, "source_dirty": False,
+            "host_target": target, "rustc": "rustc 1.86.0", "reference_feature": reference,
+            "wave_modules": {name: provenance.copy() for name, value in implementations.items() if value == "wave"},
+            "product_mode": "rust-reference" if reference else "wave", "implementations": implementations,
+            "ir_format_version": 8, "semantics_version": 1, "bytecode_format_version": 1,
+            "assemblers": ["amd64"], "native_linker": True, "socket_cli": socket}
+
+
 def executable(target):
     kind, machine = release.TARGETS[target]
     data = bytearray(128)
@@ -47,10 +63,15 @@ class ReleaseTests(unittest.TestCase):
         invoke = self.version.start()
         self.addCleanup(self.version.stop)
         self.actual_socket = False
+        self.actual_target = "x86_64-unknown-linux-gnu"
+        self.product_override = None
 
         def probe(binary, args, cwd):
             if args == ["--version"]:
                 return subprocess.CompletedProcess([], 0, b"whale 0.1.0\n", b"")
+            if args == ["build-info", "--json"]:
+                info = self.product_override or product(self.actual_target, self.actual_socket)
+                return subprocess.CompletedProcess([], 0, json.dumps(info).encode(), b"")
             return subprocess.CompletedProcess([], 1 if self.actual_socket else 2, b"",
                 b"missing input" if self.actual_socket else b"requires feature 'socket-cli'")
 
@@ -59,6 +80,7 @@ class ReleaseTests(unittest.TestCase):
     def package(self, target, directory, **kwargs):
         self.binary.write_bytes(executable(target))
         self.actual_socket = kwargs.get("socket", False)
+        self.actual_target = target
         return release.package(self.binary, self.root / directory, VERSION, target, SOURCE, **kwargs)
 
     def test_every_native_target_is_reproducible_and_readable(self):
@@ -71,6 +93,40 @@ class ReleaseTests(unittest.TestCase):
                 self.assertTrue(manifest["socket_cli"])
                 self.assertEqual(manifest["source_commit"], SOURCE)
                 self.assertEqual(manifest["target"], target)
+                self.assertEqual(manifest["product"]["implementations"]["ir"], "wave")
+
+    def test_wave_requirement_and_provenance_fail_before_publication(self):
+        target = "x86_64-unknown-linux-gnu"
+        good = self.package(target, "good", require_wave=True)
+        previous = good.read_bytes()
+        for defect in ("reference", "dirty", "commit", "selection", "pin", "hash", "unknown"):
+            info = product(target, reference=defect == "reference")
+            if defect == "dirty":
+                info["source_dirty"] = True
+            if defect == "commit":
+                info["source_commit"] = "b" * 40
+            if defect == "selection":
+                info["assemblers"].append("aarch64")
+            if defect == "pin":
+                info["wave_modules"]["ir"]["wave_revision"] = "b" * 40
+            if defect == "hash":
+                info["wave_modules"]["ir"]["archive_sha256"] = "invalid"
+            if defect == "unknown":
+                info["private_build_path"] = "/private/source"
+            self.product_override = info
+            with self.subTest(defect=defect), self.assertRaises(ValueError):
+                self.package(target, "bad-" + defect, require_wave=True)
+            self.assertFalse((self.root / ("bad-" + defect)).exists())
+            self.assertEqual(good.read_bytes(), previous)
+
+    def test_reference_packages_are_explicit_and_retain_their_mode(self):
+        target = "aarch64-apple-darwin"
+        self.product_override = product(target, reference=True)
+        archive = self.package(target, "reference")
+        manifest = release.validate(archive, VERSION, target, SOURCE, execute=False)
+        self.assertEqual(manifest["product"]["product_mode"], "rust-reference")
+        with self.assertRaisesRegex(ValueError, "fully Wave-backed"):
+            release.validate(archive, VERSION, target, SOURCE, execute=False, require_wave=True)
 
     def test_identity_mismatch_and_duplicate_publication_fail(self):
         target = next(iter(release.TARGETS))
@@ -185,7 +241,7 @@ class ReleaseTests(unittest.TestCase):
     def test_manifest_requires_an_object_and_exact_field_types(self):
         target = "x86_64-pc-windows-msvc"
         original = self.package(target, "manifest-control")
-        self.assertEqual(release.validate(original, VERSION, target, SOURCE, execute=False)["format_version"], 1)
+        self.assertEqual(release.validate(original, VERSION, target, SOURCE, execute=False)["format_version"], 2)
         with zipfile.ZipFile(original) as reader:
             entries = [(info, reader.read(info)) for info in reader.infolist()]
         for mutation in (None, True, {"format_version": True}, {"format_version": 1.0}):

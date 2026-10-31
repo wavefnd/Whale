@@ -132,7 +132,7 @@ class GuardTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    def test_plain_build_and_corrupt_artifact_rejection(self):
+    def test_explicit_reference_and_corrupt_artifact_rejection(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             source = root / "ir"
@@ -175,8 +175,14 @@ class GuardTests(unittest.TestCase):
                 for key, data in originals.items():
                     paths[key].write_bytes(data)
 
+            environment.pop("CARGO_FEATURE_RUST_REFERENCE", None)
             plain = subprocess.run([str(self.guard)], env=environment, capture_output=True)
-            self.assertEqual(plain.returncode, 0)
+            self.assertNotEqual(plain.returncode, 0)
+            self.assertIn(b"requires its Wave module", plain.stderr)
+            reference = subprocess.run([str(self.guard)], env={**environment,
+                "CARGO_FEATURE_RUST_REFERENCE": "1"}, capture_output=True)
+            self.assertEqual(reference.returncode, 0, reference.stderr)
+            self.assertNotIn(b"cargo:rustc-link-lib", reference.stdout)
             check({}, None)
             check({"source": b"changed"}, "stale Wave IR archive")
             for name in abi_paths:

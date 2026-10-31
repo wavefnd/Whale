@@ -65,7 +65,7 @@ pub(super) fn encode(
     native::encode(instruction, context, whale_aarch64_encode, render)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "rust-reference"))]
 mod tests {
     use super::*;
 

@@ -8,8 +8,8 @@ Whale brings together an intermediate representation, assembler, object-file
 library, and linker infrastructure. Developed within the
 [Wave ecosystem](https://github.com/wavefnd/Wave), its components are intended to
 serve language implementations and compiler tooling through separately owned source
-modules. Most components are Rust; the complete assembly-to-object `asmobj`
-module is Wave.
+modules. IR algorithms, assembler algorithms and the assembly-to-object `asmobj`
+module are Wave. Rust owns typed data boundaries, files, object formats and the CLI.
 
 Whale is in active, early development. APIs and IR formats are evolving; the
 current capabilities are listed below.
@@ -38,17 +38,17 @@ native compilation pipeline are still being developed.
 | Component | Available today | Status |
 | --- | --- | --- |
 | Assembler | AMD64 plus initial AArch64, RV64I and LoongArch64 integer subsets; sections, symbols, ELF64 and initial AMD64/AArch64 COFF and Mach-O output | Object emission requires the complete Wave `asmobj` module; initial linked host Linux x86_64 GNU |
-| IR | Typed IR construction, text parsing/printing, bounded verification, integer/control-flow, tracked stack-memory and bounded Whale-call interpretation, and scalar AST JSON lowering | Experimental |
+| IR | Wave text parsing/printing, bounded verification, constants, integer folding, tracked interpretation, AST JSON lowering and versioned Whale bytecode | Experimental |
 | Object library | Object model, bounded ELF64 reading and ELF64/COFF/Mach-O relocatable serialization | Available |
 | Object CLI | Wrap raw input bytes in an ELF64 object with a `.text` section | Limited |
 | Reverse | Bounded ELF/raw image inspection and typed result records | Inspection available; decoder and CFG/xrefs unavailable |
 | Linker | Static Linux AMD64 ELF executables from objects and ordinary archives, checked relocations and explicit entry | Initial subset |
 
-The IR target selector accepts only `x86_64-whale-linux`; unknown targets fail
-with the supported choice, including with `--no-verify`. Its output data layout
-is 64-bit little endian on every build host. Library lowering and verification
+The IR target selector accepts `x86_64-whale-linux` and `whale-bytecode-v1`;
+unknown targets fail even with `--no-verify`. Both use a checked 64-bit
+little-endian data layout on every build host. Library lowering and verification
 reject target/layout mismatches. The IR layout API computes checked sizes,
-field offsets, array strides, and natural/allocation alignments for this target.
+field offsets, array strides, and natural/allocation alignments for these targets.
 It does not implement aggregate ABI passing or native code generation.
 
 BSS reservations retain a logical `zero_fill` count instead of allocating their
@@ -89,8 +89,8 @@ subsets, source syntax, relocation types and examples.
 
 ## Getting started
 
-Use Meson for the complete product build. It builds the Wave `asmobj` module
-and the Rust components in dependency order. See [BUILDING.md](BUILDING.md) for
+Use Meson for the complete product build. It builds the Wave IR, shared
+assembler, selected ISA and `asmobj` modules, then the Rust components. See [BUILDING.md](BUILDING.md) for
 LLVM 21, the pinned Wave compiler, Rust toolchains and archive reuse.
 
 On the initial Linux x86_64 GNU host:
@@ -105,23 +105,14 @@ meson setup /tmp/whale-build --buildtype=release \
 meson compile -C /tmp/whale-build
 meson test -C /tmp/whale-build --print-errorlogs
 /tmp/whale-build/whale --version
+/tmp/whale-build/whale build-info --json
 ```
 
-Rust components require **Rust 1.86.0 or newer**. Cargo remains available for
-Rust development. To run the `cargo run` assembly examples below, first build
-and select the complete Wave module:
-
-```sh
-python3 tools/build_asmobj.py --wave-source /absolute/path/to/Wave \
-  --out-dir /tmp/whale-asmobj
-export WHALE_ASMOBJ_DIR=/tmp/whale-asmobj
-cargo build --release --locked
-```
-
-Without that module, Cargo still builds the Rust components and IR commands;
-assembly-to-object commands return an explicit unavailable error. The executable
-is written to `target/release/whale` on Linux. Enable experimental AST JSON
-lowering with `-Dsocket-cli=true` in Meson or `--features socket-cli` in Cargo.
+Rust components require **Rust 1.86.0 or newer**. For direct Cargo development,
+select the Wave archives listed in [BUILDING.md](BUILDING.md#reuse-built-modules-or-run-cargo-checks).
+Rust reference algorithms require explicit `rust-reference`; Meson products use Wave.
+Enable AST JSON lowering with `-Dsocket-cli=true` in Meson or `--features socket-cli`
+in Cargo. Linked products need no Wave compiler at runtime.
 
 ## Usage
 
@@ -191,13 +182,13 @@ preserving the previous archive on an archiver failure.
 
 ### Execute scalar integer IR
 
-Save this format 7 module as `answer.wir`:
+Save this format 8 module as `answer.wir`:
 
 ```text
 module {
-  format_version 7
+  format_version 8
   semantics_version 1
-  target "x86_64-whale-linux"
+  target "whale-bytecode-v1"
   datalayout { ptr=64, endian=little }
 
   declare @f7 "answer": whale () -> i32, linkage internal
@@ -215,7 +206,23 @@ module {
 cargo run --locked -- ir run answer.wir --function @f7
 ```
 
-The output is `i32 42`. The default build verifies the whole module and runs
+The output is `i32 42`. Compile the same module to portable Whale bytecode:
+
+```sh
+whale ir emit answer.wir -o answer.wbc
+whale bytecode verify answer.wbc
+whale bytecode run answer.wbc --function @f7
+whale ir fold answer.wir -o folded.wir
+```
+
+Wave writes, verifies, loads and executes [bytecode v1](ir/BYTECODE.md).
+Compilation checks every body, including unreachable code, before publishing.
+The format preserves scalar bits, SSA IDs and source sites; runtime pointer
+capabilities and layout plans are reconstructed. External runtime imports and
+aggregate values passed by value are unsupported. Folding is an explicit pass;
+ordinary O0 lowering keeps its operations.
+
+The interpreter verifies the whole module and runs
 one explicit Whale-convention function with integer/bool/float parameters and scalar
 or void return. Use repeated `--arg` decimal integer literals (`true`/`false` for Bool,
 exact-width hexadecimal storage bits for floats)
@@ -223,7 +230,7 @@ and `--max-steps` to set the instruction/terminator budget (default 1,000,000).
 Zero division/remainder and explicit traps return structured errors; unused
 executed operations still trap. Loops evaluate phi inputs simultaneously.
 
-This oracle supports integer constants, arithmetic, comparisons, bit casts,
+The Wave interpreter supports integer constants, arithmetic, comparisons, bit casts,
 checked pairs, select and control flow. It also supports bit-exact f16/f32/f64 constants, mov/phi/select and tracked
 stack allocations, integer/Bool/float/data-pointer storage,
 typed GEP, byte copies and fills, with initialization and capability checks.
@@ -742,12 +749,17 @@ The checked-in fixture is [symbol-metadata.asm](tests/fixtures/symbol-metadata.a
 
 ## Release packages
 
-Native Linux, macOS and Windows x64/ARM64 packaging, extracted-binary checks and
-exact checksum manifests are documented in [the release guide](tools/RELEASING.md).
-The manual workflow validates one tagged source commit across every package;
-draft creation is opt-in and runs only after all checks pass.
+Complete Wave product packages are initially validated on Linux x86_64 GNU.
+[The release guide](tools/RELEASING.md) describes provenance, extracted-binary
+checks and checksum manifests. Reference packages for other hosts must identify
+their selected implementation; cross-produced Wave objects do not establish
+native execution support. Draft creation is opt-in after checks pass.
 
 ## Development
+
+[CLI and library benchmarks](tools/BENCHMARKS.md) record verified outputs, timings
+and peak RSS. Further compiler/backend work remains tracked in
+[#232](https://github.com/wavefnd/Whale/issues/232).
 
 | Path | Responsibility |
 | --- | --- |
@@ -861,8 +873,7 @@ artifact targets Linux AMD64 regardless of the machine running Whale.
 ## Reverse image inspection
 
 The reusable [reverse module](reverse/README.md) provides bounded AMD64 ELF/raw
-image inspection and typed result records. Inspection works in ordinary Cargo
-builds:
+image inspection and typed result records. In a configured product:
 
 ```sh
 cargo run --locked -- reverse inspect app --json

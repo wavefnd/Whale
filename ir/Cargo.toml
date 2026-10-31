@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [features]
 default = []
+rust-reference = []
 socket = ["dep:serde", "dep:serde_json"]
 
 [dependencies]

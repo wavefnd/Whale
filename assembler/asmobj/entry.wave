@@ -138,3 +138,8 @@ export(c) fun whale_asmobj(target: ptr<AsmobjTarget>, sections: ptr<AsmobjSectio
     result.symbol_count = needed;
     return 0;
 }
+
+// Distinct compiled identity used by product composition checks.
+export(c) fun whale_asmobj_module_identity() -> u64 {
+    return 6289348675458125569;
+}

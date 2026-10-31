@@ -17,16 +17,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  asmobj:
+    name: Build validated Linux Wave modules
+    uses: ./.github/workflows/asmobj.yml
+
   mutation:
+    needs: asmobj
     name: ${{ matrix.target }} / bounded mutation
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        target: [assembler, object]
+        target: [assembler, object, ir, ast, bytecode]
     env:
       RUSTUP_TOOLCHAIN: stable
+      WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+      WHALE_WAVE_IR_DIR: ${{ github.workspace }}/.ci-wave/ir
+      WHALE_WAVE_ASSEMBLER_DIR: ${{ github.workspace }}/.ci-wave/common
+      WHALE_WAVE_AMD64_DIR: ${{ github.workspace }}/.ci-wave/amd64
+      WHALE_WAVE_AARCH64_DIR: ${{ github.workspace }}/.ci-wave/aarch64
+      WHALE_WAVE_RISCV64_DIR: ${{ github.workspace }}/.ci-wave/riscv64
+      WHALE_WAVE_LOONGARCH64_DIR: ${{ github.workspace }}/.ci-wave/loongarch64
       WHALE_FUZZ_ARTIFACT_DIR: .ci-artifacts/fuzz
       CASES: ${{ github.event_name == 'schedule' && '50000' || '512' }}
       SEED: '1464353100'
@@ -34,19 +46,29 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - name: Download complete Wave asmobj module
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.artifact_name }}
+          path: .ci-asmobj
+      - name: Download selected Linux AMD64 Wave modules
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
       - run: rustup toolchain install stable --profile minimal
       - name: Build real library boundary targets
-        run: python tools/ci.py run --name fuzz-build --timeout 300 -- cargo build --all-features --locked --example fuzz_boundaries
+        run: python tools/ci.py run --name fuzz-build --timeout 300 -- cargo build --features socket-cli --locked --example fuzz_boundaries
       - name: Execute nonempty corpus and bounded mutations
         run: python tools/ci.py run --name fuzz-${{ matrix.target }} --timeout 330 -- python tools/fuzz_smoke.py --binary target/debug/examples/fuzz_boundaries --target ${{ matrix.target }} --cases "$CASES" --seed "$SEED" --timeout 300 --memory-mib 512
       - name: Retain logs, original failures, minimized inputs and replay commands
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: fuzz-${{ matrix.target }}-${{ github.run_id }}
+          name: fuzz-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .ci-artifacts/
           include-hidden-files: true
           if-no-files-found: error

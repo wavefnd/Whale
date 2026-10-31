@@ -2,6 +2,7 @@
 """Meson/Cargo bridge checks independent of installed Rust/Wave compilers."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -11,7 +12,8 @@ from unittest.mock import patch
 
 from meson_cargo import (BuildError, build, cargo_command, cargo_dependencies,
                          cargo_environment, make_escape, native_target,
-                         smoke, source_dependencies, validate_features, validate_host)
+                         smoke, source_dependencies, revision_dependencies,
+                         validate_features, validate_host)
 
 
 class CommandTests(unittest.TestCase):
@@ -64,6 +66,17 @@ class CommandTests(unittest.TestCase):
             with self.subTest(features=features), self.assertRaises(BuildError):
                 validate_features(features)
 
+    def test_reproducible_paths_preserve_encoded_arguments(self):
+        with patch.dict(os.environ, {"CARGO_ENCODED_RUSTFLAGS": "-C\x1flink-arg=literal path",
+                                     "RUSTFLAGS": "ignored", "CARGO_HOME": "/cache/cargo"}):
+            environment = cargo_environment("/build with space", None, "release", "3", "0",
+                                            source_root="/source with space")
+        flags = environment["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
+        self.assertEqual(flags[:2], ["-C", "link-arg=literal path"])
+        self.assertIn("--remap-path-prefix=/source with space=/whale-src", flags)
+        self.assertIn("--remap-path-prefix=/build with space=/whale-build", flags)
+        self.assertNotIn("RUSTFLAGS", environment)
+
     def test_native_host_is_observed_only_when_requested_at_build(self):
         result = subprocess.CompletedProcess([], 0, stdout="cargo 1.96\nhost: x86_64-unknown-linux-gnu\n")
         with patch("meson_cargo.subprocess.run", return_value=result) as execute:
@@ -94,14 +107,36 @@ class CommandTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, b"whale 0.1.0\n", b"")
                 if "asm" in command:
                     return subprocess.CompletedProcess(command, 1, b"", b"Error: unregistered assembler; available: \n")
+                if "build-info" in command:
+                    payload = {"assemblers": [], "native_linker": False, "product_mode": "wave",
+                               "implementations": {"ir": "wave"}}
+                    return subprocess.CompletedProcess(command, 0, json.dumps(payload).encode(), b"")
+                if "emit" in command:
+                    Path(command[-1]).write_bytes(b"WHALEBC\0fixture")
                 return subprocess.CompletedProcess(command, 0, b"i32 42\n", b"")
 
             with patch("meson_cargo.subprocess.run", side_effect=answer) as execute:
                 smoke(arguments)
-            self.assertEqual(execute.call_count, 3)
+            self.assertEqual(execute.call_count, 7)
 
 
 class DependencyTests(unittest.TestCase):
+    def test_linked_worktree_revision_is_a_build_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source, common = root / "source", root / "common"
+            worktree = common / "worktrees/task"
+            source.mkdir()
+            worktree.mkdir(parents=True)
+            (source / ".git").write_text("gitdir: ../common/worktrees/task\n")
+            (worktree / "commondir").write_text("../..\n")
+            (worktree / "HEAD").write_text("ref: refs/heads/task\n")
+            (worktree / "index").write_bytes(b"index")
+            (common / "refs/heads").mkdir(parents=True)
+            revision = common / "refs/heads/task"
+            revision.write_text("a" * 40)
+            self.assertEqual(revision_dependencies(source), {worktree / "HEAD", worktree / "index", revision})
+
     def test_depfile_roundtrip_handles_spaces_unicode_and_make_metacharacters(self):
         dependencies = ["/source with space/α.rs", "/source/hash#dollar$.rs", r"C:\source folder\a.rs"]
         with tempfile.TemporaryDirectory() as temporary:

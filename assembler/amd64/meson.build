@@ -19,6 +19,7 @@ if wave_amd64_directory == '' and wave_source != ''
     output: [archive_name, 'wave-amd64.meta', 'provenance.json'],
     command: [python, files('../../tools/build_wave_assembler.py'), arguments],
     depend_files: files(
+      'src/lib.rs',
       '../model.wave',
       '../declarations.wave',
       '../ast_model.wave',

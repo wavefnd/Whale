@@ -329,3 +329,34 @@ _start:
         }
     }
 }
+
+/// The implementation actually selected by this owning module.
+pub fn module_identity() -> &'static str {
+    #[cfg(whale_wave_amd64)]
+    {
+        unsafe extern "C" {
+            fn whale_amd64_module_identity() -> u64;
+        }
+        // This no-argument stamp is exported by this module's guarded archive.
+        if unsafe { whale_amd64_module_identity() } == 6289348675458125057 {
+            "wave"
+        } else {
+            "invalid-wave"
+        }
+    }
+    #[cfg(not(whale_wave_amd64))]
+    {
+        "rust-reference"
+    }
+}
+
+#[cfg(test)]
+mod implementation_identity_tests {
+    #[test]
+    fn selected_implementation_has_its_own_compiled_identity() {
+        assert_eq!(
+            super::module_identity(),
+            if cfg!(whale_wave_amd64) { "wave" } else { "rust-reference" }
+        );
+    }
+}
