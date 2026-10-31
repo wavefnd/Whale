@@ -1,0 +1,146 @@
+// SPDX-License-Identifier: MPL-2.0
+// Balanced operand splitting uses a small fast stack and bounded rescans only
+// beyond 64 nesting levels. A count probe never needs an allocation callback.
+fun asm_fixed_operands_inner(text: FixedText, output: ptr<FixedText>, capacity: u64,
+    count: ptr<u64>, result: ptr<FixedResult>) -> bool {
+    var value: FixedText = text;
+    var at: u64 = 0;
+    var start: u64 = 0;
+    var depth: u64 = 0;
+    var stack: u64 = 0;
+    var octet: u64 = 0;
+    var expected: u64 = 0;
+    var found: u64 = 0;
+    var back: u64 = 0;
+    var pending: u64 = 0;
+    var total: u64 = 0;
+    var empty: bool = false;
+    var part: FixedText;
+    var one: u64 = 1;
+    if (result.status != 0) {
+        return false;
+    }
+    if (count == null || !asm_span_valid(value.data, value.count, 1)
+        || (output == null && capacity != 0)
+        || !asm_span_valid(output as ptr<u8>, capacity, 16)) {
+        result.status = 2;
+        return false;
+    }
+    if (!asm_fixed_charge(result, text.count + 1)) {
+        return false;
+    }
+    value = asm_fixed_trim(text);
+    count[0] = 0;
+    if (value.count == 0) {
+        return true;
+    }
+    while (at < value.count) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        octet = value.data[at] as u64;
+        if (octet == 91 || octet == 40) {
+            if (depth < 64) {
+                stack = stack & ~(one << depth);
+                if (octet == 91) {
+                    stack = stack | (one << depth);
+                }
+            }
+            depth += 1;
+        } else if (octet == 93 || octet == 41) {
+            if (depth == 0) {
+                return asm_fixed_fail(result, 15, value, 0);
+            }
+            expected = 40;
+            if (octet == 93) {
+                expected = 91;
+            }
+            if (depth <= 64) {
+                found = 40;
+                if ((stack & (one << (depth - 1))) != 0) {
+                    found = 91;
+                }
+            } else {
+                back = at;
+                pending = 1;
+                found = 0;
+                while (back != 0 && pending != 0) {
+                    if (!asm_fixed_charge(result, 1)) {
+                        return false;
+                    }
+                    back -= 1;
+                    if (value.data[back] == 93 || value.data[back] == 41) {
+                        pending += 1;
+                    } else if (value.data[back] == 91 || value.data[back] == 40) {
+                        pending -= 1;
+                        if (pending == 0) {
+                            found = value.data[back] as u64;
+                        }
+                    }
+                }
+            }
+            if (found != expected) {
+                return asm_fixed_fail(result, 15, value, 0);
+            }
+            depth -= 1;
+        } else if (octet == 44 && depth == 0) {
+            if (total >= 65536) {
+                return asm_fixed_fail(result, 17, value, 0);
+            }
+            part = asm_fixed_trim(asm_fixed_slice(value, start, at));
+            empty = empty || part.count == 0;
+            if (output != null) {
+                if (total >= capacity) {
+                    result.status = 2;
+                    return false;
+                }
+                output[total] = part;
+            }
+            total += 1;
+            start = at + 1;
+        }
+        at += 1;
+    }
+    if (depth != 0) {
+        return asm_fixed_fail(result, 16, value, 0);
+    }
+    if (total >= 65536) {
+        return asm_fixed_fail(result, 17, value, 0);
+    }
+    part = asm_fixed_trim(asm_fixed_slice(value, start, value.count));
+    empty = empty || part.count == 0;
+    if (output != null) {
+        if (total >= capacity) {
+            result.status = 2;
+            return false;
+        }
+        output[total] = part;
+    }
+    total += 1;
+    if (empty) {
+        return asm_fixed_fail(result, 18, value, 0);
+    }
+    count[0] = total;
+    return true;
+}
+
+export(c) fun asm_fixed_operands(text: FixedText, output: ptr<FixedText>, capacity: u64,
+    count: ptr<u64>, result: ptr<FixedResult>) -> bool {
+    var needed: u64 = 0;
+    if (count == null || (output == null && capacity != 0)) {
+        result.status = 2;
+        return false;
+    }
+    if (!asm_fixed_operands_inner(text, null, 0, &needed, result)) {
+        return false;
+    }
+    if (output == null) {
+        count[0] = needed;
+        return true;
+    }
+    if (needed > capacity || !asm_span_valid(output as ptr<u8>, capacity, 16)) {
+        result.status = 2;
+        return false;
+    }
+    return asm_fixed_operands_inner(text, output, capacity, count, result);
+}

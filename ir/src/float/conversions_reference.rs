@@ -15,7 +15,7 @@ fn format(ty: &Type) -> Option<Format> {
 
 /// None is a defined invalid numerical conversion, never a poison value.
 pub fn convert(op: &CastOp, src: &Type, dst: &Type, value: &ConstValue) -> Option<ConstValue> {
-    use crate::interpreter::integer;
+    use crate::interpreter::integer::reference as integer;
     if !crate::constant::valid_constant(src, value) {
         return None;
     }

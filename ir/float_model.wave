@@ -1,0 +1,225 @@
+// SPDX-License-Identifier: MPL-2.0
+// IEEE storage and nearest-even packing use only the shared two-word integer.
+struct IrFloatFormat {
+    width: u64;
+    fraction: u64;
+    bias: i64;
+}
+
+struct IrFloatParts {
+    negative: bool;
+    significand: IrWide;
+    exponent: i64;
+    nan: bool;
+    infinity: bool;
+}
+
+struct IrFloatResult {
+    status: u64;
+    low: u64;
+    high: u64;
+    flag: u64;
+}
+
+struct IrFloatRequest {
+    mode: u64;
+    operation: u64;
+    source: u64;
+    destination: u64;
+    left_kind: u64;
+    left_low: u64;
+    left_high: u64;
+    right_kind: u64;
+    right_low: u64;
+    right_high: u64;
+}
+
+fun ir_float_format(kind: u64, output: ptr<IrFloatFormat>) -> bool {
+    if (kind == 14) {
+        output.width = 16;
+        output.fraction = 10;
+        output.bias = 15;
+    } else if (kind == 15) {
+        output.width = 32;
+        output.fraction = 23;
+        output.bias = 127;
+    } else if (kind == 16) {
+        output.width = 64;
+        output.fraction = 52;
+        output.bias = 1023;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+fun ir_float_sign(format: ptr<IrFloatFormat>) -> u64 {
+    var one: u64 = 1;
+    return one << (format.width - 1);
+}
+
+fun ir_float_infinity(format: ptr<IrFloatFormat>) -> u64 {
+    return ((format.bias * 2 + 1) as u64) << format.fraction;
+}
+
+fun ir_float_nan(format: ptr<IrFloatFormat>) -> u64 {
+    var one: u64 = 1;
+    return ir_float_infinity(format) | (one << (format.fraction - 1));
+}
+
+fun ir_float_special(format: ptr<IrFloatFormat>, negative: bool, infinity: bool) -> u64 {
+    var bits: u64 = 0;
+    if (negative) {
+        bits = ir_float_sign(format);
+    }
+    if (infinity) {
+        bits = bits | ir_float_infinity(format);
+    }
+    return bits;
+}
+
+fun ir_float_wide_zero(value: ptr<IrWide>) -> bool {
+    return value.low == 0 && value.high == 0;
+}
+
+fun ir_float_unpack(format: ptr<IrFloatFormat>, bits: u64, output: ptr<IrFloatParts>) {
+    var one: u64 = 1;
+    var exponent: i64 = ((bits & ~ir_float_sign(format)) >> format.fraction) as i64;
+    var fraction: u64 = bits & ((one << format.fraction) - 1);
+    var special: bool = exponent == 2 * format.bias + 1;
+    output.negative = (bits & ir_float_sign(format)) != 0;
+    ir_wide_from(fraction, 0, &output.significand);
+    if (exponent != 0 && !special) {
+        output.significand.low = output.significand.low | (one << format.fraction);
+    }
+    if (exponent < 1) {
+        exponent = 1;
+    }
+    output.exponent = exponent - format.bias - format.fraction as i64;
+    output.nan = special && fraction != 0;
+    output.infinity = special && fraction == 0;
+}
+
+fun ir_float_normalize(format: ptr<IrFloatFormat>, value: ptr<IrFloatParts>) {
+    if (!ir_float_wide_zero(&value.significand)) {
+        var shift: u64 = ir_wide_clz(&value.significand) - (127 - format.fraction);
+        ir_wide_shl(&value.significand, shift, &value.significand);
+        value.exponent -= shift as i64;
+    }
+}
+
+fun ir_float_pack(
+    format: ptr<IrFloatFormat>,
+    negative: bool,
+    significand: ptr<IrWide>,
+    exponent: i64
+) -> u64 {
+    if (ir_float_wide_zero(significand)) {
+        return ir_float_special(format, negative, false);
+    }
+    var highest: i64 = (127 - ir_wide_clz(significand)) as i64;
+    var target: i64 = exponent + highest - format.fraction as i64;
+    var minimum: i64 = 1 - format.bias - format.fraction as i64;
+    if (target < minimum) {
+        target = minimum;
+    }
+    var shift: i64 = target - exponent;
+    var rounded: IrWide;
+    if (shift > 0) {
+        ir_wide_round(significand, shift as u64, &rounded);
+    } else {
+        ir_wide_shl(significand, (-shift) as u64, &rounded);
+    }
+    var one: u64 = 1;
+    if (rounded.high != 0 || rounded.low >= (one << (format.fraction + 1))) {
+        ir_wide_shr(&rounded, 1, &rounded);
+        target += 1;
+    }
+    if (ir_float_wide_zero(&rounded)) {
+        return ir_float_special(format, negative, false);
+    }
+    var encoded: i64 = 0;
+    if (rounded.low >= (one << format.fraction)) {
+        encoded = target + format.fraction as i64 + format.bias;
+    }
+    if (encoded > 2 * format.bias) {
+        return ir_float_special(format, negative, true);
+    }
+    var sign: u64 = 0;
+    if (negative) {
+        sign = ir_float_sign(format);
+    }
+    return sign | ((encoded as u64) << format.fraction) | (rounded.low & ((one << format.fraction) -
+        1));
+}
+
+fun ir_float_predicate(
+    format: ptr<IrFloatFormat>,
+    a: u64,
+    b: u64,
+    predicate: u64,
+    output: ptr<u64>
+) -> bool {
+    if (predicate > 13) {
+        return false;
+    }
+    var one: u64 = 1;
+    var fraction: u64 = (one << format.fraction) - 1;
+    var exponent: u64 = ir_float_infinity(format);
+    var ordered: bool = !((a & exponent) == exponent && (a & fraction) != 0) && !((b & exponent) ==
+        exponent && (b & fraction) != 0);
+    var sign: u64 = ir_float_sign(format);
+    var magnitude: u64 = sign - 1;
+    var equal: bool = false;
+    var less: bool = false;
+    var greater: bool = false;
+    if ((a & magnitude) == 0 && (b & magnitude) == 0) {
+        equal = true;
+    } else if (((a ^ b) & sign) != 0) {
+        less = (a & sign) != 0;
+        greater = !less;
+    } else if ((a & sign) != 0) {
+        equal = a == b;
+        less = b < a;
+        greater = b > a;
+    } else {
+        equal = a == b;
+        less = a < b;
+        greater = a > b;
+    }
+    var answer: bool = false;
+    if (predicate == 0) {
+        answer = ordered && equal;
+    } else if (predicate == 1) {
+        answer = ordered && !equal;
+    } else if (predicate == 2) {
+        answer = ordered && less;
+    } else if (predicate == 3) {
+        answer = ordered && !greater;
+    } else if (predicate == 4) {
+        answer = ordered && greater;
+    } else if (predicate == 5) {
+        answer = ordered && !less;
+    } else if (predicate == 6) {
+        answer = ordered;
+    } else if (predicate == 7) {
+        answer = !ordered;
+    } else if (predicate == 8) {
+        answer = !ordered || equal;
+    } else if (predicate == 9) {
+        answer = !ordered || !equal;
+    } else if (predicate == 10) {
+        answer = !ordered || less;
+    } else if (predicate == 11) {
+        answer = !ordered || !greater;
+    } else if (predicate == 12) {
+        answer = !ordered || greater;
+    } else {
+        answer = !ordered || !less;
+    }
+    output[0] = 0;
+    if (answer) {
+        output[0] = 1;
+    }
+    return true;
+}

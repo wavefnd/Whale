@@ -2,6 +2,20 @@
 //! Verified, transactional pass boundaries. No optimization pipeline is enabled.
 use crate::{IrLimits, Module, VerifyError};
 
+#[cfg(whale_wave_ir)]
+#[path = "pass_wave.rs"]
+mod wave;
+
+#[path = "pass_dispose.rs"]
+mod dispose;
+
+use dispose::discard;
+
+#[path = "fold_integer.rs"]
+mod integer_fold;
+
+pub use integer_fold::IntegerConstantFold;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AnalysisKind {
     Cfg,
@@ -31,6 +45,7 @@ impl AnalysisState {
         self.epochs[kind as usize]
     }
 
+    #[cfg(not(whale_wave_ir))]
     fn invalidate(&mut self, which: Invalidates) -> Result<(), String> {
         let mut next = self.epochs;
         for (i, invalid) in [which.cfg, which.values, which.effects].into_iter().enumerate() {
@@ -58,9 +73,12 @@ impl<T> AnalysisCache<T> {
     }
 
     pub fn get(&self, state: &AnalysisState) -> Option<&T> {
-        (std::sync::Arc::ptr_eq(&self.identity, &state.identity)
-            && self.epoch == state.epoch(self.kind))
-        .then_some(&self.value)
+        #[cfg(whale_wave_ir)]
+        let current = wave::current(self, state);
+        #[cfg(not(whale_wave_ir))]
+        let current = std::sync::Arc::ptr_eq(&self.identity, &state.identity)
+            && self.epoch == state.epoch(self.kind);
+        current.then_some(&self.value)
     }
 }
 
@@ -127,6 +145,19 @@ pub fn run_pass_with_limits(
     analyses: &mut AnalysisState,
     limits: IrLimits,
 ) -> Result<PassChange, PassError> {
+    #[cfg(whale_wave_ir)]
+    return wave::run(module, pass, analyses, limits);
+    #[cfg(not(whale_wave_ir))]
+    run_reference(module, pass, analyses, limits)
+}
+
+#[cfg(not(whale_wave_ir))]
+fn run_reference(
+    module: &mut Module,
+    pass: &mut impl Pass,
+    analyses: &mut AnalysisState,
+    limits: IrLimits,
+) -> Result<PassChange, PassError> {
     let name = pass.name().to_owned();
     let target = module.target.clone();
     let error =
@@ -152,7 +183,81 @@ pub fn run_pass_with_limits(
         Ok(report)
     })();
     if result.is_err() {
-        *module = before;
+        discard(std::mem::replace(module, before));
     }
     result
+}
+
+#[cfg(all(test, whale_wave_ir))]
+mod tests {
+    use super::*;
+
+    use crate::{DataLayout, ModuleBuilder, Type};
+
+    fn module() -> Module {
+        let mut builder = ModuleBuilder::new("x86_64-whale-linux", DataLayout::default_64bit_le());
+        let mut function = builder.begin_function("entry", vec![], Type::I32);
+        let value = function.const_i32(42);
+        function.ret(Some(value));
+        function.finish();
+        builder.finish()
+    }
+
+    struct Edit;
+
+    impl Pass for Edit {
+        fn name(&self) -> &str {
+            "edit"
+        }
+
+        fn run(&mut self, module: &mut Module) -> Result<PassChange, String> {
+            module.functions[0].blocks[0].name.push_str("-changed");
+            Ok(PassChange { changed: true, invalidates: Invalidates::ALL })
+        }
+    }
+
+    #[test]
+    fn wave_epoch_overflow_rolls_back_every_epoch_and_the_module() {
+        let mut module = module();
+        let original = module.clone();
+        let mut state = AnalysisState { epochs: [7, u64::MAX, 9], ..AnalysisState::default() };
+        let cache = AnalysisCache::new(AnalysisKind::Values, &state, 42);
+        let error = run_pass(&mut module, &mut Edit, &mut state).unwrap_err();
+        assert_eq!(error.stage, PassStage::Contract);
+        assert!(error.to_string().contains("epoch exhausted"));
+        assert_eq!(module, original);
+        assert_eq!(state.epochs, [7, u64::MAX, 9]);
+        assert_eq!(cache.get(&state), Some(&42));
+    }
+
+    struct Malformed(bool);
+
+    impl Pass for Malformed {
+        fn name(&self) -> &str {
+            "malformed"
+        }
+
+        fn run(&mut self, module: &mut Module) -> Result<PassChange, String> {
+            let mut ty = Type::I32;
+            for _ in 0..50_000 {
+                ty = Type::Ptr(Box::new(ty));
+            }
+            module.functions[0].ret_ty = ty;
+            assert!(!self.0, "test transform panic");
+            Ok(PassChange { changed: true, invalidates: Invalidates::ALL })
+        }
+    }
+
+    #[test]
+    fn failed_or_panicking_transforms_dispose_malformed_trees_iteratively() {
+        for panic in [false, true] {
+            let mut module = module();
+            let original = module.clone();
+            let mut state = AnalysisState::default();
+            let error = run_pass(&mut module, &mut Malformed(panic), &mut state).unwrap_err();
+            assert_eq!(error.stage, if panic { PassStage::Transform } else { PassStage::After });
+            assert_eq!(module, original);
+            assert_eq!(state.epochs, [0; 3]);
+        }
+    }
 }

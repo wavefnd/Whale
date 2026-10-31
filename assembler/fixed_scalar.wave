@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: MPL-2.0
+// Pointer-only C wrappers keep host transport independent of struct ABI lowering.
+export(c) fun whale_fixed_scalar(mode: u64, text: ptr<FixedText>, bits: u64,
+    value: i64, alignment: i64, result: ptr<FixedResult>) -> i32 {
+    var number: AsmWide;
+    var word: u64 = 0;
+    var ok: bool = false;
+    if (result == null || text == null) {
+        return 2;
+    }
+    if (mode == 0) {
+        ok = asm_fixed_integer(text[0], &number, result);
+        if (ok) {
+            result.word = number.low;
+            result.detail = number.high;
+        }
+    } else if (mode == 1) {
+        ok = asm_fixed_signed(text[0], bits, &word, result);
+    } else if (mode == 2) {
+        ok = asm_fixed_unsigned(text[0], bits, &word, result);
+    } else if (mode == 3) {
+        ok = asm_fixed_displacement(value, bits, alignment, &word, result);
+    } else {
+        result.status = 2;
+        return 2;
+    }
+    if (ok && mode != 0) {
+        result.word = word;
+    }
+    if (!ok && result.status == 0) {
+        result.status = 2;
+    }
+    return result.status as i32;
+}
+
+export(c) fun whale_fixed_operands(text: ptr<FixedText>, output: ptr<FixedText>,
+    capacity: u64, count: ptr<u64>, result: ptr<FixedResult>) -> i32 {
+    if (result == null || text == null) {
+        return 2;
+    }
+    if (!asm_fixed_operands(text[0], output, capacity, count, result) && result.status == 0) {
+        result.status = 2;
+    }
+    return result.status as i32;
+}

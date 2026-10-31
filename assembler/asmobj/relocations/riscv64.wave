@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: MPL-2.0
+// RISC-V relocation numbers are preserved for ELF; other formats are unsupported.
+fun asmobj_riscv64_relocation(target: ptr<AsmobjTarget>, relocation: ptr<AsmobjRelocation>,
+    code: ptr<u64>) -> i32 {
+    if (target.format != 0) {
+        return 6;
+    }
+    code[0] = relocation.code;
+    return 0;
+}

@@ -7,9 +7,15 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from wave_bootstrap import DEFAULT_RUST_TOOLCHAIN, WAVE_REVISION, ensure_bootstrap, run, digest
+from wave_bootstrap import DEFAULT_RUST_TOOLCHAIN, RUST_VERSION, WAVE_REVISION, ensure_bootstrap, run, digest
 
-SOURCES = ('model.wave', 'sections.wave', 'symbols.wave', 'relocations.wave', 'entry.wave')
+SOURCES = (
+    'model.wave', 'sections.wave', 'symbols.wave',
+    'relocations/amd64.wave', 'relocations/aarch64.wave',
+    'relocations/riscv64.wave', 'relocations/loongarch64.wave',
+    'relocations.wave', 'entry.wave',
+)
+ABI_SOURCE = 'toolchain/src/assembly_object.rs'
 TARGETS = ('x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu',
            'riscv64gc-unknown-linux-gnu', 'x86_64-pc-windows-msvc',
            'aarch64-pc-windows-msvc', 'x86_64-apple-darwin', 'aarch64-apple-darwin')
@@ -23,9 +29,11 @@ def fnv64(data):
 def source_bytes(root):
     return b'\n'.join((root / 'assembler/asmobj' / name).read_bytes() for name in SOURCES)
 
-def metadata(source, archive, target):
-    return (f'schema=1\ntarget={target}\nsource_fnv64={fnv64(source)}\n'
-            f'archive_fnv64={fnv64(archive)}\n')
+def metadata(source, abi, archive, provenance, target, opt_level):
+    return (f'schema=2\ntarget={target}\nwave_revision={WAVE_REVISION}\n'
+            f'opt_level={opt_level}\nsource_fnv64={fnv64(source)}\n'
+            f'abi_fnv64={fnv64(abi)}\narchive_fnv64={fnv64(archive)}\n'
+            f'provenance_fnv64={fnv64(provenance)}\n')
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -43,6 +51,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     root = Path(__file__).resolve().parents[1]
     source = source_bytes(root)
+    abi = (root / ABI_SOURCE).read_bytes()
     bootstrap = ensure_bootstrap(args.wave_source, args.bootstrap_dir or output / 'bootstrap-cache',
                                  rust_toolchain=args.rust_toolchain, allow_network=args.allow_network)
     # Only code generation is cross-target; this never executes a foreign object.
@@ -72,11 +81,14 @@ def main():
         provenance = temporary / 'provenance.json'
         provenance.write_text(json.dumps({'wave_revision': WAVE_REVISION, 'target': args.target,
             'opt_level': args.opt_level, 'source_sha256': hashlib.sha256(source).hexdigest(),
+            'abi_sha256': hashlib.sha256(abi).hexdigest(),
             'archive_sha256': digest(archive), 'compiler_sha256': digest(bootstrap.compiler),
+            'bootstrap_rust_version': RUST_VERSION, 'required_llvm_major': 21,
             'std_sha256': bootstrap.metadata['std_sha256'],
             'bootstrap_provenance': str(bootstrap.provenance)}, indent=2) + '\n')
         fingerprint = temporary / 'asmobj.meta'
-        fingerprint.write_text(metadata(source, archive.read_bytes(), args.target))
+        fingerprint.write_text(metadata(source, abi, archive.read_bytes(),
+                                        provenance.read_bytes(), args.target, args.opt_level))
         staged = (archive, provenance, fingerprint)
         previous = {}
         for path in staged:

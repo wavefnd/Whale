@@ -9,19 +9,20 @@ and review comments should be in English. Follow the
 Use [BUILDING.md](BUILDING.md) for Meson, the pinned Wave compiler, dependencies
 and installation. Rust's MSRV is **1.86.0**; CI uses Python **3.13**.
 
-Rust component tests can run without Wave. The complete product and
-assembly-to-object tests require the built Wave `asmobj` archive. A linked
-executable does not need the Wave compiler at runtime.
+Use Meson for the native product and its tests. Direct Cargo checks need the
+Wave archives listed in BUILDING.md, or explicit `rust-reference` for reference
+tests. `asmobj` always requires Wave. A linked executable needs no Wave compiler
+at runtime.
 
 ## 2. Repository structure and module boundaries
 
 | Sources | Responsibility |
 | --- | --- |
-| `assembler/<architecture>/` | Rust registers, operands, parser and encoder for that ISA |
-| `assembler/src/` | Shared Rust assembly types and helpers |
+| `assembler/<architecture>/` | ISA registers, operands, grammar and encoding, with explicit Rust data bridges |
+| `assembler/*.wave`, `assembler/src/` | Shared Wave source, numeric and output helpers; Rust assembly data |
 | `assembler/asmobj/` | Complete Wave assembly-to-object module |
 | `toolchain/`, `backend-api/` | Rust composition, backend interfaces and external data calls to `asmobj` |
-| `ir/`, `target-spec/` | Rust IR semantics, target identities and layouts |
+| `ir/`, `target-spec/` | Wave IR model, text, verification, numeric semantics, passes and execution; Rust data transport and target contracts |
 | `object/`, `linker/` | Rust object formats, relocations and executable layout |
 | `reverse/` | Rust image inspection; decoder and CFG currently unavailable |
 | `src/`, `tests/` | CLI and integration tests |
@@ -30,7 +31,8 @@ executable does not need the Wave compiler at runtime.
 Split source files by role. Shared modules must not import a concrete ISA.
 `asmobj` contains only Wave sources; its Rust data boundary lives in
 `toolchain/src/assembly_object.rs`. Object serialization belongs to `object`.
-IR remains Rust.
+Rust reference algorithms are selected explicitly with `rust-reference` for comparison tests.
+Keep Wave blocks readable with four-space indentation and one statement per line.
 
 ### Adding an assembler or IR target
 
@@ -41,7 +43,9 @@ IR remains Rust.
 
 Official and contributed architectures follow the same process. Central enum,
 dispatch and build-list edits are expected. Run `python3 tools/check_module_layers.py`
-to check dependency direction. See [BUILDING.md](BUILDING.md#select-assembler-outputs-and-host-machines)
+to check dependency direction, and `python3 tools/check_product_graph.py --isa amd64`
+to check that a selected product links only the requested ISA crate. Omit `--isa`
+for a product without assemblers. See [BUILDING.md](BUILDING.md#select-assembler-outputs-and-host-machines)
 for product selection and executable-host versus output-target settings.
 
 ## 3. Submit a contribution
@@ -73,11 +77,10 @@ existing authorship and attribution.
 
 ## 5. Local verification
 
-For assembly-to-object and CLI checks, first build `asmobj` as described in
-[BUILDING.md](BUILDING.md), then supply its archive explicitly:
+For native checks, select all required Wave archives as described in
+[BUILDING.md](BUILDING.md#reuse-built-modules-or-run-cargo-checks):
 
 ```sh
-export WHALE_ASMOBJ_DIR=/absolute/path/to/built-asmobj
 python3 tools/format-rust.py --check
 python3 -m unittest discover -s tools -p 'test_*.py' -v
 python3 tools/check_module_layers.py
@@ -89,8 +92,8 @@ cargo build --workspace --all-features --locked
 python3 tools/ci_smoke.py --binary target/debug/whale --socket enabled
 ```
 
-On Windows use `target/debug/whale.exe`. For Rust-only work, start with a focused
-command such as `cargo test -p ir --all-features --locked` without the archive.
+For a reference-only check, omit Wave archive variables and use a focused
+command such as `cargo test -p ir --features rust-reference,socket --locked`.
 See the [Rust](.github/workflows/rust.yml) and [quality](.github/workflows/quality.yml)
 workflows for MSRV, host, default-feature and optimized checks.
 

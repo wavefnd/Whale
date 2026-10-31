@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: MPL-2.0
+// Register 31 retains its distinct stack-pointer and zero-register roles.
+struct A64Register {
+    index: u64;
+    width: u64;
+    sp: u64;
+    zero: u64;
+}
+
+fun a64_lower(value: u8) -> u8 {
+    if (value >= 65 && value <= 90) {
+        return value + 32;
+    }
+    return value;
+}
+
+fun a64_keyword(bytes: ptr<u8>, count: u64, key: u64, length: u64, fold: bool) -> bool {
+    if (count != length) {
+        return false;
+    }
+    var index: u64 = 0;
+    while (index < count) {
+        var value: u8 = bytes[index];
+        if (fold) {
+            value = a64_lower(value);
+        }
+        if (value != ((key >> (index * 8)) & 255) as u8) {
+            return false;
+        }
+        index += 1;
+    }
+    return true;
+}
+
+fun a64_register_bytes(bytes: ptr<u8>, count: u64, output: ptr<A64Register>) -> bool {
+    output.index = 0;
+    output.width = 64;
+    output.sp = 0;
+    output.zero = 0;
+    // sp, wsp, xzr, wzr
+    if (a64_keyword(bytes, count, 28787, 2, true)
+        || a64_keyword(bytes, count, 7369591, 3, true)) {
+        output.index = 31;
+        output.sp = 1;
+        if (count == 3) {
+            output.width = 32;
+        }
+        return true;
+    }
+    if (a64_keyword(bytes, count, 7502456, 3, true)
+        || a64_keyword(bytes, count, 7502455, 3, true)) {
+        output.index = 31;
+        output.zero = 1;
+        if (a64_lower(bytes[0]) == 119) {
+            output.width = 32;
+        }
+        return true;
+    }
+    // fp, lr
+    if (a64_keyword(bytes, count, 28774, 2, true)) {
+        output.index = 29;
+        return true;
+    }
+    if (a64_keyword(bytes, count, 29292, 2, true)) {
+        output.index = 30;
+        return true;
+    }
+    if (count < 2 || count > 3) {
+        return false;
+    }
+    var prefix: u8 = a64_lower(bytes[0]);
+    if (prefix != 120 && prefix != 119) {
+        return false;
+    }
+    if (prefix == 119) {
+        output.width = 32;
+    }
+    if (count == 3 && bytes[1] == 48) {
+        return false;
+    }
+    var index: u64 = 1;
+    var number: u64 = 0;
+    while (index < count) {
+        var digit: u8 = bytes[index];
+        if (digit < 48 || digit > 57) {
+            return false;
+        }
+        number = number * 10 + (digit - 48) as u64;
+        index += 1;
+    }
+    if (number > 30) {
+        return false;
+    }
+    output.index = number;
+    return true;
+}
+
+fun a64_sf(register: ptr<A64Register>) -> u64 {
+    if (register.width == 64) {
+        return 2147483648;
+    }
+    return 0;
+}

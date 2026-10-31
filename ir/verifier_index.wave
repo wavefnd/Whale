@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: MPL-2.0
+// Incremental, bounded, caller-owned declaration identity index. Names are
+// borrowed from immutable module storage for the lifetime of verification.
+struct IrVerifyKey { kind: u64; number: u64; bytes: ptr<u8>; count: u64; }
+
+struct IrVerifySlot { kind: u64; number: u64; bytes: ptr<u8>; count: u64; occupied: u64; }
+
+fun ir_verify_index(table: ptr<IrVerifySlot>, capacity: u64,
+    key: ptr<IrVerifyKey>, insert: bool, max_work: u64, result: ptr<IrVerifyResult>) -> i32 {
+    if (result == null) { return 7; }
+    result.status = 0; result.index = 0; result.expected = 0;
+    result.actual = 0; result.detail = 0; result.work = 0;
+    if (key == null || key.kind > 2 || capacity < 2 || !ir_power_two(capacity)
+        || !ir_span_valid(table as ptr<u8>, capacity, 40)
+        || (key.kind == 1 && !ir_span_valid(key.bytes, key.count, 1))) {
+        return ir_verify_error(result, 7, 0, 0, 0, 0);
+    }
+    var hash: u64 = key.number ^ (key.number >> 16);
+    if (key.kind == 2) { hash = hash ^ key.count ^ (key.count >> 16); }
+    if (key.kind == 1) {
+        hash = 14695981039346656037;
+        var i: u64 = 0;
+        while (i < key.count) {
+            if (!ir_verify_charge(result, max_work)) { return 8; }
+            hash = (hash ^ (key.bytes[i] as u64)) * 1099511628211;
+            i += 1;
+        }
+    }
+    var position: u64 = hash & (capacity - 1);
+    var probes: u64 = 0;
+    while (probes < capacity) {
+        if (!ir_verify_charge(result, max_work)) { return 8; }
+        var slot: ptr<IrVerifySlot> = &table[position];
+        if (slot.occupied > 1 || slot.kind > 2) { return ir_verify_error(result, 7, position, 0, 0, 0); }
+        if (slot.occupied == 0) {
+            if (!insert) { return 0; }
+            slot.kind = key.kind; slot.number = key.number; slot.bytes = key.bytes;
+            slot.count = key.count; slot.occupied = 1; return 0;
+        }
+        if (slot.kind == key.kind) {
+            if (key.kind == 0 && slot.number == key.number) { return ir_verify_error(result, 1, position, 0, 0, 0); }
+            if (key.kind == 2 && slot.number == key.number && slot.count == key.count) { return ir_verify_error(result, 1, position, 0, 0, 0); }
+            if (key.kind == 1 && slot.count == key.count) {
+                if (!ir_span_valid(slot.bytes, slot.count, 1)) { return ir_verify_error(result, 7, position, 0, 0, 0); }
+                var equal: bool = true; var i: u64 = 0;
+                while (i < key.count) {
+                    if (!ir_verify_charge(result, max_work)) { return 8; }
+                    if (slot.bytes[i] != key.bytes[i]) { equal = false; break; }
+                    i += 1;
+                }
+                if (equal) { return ir_verify_error(result, 1, position, 0, 0, 0); }
+            }
+        }
+        position = (position + 1) & (capacity - 1); probes += 1;
+    }
+    return ir_verify_error(result, 8, 0, 0, 0, 0);
+}
+
+export(c) fun whale_ir_verify_index_insert(table: ptr<IrVerifySlot>, capacity: u64,
+    key: ptr<IrVerifyKey>, max_work: u64, result: ptr<IrVerifyResult>) -> i32 {
+    return ir_verify_index(table, capacity, key, true, max_work, result);
+}
+
+export(c) fun whale_ir_verify_index_contains(table: ptr<IrVerifySlot>, capacity: u64,
+    key: ptr<IrVerifyKey>, max_work: u64, result: ptr<IrVerifyResult>) -> i32 {
+    return ir_verify_index(table, capacity, key, false, max_work, result);
+}

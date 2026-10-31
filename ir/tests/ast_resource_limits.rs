@@ -167,6 +167,8 @@ fn child(name: &str) {
         .arg(std::env::current_exe().unwrap())
         .arg("--exact")
         .arg(name)
+        // Locale archives can map over 200 MiB before this 50 MiB AST probe starts.
+        .env("LC_ALL", "C")
         .env("MALLOC_ARENA_MAX", "1")
         .env("WHALE_DEEP_AST_CHILD", "1")
         .output()

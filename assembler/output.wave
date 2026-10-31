@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MPL-2.0
+// Output accounting is independent of instruction syntax and relocation kinds.
+// Logical growth reserves sparse storage without allocating materialized bytes.
+export(c) fun asm_output_grow(materialized: u64, section: u64, extra: u64,
+    limit: u64, logical: u64, output: ptr<AsmOutputGrowth>) -> i32 {
+    if (output == null || logical > 1 || materialized > limit) {
+        return 3;
+    }
+    if (extra > 18446744073709551615 - section) {
+        return 1;
+    }
+    var total: u64 = materialized;
+    if (logical == 0) {
+        if (extra > 18446744073709551615 - total) {
+            return 1;
+        }
+        if (extra > limit - total) {
+            return 2;
+        }
+        total += extra;
+    }
+    output.materialized = total;
+    output.section = section + extra;
+    return 0;
+}
+
+export(c) fun asm_output_align(materialized: u64, section: u64, alignment: u64,
+    limit: u64, logical: u64, output: ptr<AsmOutputGrowth>) -> i32 {
+    var padded: u64 = 0;
+    if (!asm_power_two(alignment)) {
+        return 3;
+    }
+    if (!asm_align_up(section, alignment, &padded)) {
+        return 1;
+    }
+    return asm_output_grow(materialized, section, padded - section, limit, logical, output);
+}

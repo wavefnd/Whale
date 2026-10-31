@@ -1,0 +1,185 @@
+// SPDX-License-Identifier: MPL-2.0
+// Whole-program executable admission. Structural verification runs first, so
+// every index below already names a validated record. Unreachable bodies are
+// deliberately checked as well: a file never advertises a partly executable VM.
+fun ir_bytecode_known_sub(inst: ptr<IrRuntimeInstruction>) -> bool {
+    if (inst.op == 1) {
+        return inst.sub == 1;
+    }
+    if (inst.op == 7) {
+        return inst.sub <= 17;
+    }
+    if (inst.op == 10 || inst.op == 12) {
+        return inst.sub <= 15;
+    }
+    if (inst.op == 11) {
+        return inst.sub <= 9;
+    }
+    if (inst.op == 14) {
+        return inst.sub <= 12;
+    }
+    if (inst.op == 16) {
+        return inst.sub <= 4294967295;
+    }
+    if (inst.op == 17) {
+        return inst.sub <= 5;
+    }
+    if (inst.op == 29) {
+        return inst.sub <= 1;
+    }
+    return inst.sub == 0;
+}
+
+fun ir_bytecode_callable(program: ptr<IrBytecodeProgram>, signature: u64,
+    limits: ptr<IrBytecodeLimits>, result: ptr<IrBytecodeResult>) -> bool {
+    var node: ptr<IrVerifyType> = &program.types[signature];
+    if (node.kind != 18 || node.extra != 0 || node.count == 0) {
+        return false;
+    }
+    var index: u64 = 0;
+    var kind: u64 = 0;
+    while (index < node.count) {
+        if (!ir_bytecode_charge(result, limits, 1)) {
+            return false;
+        }
+        kind = program.types[program.edges[node.first + index]].kind;
+        if (!(index == 0 && kind == 0) && !(kind >= 1 && kind <= 18)) {
+            return false;
+        }
+        index += 1;
+    }
+    return true;
+}
+
+fun ir_bytecode_executable_instruction(program: ptr<IrBytecodeProgram>,
+    function: ptr<IrRuntimeFunction>, inst: ptr<IrRuntimeInstruction>,
+    limits: ptr<IrBytecodeLimits>, result: ptr<IrBytecodeResult>) -> bool {
+    var op: u64 = inst.op;
+    var kind: u64 = program.types[inst.ty].kind;
+    var integer: bool = ir_verify_integer(kind);
+    var floating: bool = ir_verify_float(kind);
+    var scalar: bool = kind >= 1 && kind <= 16;
+    var valid: bool = op <= 3 || op >= 24;
+    if (!ir_bytecode_known_sub(inst)) {
+        return ir_bytecode_fail(result, 1, 105, 5, result.index);
+    }
+    if (op == 4) {
+        valid = scalar;
+    } else if (op == 5) {
+        valid = false;
+    } else if (op == 6 || op == 13 || op == 15) {
+        valid = ir_bytecode_value_type(program, inst.ty);
+    } else if (op == 7 || op == 8) {
+        valid = integer || floating;
+    } else if (op == 9 || op == 17) {
+        valid = integer;
+    } else if (op == 10 || op == 11) {
+        valid = kind == 1 || integer || kind == 17 || (op == 10 && floating);
+    } else if (op == 12) {
+        valid = floating;
+    } else if (op == 14) {
+        valid = ir_verify_cast(inst.sub, program.types[inst.other].kind, kind);
+    } else if (op == 16) {
+        valid = scalar && inst.sub <= 1;
+    } else if (op == 18 || op == 23) {
+        valid = kind != 0;
+    } else if (op >= 19 && op <= 22) {
+        valid = ir_bytecode_value_type(program, inst.ty);
+    }
+    if (!valid) {
+        return ir_bytecode_fail(result, 5, 100, 5, result.index);
+    }
+    if (op == 28) {
+        if (program.functions[inst.a].has_body == 0
+            || program.functions[inst.a].linkage != 0) {
+            return ir_bytecode_fail(result, 5, 102, 5, result.index);
+        }
+    }
+    if (op == 29) {
+        if (inst.sub != 0) {
+            return ir_bytecode_fail(result, 5, 103, 5, result.index);
+        }
+        var signature: u64 = 0;
+        if (inst.flags == 0) {
+            if (program.functions[inst.a].has_body == 0
+                || program.functions[inst.a].linkage != 0) {
+                return ir_bytecode_fail(result, 5, 102, 5, result.index);
+            }
+            signature = program.functions[inst.a].signature;
+        } else {
+            signature = program.value_types[function.first_value_type + inst.a];
+        }
+        if (!ir_bytecode_callable(program, signature, limits, result)) {
+            if (result.status != 0) {
+                return false;
+            }
+            return ir_bytecode_fail(result, 5, 101, 5, result.index);
+        }
+    }
+    return true;
+}
+
+fun ir_bytecode_inventory(program: ptr<IrBytecodeProgram>,
+    limits: ptr<IrBytecodeLimits>, result: ptr<IrBytecodeResult>) -> bool {
+    var global: u64 = 0;
+    var function_index: u64 = 0;
+    var block_index: u64 = 0;
+    var instruction_index: u64 = 0;
+    var kind: u64 = 0;
+    var function: ptr<IrRuntimeFunction> = null;
+    var block: ptr<IrRuntimeBlock> = null;
+    while (global < program.global_count) {
+        result.table = 8;
+        result.index = global;
+        if (!ir_bytecode_charge(result, limits, 1)) {
+            return false;
+        }
+        kind = program.types[program.globals[global].ty].kind;
+        // Aggregate storage is executable without materializing an aggregate
+        // value. Initializers, in contrast, must fit a scalar value record.
+        if (program.globals[global].initialized != 0 && (kind < 1 || kind > 16)) {
+            return ir_bytecode_fail(result, 5, 104, 8, global);
+        }
+        global += 1;
+    }
+    while (function_index < program.function_count) {
+        result.table = 3;
+        result.index = function_index;
+        if (!ir_bytecode_charge(result, limits, 1)) {
+            return false;
+        }
+        function = &program.functions[function_index];
+        if (function.has_body != 0) {
+            if (function.linkage != 0
+                || !ir_bytecode_callable(program, function.signature, limits, result)) {
+                if (result.status != 0) {
+                    return false;
+                }
+                return ir_bytecode_fail(result, 5, 101, 3, function_index);
+            }
+            block_index = function.first_block;
+            while (block_index < function.first_block + function.block_count) {
+                if (!ir_bytecode_charge(result, limits, 1)) {
+                    return false;
+                }
+                block = &program.blocks[block_index];
+                instruction_index = block.first;
+                while (instruction_index < block.first + block.count) {
+                    result.table = 5;
+                    result.index = instruction_index;
+                    if (!ir_bytecode_charge(result, limits, 1)
+                        || !ir_bytecode_executable_instruction(program, function,
+                            &program.instructions[instruction_index], limits, result)) {
+                        return false;
+                    }
+                    instruction_index += 1;
+                }
+                block_index += 1;
+            }
+        }
+        function_index += 1;
+    }
+    result.table = 0;
+    result.index = 0;
+    return true;
+}

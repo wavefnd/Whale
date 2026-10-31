@@ -28,7 +28,7 @@ fn check_distinct(input: &Path, output: &Path) -> io::Result<Option<fs::Permissi
     Ok(Some(metadata.permissions()))
 }
 
-fn publish_with(
+pub(super) fn publish_with(
     input: &Path,
     output: &Path,
     write: impl FnOnce(&mut fs::File) -> io::Result<()>,
@@ -50,6 +50,7 @@ fn publish_with(
 /// Publish an artifact while protecting every input, including hard/symlink aliases.
 /// Executables receive an explicit 0755 mode on Unix; no input or previous mode
 /// can propagate setuid/setgid bits into a newly linked artifact.
+#[cfg(feature = "native-linker")]
 pub(super) fn publish_many(
     inputs: &[&Path],
     output: &Path,

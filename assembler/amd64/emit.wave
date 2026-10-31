@@ -1,0 +1,178 @@
+// SPDX-License-Identifier: MPL-2.0
+// Bounded byte and relocation emission shared by every instruction family.
+fun amd_emit(w: ptr<AmdWriter>, value: u64, width: u64) -> bool {
+    var growth: AsmOutputGrowth;
+    var status: i32 = asm_output_grow(w.materialized, w.count, width, w.p.max_output, 0, &growth);
+    if (status != 0) {
+        if (status == 1 || status == 2) {
+            return amd_fail(w.result, 2);
+        }
+        return amd_fail(w.result, 3);
+    }
+    if (w.measuring == 0) {
+        var first: u64 = w.p.sections[w.section].first;
+        if (first > w.p.byte_capacity || w.count > w.p.byte_capacity - first
+            || width > w.p.byte_capacity - first - w.count) {
+            return amd_fail(w.result, 3);
+        }
+        var at: u64 = 0;
+        while (at < width) {
+            w.p.bytes[first + w.count + at] = (value >> (at * 8)) as u8;
+            at += 1;
+        }
+    }
+    w.count = growth.section;
+    w.materialized = growth.materialized;
+    return true;
+}
+
+fun amd_fill(w: ptr<AmdWriter>, count: u64, value: u64) -> bool {
+    var growth: AsmOutputGrowth;
+    var status: i32 = asm_output_grow(w.materialized, w.count, count, w.p.max_output, 0, &growth);
+    if (status != 0) {
+        if (status == 1 || status == 2) {
+            return amd_fail(w.result, 2);
+        }
+        return amd_fail(w.result, 3);
+    }
+    if (w.measuring == 0) {
+        var first: u64 = w.p.sections[w.section].first;
+        if (first > w.p.byte_capacity || w.count > w.p.byte_capacity - first
+            || count > w.p.byte_capacity - first - w.count) {
+            return amd_fail(w.result, 3);
+        }
+        var at: u64 = 0;
+        while (at < count) {
+            if (!amd_charge(w.p, w.result)) {
+                return false;
+            }
+            w.p.bytes[first + w.count + at] = value as u8;
+            at += 1;
+        }
+    }
+    w.count = growth.section;
+    w.materialized = growth.materialized;
+    return true;
+}
+
+fun amd_relocation(w: ptr<AmdWriter>, symbol: u64, kind: u64, addend: u64,
+    offset: u64) -> bool {
+    if (w.result.relocation_count >= w.p.relocation_capacity) {
+        return amd_fail(w.result, 3);
+    }
+    var at: u64 = w.result.relocation_count;
+    w.p.relocations[at].section = w.section;
+    w.p.relocations[at].offset = offset;
+    w.p.relocations[at].symbol = symbol;
+    w.p.relocations[at].kind = kind;
+    w.p.relocations[at].addend = addend;
+    w.p.relocations[at].node = w.result.node;
+    w.result.relocation_count += 1;
+    return true;
+}
+
+fun amd_prefix(w: ptr<AmdWriter>, width: u64) -> bool {
+    if (width == 16) {
+        return amd_emit(w, 102, 1);
+    }
+    return true;
+}
+
+fun amd_rex(w: ptr<AmdWriter>, width: u64, r: u64, x: u64, b: u64,
+    flags: u64) -> bool {
+    var bits: u64 = (r << 2) | (x << 1) | b;
+    if (width == 64) {
+        bits = bits | 8;
+    }
+    if (bits != 0 || (flags & 2) != 0) {
+        if ((flags & 1) != 0) {
+            return amd_fail(w.result, 4);
+        }
+        return amd_emit(w, 64 | bits, 1);
+    }
+    return true;
+}
+
+fun amd_modrm(w: ptr<AmdWriter>, mode: u64, reg: u64, rm: u64) -> bool {
+    return amd_emit(w, ((mode & 3) << 6) | ((reg & 7) << 3) | (rm & 7), 1);
+}
+
+fun amd_register_pair(w: ptr<AmdWriter>, opcode: u64, dst: ptr<AmdOperand>,
+    src: ptr<AmdOperand>) -> bool {
+    if (dst.kind != 0 || src.kind != 0 || dst.width == 128 || src.width == 128) {
+        return amd_fail(w.result, 5);
+    }
+    if (dst.width != src.width) {
+        return amd_fail(w.result, 6);
+    }
+    return amd_prefix(w, dst.width)
+        && amd_rex(w, dst.width, (src.code >= 8) as u64, 0, (dst.code >= 8) as u64,
+            dst.flags | src.flags)
+        && amd_emit(w, opcode, 1) && amd_modrm(w, 3, src.code, dst.code);
+}
+
+fun amd_memory(w: ptr<AmdWriter>, opcode: u64, two: u64, reg: ptr<AmdOperand>,
+    mem: ptr<AmdOperand>, width: u64, trailing: u64) -> bool {
+    var address: AmdAddress;
+    if (!amd_address(w.p, mem, 64, true, &address, w.result)) {
+        return false;
+    }
+    if (!amd_rex(w, width, (reg.code >= 8) as u64, address.rex_x, address.rex_b, reg.flags)) {
+        return false;
+    }
+    if (two != 0 && !amd_emit(w, 15, 1)) {
+        return false;
+    }
+    if (!amd_emit(w, opcode, 1) || !amd_modrm(w, address.mode, reg.code, address.rm)) {
+        return false;
+    }
+    if (mem.symbol != 18446744073709551615) {
+        var addend: i64 = mem.disp;
+        var kind: u64 = 2;
+        if (mem.mode != 2) {
+            kind = 3;
+            var adjustment: u64 = 4 + trailing;
+            if (addend < (-9223372036854775807 - 1) + (adjustment as i64)) {
+                return amd_fail(w.result, 7);
+            }
+            addend -= adjustment as i64;
+        }
+        var at: u64 = w.count;
+        if (address.sib != 18446744073709551615) {
+            at += 1;
+        }
+        if (!amd_relocation(w, mem.symbol, kind, addend as u64, at)) {
+            return false;
+        }
+    }
+    if (address.sib != 18446744073709551615 && !amd_emit(w, address.sib, 1)) {
+        return false;
+    }
+    return amd_emit(w, address.displacement, address.width);
+}
+
+fun amd_mem_width(w: ptr<AmdWriter>, mem: ptr<AmdOperand>, width: u64) -> bool {
+    if (mem.memwidth != 18446744073709551615 && mem.memwidth != width) {
+        return amd_fail(w.result, 8);
+    }
+    return true;
+}
+
+fun amd_reg_mem(w: ptr<AmdWriter>, opcode: u64, two: u64, reg: ptr<AmdOperand>,
+    mem: ptr<AmdOperand>) -> bool {
+    if (reg.kind != 0 || reg.width == 128 || mem.kind != 4) {
+        return amd_fail(w.result, 5);
+    }
+    return amd_mem_width(w, mem, reg.width) && amd_prefix(w, reg.width)
+        && amd_memory(w, opcode, two, reg, mem, reg.width, 0);
+}
+
+export(c) fun whale_amd64_bits(op: u64, a: u64, b: u64, c: u64, d: u64) -> u64 {
+    if (op == 0) {
+        return ((a & 3) << 6) | ((b & 7) << 3) | (c & 7);
+    }
+    if (op == 1) {
+        return 64 | ((a & 1) << 3) | ((b & 1) << 2) | ((c & 1) << 1) | (d & 1);
+    }
+    return ((a & 3) << 6) | ((b & 7) << 3) | (c & 7);
+}

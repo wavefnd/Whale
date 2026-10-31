@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: MPL-2.0
+// Finite products remain exact through 106 bits; only packing rounds.
+fun ir_float_arithmetic(operation: u64, kind: u64, lhs: u64, rhs: u64, output: ptr<u64>) -> bool {
+    var format: IrFloatFormat;
+    if (operation > 4 || !ir_float_format(kind, &format)) {
+        return false;
+    }
+    var a: IrFloatParts;
+    var b: IrFloatParts;
+    ir_float_unpack(&format, lhs, &a);
+    ir_float_unpack(&format, rhs, &b);
+    if (a.nan || b.nan) {
+        output[0] = ir_float_nan(&format);
+        return true;
+    }
+    if (operation == 1) {
+        b.negative = !b.negative;
+    }
+    var negative: bool = (a.negative && !b.negative) || (!a.negative && b.negative);
+    ir_float_normalize(&format, &a);
+    ir_float_normalize(&format, &b);
+    var a_zero: bool = ir_float_wide_zero(&a.significand);
+    var b_zero: bool = ir_float_wide_zero(&b.significand);
+    var value: IrWide;
+    if (operation <= 1) {
+        if (a.infinity || b.infinity) {
+            if (a.infinity && b.infinity && negative) {
+                output[0] = ir_float_nan(&format);
+            } else {
+                var sign: bool = b.negative;
+                if (a.infinity) {
+                    sign = a.negative;
+                }
+                output[0] = ir_float_special(&format, sign, true);
+            }
+        } else if (a_zero && b_zero) {
+            output[0] = ir_float_special(&format, a.negative && b.negative, false);
+        } else if (a_zero) {
+            output[0] = ir_float_pack(&format, b.negative, &b.significand, b.exponent);
+        } else if (b_zero) {
+            output[0] = ir_float_pack(&format, a.negative, &a.significand, a.exponent);
+        } else {
+            if (a.exponent < b.exponent || (a.exponent == b.exponent && ir_wide_cmp(&a.significand,
+                &b.significand) < 0)) {
+                var temporary: IrFloatParts = a;
+                a = b;
+                b = temporary;
+            }
+            var av: IrWide;
+            var bv: IrWide;
+            ir_wide_shl(&a.significand, 3, &av);
+            ir_wide_shl(&b.significand, 3, &bv);
+            ir_wide_jam(&bv, (a.exponent - b.exponent) as u64, &bv);
+            if ((a.negative && b.negative) || (!a.negative && !b.negative)) {
+                ir_wide_add(&av, &bv, &value);
+                output[0] = ir_float_pack(&format, a.negative, &value, a.exponent - 3);
+            } else {
+                var sign: bool = a.negative && ir_wide_cmp(&av, &bv) != 0;
+                ir_wide_sub(&av, &bv, &value);
+                output[0] = ir_float_pack(&format, sign, &value, a.exponent - 3);
+            }
+        }
+    } else if (operation == 2) {
+        if ((a.infinity && b_zero && !b.infinity) || (b.infinity && a_zero && !a.infinity)) {
+            output[0] = ir_float_nan(&format);
+        } else if (a.infinity || b.infinity) {
+            output[0] = ir_float_special(&format, negative, true);
+        } else {
+            ir_wide_mul(&a.significand, &b.significand, &value);
+            output[0] = ir_float_pack(&format, negative, &value, a.exponent + b.exponent);
+        }
+    } else if (operation == 3) {
+        if ((a.infinity && b.infinity) || (!a.infinity && !b.infinity && a_zero && b_zero)) {
+            output[0] = ir_float_nan(&format);
+        } else if (a.infinity || (b_zero && !b.infinity)) {
+            output[0] = ir_float_special(&format, negative, true);
+        } else if (b.infinity || a_zero) {
+            output[0] = ir_float_special(&format, negative, false);
+        } else {
+            var shift: u64 = format.fraction + 4;
+            var numerator: IrWide;
+            var remainder: IrWide;
+            ir_wide_shl(&a.significand, shift, &numerator);
+            if (!ir_wide_divmod(&numerator, &b.significand, &value, &remainder)) {
+                return false;
+            }
+            if (!ir_float_wide_zero(&remainder)) {
+                value.low = value.low | 1;
+            }
+            output[0] = ir_float_pack(&format, negative, &value, a.exponent - b.exponent - shift as
+                i64);
+        }
+    } else {
+        if (a.infinity || (b_zero && !b.infinity)) {
+            output[0] = ir_float_nan(&format);
+        } else if (b.infinity || a_zero || a.exponent < b.exponent) {
+            output[0] = lhs;
+        } else {
+            var r: IrWide;
+            var power: IrWide;
+            var quotient: IrWide;
+            var two: IrWide;
+            ir_wide_from(2, 0, &two);
+            if (!ir_wide_divmod(&a.significand, &b.significand, &quotient, &r) ||
+                !ir_wide_divmod(&two, &b.significand, &quotient, &power)) {
+                return false;
+            }
+            var shift: u64 = (a.exponent - b.exponent) as u64;
+            while (shift != 0) {
+                if ((shift & 1) != 0) {
+                    ir_wide_mul(&r, &power, &value);
+                    if (!ir_wide_divmod(&value, &b.significand, &quotient, &r)) {
+                        return false;
+                    }
+                }
+                ir_wide_mul(&power, &power, &value);
+                if (!ir_wide_divmod(&value, &b.significand, &quotient, &power)) {
+                    return false;
+                }
+                shift = shift >> 1;
+            }
+            output[0] = ir_float_pack(&format, a.negative, &r, b.exponent);
+        }
+    }
+    return true;
+}

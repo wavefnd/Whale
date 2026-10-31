@@ -1,0 +1,325 @@
+// SPDX-License-Identifier: MPL-2.0
+// Private flat frontend/output storage for O0 lowering. Types are canonical
+// structural identities; field names remain source layout facts, not IR types.
+struct IrLowerNode { tag: u64; a: u64; b: u64; c: u64; d: u64; e: u64; f: u64; g: u64; h: u64; i: u64; j: u64; k: u64; }
+
+struct IrLowerString { data: ptr<u8>; length: u64; }
+
+struct IrLowerType { kind: u64; child: u64; first: u64; count: u64; auxiliary: u64; }
+
+struct IrLowerValue { value: u64; ty: u64; }
+
+struct IrLowerBinding { name: u64; ty: u64; value: u64; kind: u64; constant: u64; }
+
+struct IrLowerResult { status: u64; node: u64; expected: u64; actual: u64; annotation: u64; detail: u64; work: u64; }
+
+struct IrLowerContext {
+    nodes: ptr<IrLowerNode>; node_count: u64;
+    edges: ptr<u64>; edge_count: u64;
+    names: ptr<IrLowerString>; name_count: u64;
+    types: ptr<IrLowerType>; type_count: u64; type_capacity: u64;
+    type_edges: ptr<u64>; type_edge_count: u64; type_edge_capacity: u64;
+    type_table: ptr<u64>; type_table_capacity: u64; type_map: ptr<u64>;
+    temporary: ptr<u64>; temporary_count: u64; temporary_capacity: u64;
+    name_marks: ptr<u64>; marker: u64;
+    storage: ptr<IrStorage>; layout_nodes: ptr<IrTypeNode>;
+    layouts: ptr<IrTypeLayout>; layout_offsets: ptr<u64>;
+    annotation: u64; max_depth: u64; max_work: u64; work: u64;
+    result: ptr<IrLowerResult>;
+}
+
+fun ir_lower_fail(p: ptr<IrLowerContext>, status: u64, node: u64,
+    expected: u64, actual: u64, detail: u64) -> bool {
+    p.result.status = status; p.result.node = node;
+    p.result.expected = expected; p.result.actual = actual;
+    p.result.detail = detail; p.result.annotation = p.annotation;
+    return false;
+}
+
+fun ir_lower_charge(p: ptr<IrLowerContext>, amount: u64, node: u64) -> bool {
+    if (amount > p.max_work - p.work) { return ir_lower_fail(p, 1, node, 0, 0, 0); }
+    p.work += amount; return true;
+}
+
+fun ir_lower_node(p: ptr<IrLowerContext>, node: u64, depth: u64) -> bool {
+    if (depth > p.max_depth) { return ir_lower_fail(p, 2, node, 0, 0, 0); }
+    if (!ir_lower_charge(p, 1, node)) { return false; }
+    if (node >= p.node_count) { return ir_lower_fail(p, 3, node, 0, 0, 0); }
+    return true;
+}
+
+fun ir_lower_edges(p: ptr<IrLowerContext>, first: u64, count: u64, node: u64) -> bool {
+    if (first > p.edge_count || count > p.edge_count - first) {
+        return ir_lower_fail(p, 3, node, 0, 0, 0);
+    }
+    return true;
+}
+
+fun ir_lower_name(p: ptr<IrLowerContext>, name: u64, node: u64) -> bool {
+    if (name >= p.name_count) { return ir_lower_fail(p, 3, node, 0, 0, 0); }
+    return true;
+}
+
+fun ir_lower_integer(ty: u64) -> bool { return ty >= 2 && ty <= 13; }
+
+fun ir_lower_signed(ty: u64) -> bool { return ty == 2 || (ty >= 4 && ty <= 8); }
+
+fun ir_lower_float(ty: u64) -> bool { return ty >= 14 && ty <= 16; }
+
+fun ir_lower_scalar(p: ptr<IrLowerContext>, ty: u64) -> bool {
+    return ty != 0 && ty < p.type_count && p.types[ty].kind <= 18;
+}
+
+fun ir_lower_aggregate(p: ptr<IrLowerContext>, ty: u64) -> bool {
+    return p.types[ty].kind == 19 || p.types[ty].kind == 20;
+}
+
+fun ir_lower_width(ty: u64) -> u64 {
+    if (ty == 2 || ty == 3) { return 1; }
+    if (ty >= 9 && ty <= 13) { ty -= 5; }
+    if (ty == 4) { return 8; }
+    if (ty == 5) { return 16; }
+    if (ty == 6 || ty == 15) { return 32; }
+    if (ty == 7 || ty == 16) { return 64; }
+    if (ty == 8) { return 128; }
+    if (ty == 14) { return 16; }
+    return 0;
+}
+
+fun ir_lower_layout_kind(kind: u64) -> u64 {
+    if (kind == 0) { return 0; }
+    if (kind <= 4 || kind == 9) { return 1; }
+    if (kind == 5 || kind == 10 || kind == 14) { return 2; }
+    if (kind == 6 || kind == 11 || kind == 15) { return 3; }
+    if (kind == 7 || kind == 12 || kind == 16) { return 4; }
+    if (kind == 8 || kind == 13) { return 5; }
+    if (kind == 17) { return 6; }
+    if (kind == 18) { return 7; }
+    if (kind == 19) { return 8; }
+    if (kind == 20) { return 9; }
+    return 10;
+}
+
+fun ir_lower_mix(value: u64) -> u64 {
+    value = (value ^ (value >> 30)) * 13787848793156543929;
+    value = (value ^ (value >> 27)) * 10723151780598845931;
+    return value ^ (value >> 31);
+}
+
+fun ir_lower_type_intern(p: ptr<IrLowerContext>, kind: u64, child: u64,
+    children: ptr<u64>, count: u64, auxiliary: u64, node: u64, output: ptr<u64>) -> bool {
+    var hash: u64 = kind ^ (child << 7) ^ (child >> 57) ^ auxiliary ^ (count << 21);
+    var at: u64 = 0;
+    while (at < count) {
+        if (!ir_lower_charge(p, 1, node)) { return false; }
+        hash = (hash << 5) ^ (hash >> 59) ^ children[at]; at += 1;
+    }
+    var slot: u64 = ir_lower_mix(hash) & (p.type_table_capacity - 1);
+    var visited: u64 = 0;
+    while (visited < p.type_table_capacity) {
+        if (!ir_lower_charge(p, 1, node)) { return false; }
+        var entry: u64 = p.type_table[slot];
+        if (entry == 0) {
+            if (p.type_count >= p.type_capacity
+                || count > p.type_edge_capacity - p.type_edge_count) {
+                return ir_lower_fail(p, 4, node, 0, 0, 0);
+            }
+            var id: u64 = p.type_count;
+            p.types[id].kind = kind; p.types[id].child = child;
+            p.types[id].first = p.type_edge_count; p.types[id].count = count;
+            p.types[id].auxiliary = auxiliary;
+            at = 0;
+            while (at < count) {
+                p.type_edges[p.type_edge_count + at] = children[at];
+                p.layout_offsets[p.type_edge_count + at] = 0;
+                at += 1;
+            }
+            p.layout_nodes[id].kind = ir_lower_layout_kind(kind);
+            p.layout_nodes[id].child = child;
+            p.layout_nodes[id].first = p.type_edge_count;
+            p.layout_nodes[id].count = count;
+            if (kind == 19) { p.layout_nodes[id].count = auxiliary; }
+            if (kind == 17 || kind == 18) { p.layout_nodes[id].child = id; }
+            p.layouts[id].size = 0; p.layouts[id].align = 0; p.layouts[id].stride = 0;
+            p.layouts[id].allocation_align = 0; p.layouts[id].depth = 0;
+            p.type_edge_count += count; p.type_count += 1;
+            p.type_table[slot] = id + 1; output[0] = id; return true;
+        }
+        var id: u64 = entry - 1;
+        var same: bool = p.types[id].kind == kind && p.types[id].child == child
+            && p.types[id].count == count && p.types[id].auxiliary == auxiliary;
+        at = 0;
+        while (same && at < count) {
+            if (!ir_lower_charge(p, 1, node)) { return false; }
+            same = p.type_edges[p.types[id].first + at] == children[at]; at += 1;
+        }
+        if (same) { output[0] = id; return true; }
+        slot = (slot + 1) & (p.type_table_capacity - 1); visited += 1;
+    }
+    return ir_lower_fail(p, 4, node, 0, 0, 0);
+}
+
+fun ir_lower_pointer(p: ptr<IrLowerContext>, child: u64, node: u64, output: ptr<u64>) -> bool {
+    return ir_lower_type_intern(p, 17, child, null, 0, 0, node, output);
+}
+
+fun ir_lower_type(p: ptr<IrLowerContext>, node: u64, depth: u64, output: ptr<u64>) -> bool {
+    if (!ir_lower_node(p, node, depth)) { return false; }
+    if (p.type_map[node] != 18446744073709551615) { output[0] = p.type_map[node]; return true; }
+    var n: ptr<IrLowerNode> = &p.nodes[node];
+    var ty: u64 = 0;
+    var child: u64 = 0;
+    if (n.tag == 100) { ty = 0; }
+    else if (n.tag == 101) { ty = 1; }
+    else if (n.tag == 102) {
+        if (n.b > 1) { return ir_lower_fail(p, 3, node, 0, 0, 0); }
+        if (n.a == 1) { ty = 2; }
+        else if (n.a == 8) { ty = 4; }
+        else if (n.a == 16) { ty = 5; }
+        else if (n.a == 32) { ty = 6; }
+        else if (n.a == 64) { ty = 7; }
+        else if (n.a == 128) { ty = 8; }
+        else { return ir_lower_fail(p, 5, node, 0, 0, 0); }
+        if (n.b == 0) { if (ty == 2) { ty = 3; } else { ty += 5; } }
+    } else if (n.tag == 103) {
+        if (n.a == 16) { ty = 14; }
+        else if (n.a == 32) { ty = 15; }
+        else if (n.a == 64) { ty = 16; }
+        else { return ir_lower_fail(p, 5, node, 0, 0, 0); }
+    } else if (n.tag == 104 || n.tag == 106) {
+        if (!ir_lower_type(p, n.a, depth + 1, &child)) { return false; }
+        if (n.tag == 104) {
+            if (!ir_lower_pointer(p, child, node, &ty)) { return false; }
+        } else if (!ir_lower_type_intern(p, 19, child, null, 0, n.b, node, &ty)) { return false; }
+    } else if (n.tag == 105) {
+        if (!ir_lower_type(p, n.a, depth + 1, &ty)) { return false; }
+        if (p.types[ty].kind != 18) { return ir_lower_fail(p, 3, node, 0, 0, 0); }
+    } else if (n.tag == 107 || n.tag == 110) {
+        if (!ir_lower_edges(p, n.a, n.b, node)) { return false; }
+        var saved: u64 = p.temporary_count;
+        var at: u64 = 0;
+        var marker: u64 = p.marker;
+        p.marker += 1;
+        // Check all sibling names before recursively mapping child types; a
+        // nested struct may legitimately reuse the same interned field name.
+        if (n.tag == 107) {
+            while (at < n.b) {
+                var field: u64 = p.edges[n.a + at];
+                if (!ir_lower_node(p, field, depth + 1)) { return false; }
+                if (p.nodes[field].tag != 108) { return ir_lower_fail(p, 3, field, 0, 0, 0); }
+                var field_name: u64 = p.nodes[field].a;
+                if (!ir_lower_name(p, field_name, field)) { return false; }
+                if (p.names[field_name].length == 0 || p.name_marks[field_name] == marker) {
+                    return ir_lower_fail(p, 18, field, 0, 0, 1);
+                }
+                p.name_marks[field_name] = marker;
+                at += 1;
+            }
+            at = 0;
+        }
+        while (at < n.b) {
+            var source: u64 = p.edges[n.a + at];
+            if (n.tag == 107) {
+                if (!ir_lower_node(p, source, depth + 1)) { return false; }
+                if (p.nodes[source].tag != 108) { return ir_lower_fail(p, 3, source, 0, 0, 0); }
+                source = p.nodes[source].b;
+            }
+            if (!ir_lower_type(p, source, depth + 1, &child)) { return false; }
+            if (n.tag == 107 && !ir_lower_scalar(p, child)) {
+                return ir_lower_fail(p, 18, source, 0, 0, 2);
+            }
+            if (n.tag == 110 && (child == 0 || (n.d == 1 && ir_lower_aggregate(p, child)))) {
+                return ir_lower_fail(p, 21, source, 0, 0, 1);
+            }
+            if (p.temporary_count >= p.temporary_capacity) { return ir_lower_fail(p, 4, node, 0, 0, 0); }
+            p.temporary[p.temporary_count] = child; p.temporary_count += 1;
+            at += 1;
+        }
+        var kind: u64 = 20;
+        var auxiliary: u64 = 0;
+        child = 0;
+        if (n.tag == 110) {
+            kind = 18;
+            if (n.d > 1 || n.e != 0) { return ir_lower_fail(p, 21, node, 0, 0, 1); }
+            auxiliary = n.d;
+            if (!ir_lower_type(p, n.c, depth + 1, &child)) { return false; }
+        }
+        if (!ir_lower_type_intern(p, kind, child, &p.temporary[saved], n.b,
+            auxiliary, node, &ty)) { return false; }
+        p.temporary_count = saved;
+    } else if (n.tag == 109) { return ir_lower_fail(p, 5, node, 0, 0, 1); }
+    else { return ir_lower_fail(p, 3, node, 0, 0, 0); }
+    p.type_map[node] = ty; output[0] = ty; return true;
+}
+
+fun ir_lower_layout(p: ptr<IrLowerContext>, ty: u64, node: u64) -> bool {
+    var remaining: u64 = p.max_work - p.work;
+    var status: i32 = ir_layout_node(ty, p.layout_nodes, p.type_count,
+        p.type_edges, p.type_edge_count, p.storage, p.max_depth,
+        p.layouts, p.layout_offsets, &remaining);
+    p.work = p.max_work - remaining;
+    if (status == 6) { return ir_lower_fail(p, 1, node, 0, 0, 0); }
+    if (status != 0) { return ir_lower_fail(p, 20, node, ty, 0, status as u64); }
+    return true;
+}
+
+fun ir_lower_initialize(p: ptr<IrLowerContext>) -> bool {
+    if (p == null || p.result == null) { return false; }
+    p.result.status = 0; p.result.node = 0; p.result.expected = 0; p.result.actual = 0;
+    p.result.annotation = 18446744073709551615; p.result.detail = 0; p.result.work = 0;
+    p.work = 0; p.annotation = 18446744073709551615;
+    if (!ir_span_valid(p.nodes as ptr<u8>, p.node_count, 96)
+        || !ir_span_valid(p.edges as ptr<u8>, p.edge_count, 8)
+        || !ir_span_valid(p.names as ptr<u8>, p.name_count, 16)
+        || !ir_span_valid(p.types as ptr<u8>, p.type_capacity, 40)
+        || !ir_span_valid(p.type_edges as ptr<u8>, p.type_edge_capacity, 8)
+        || !ir_span_valid(p.type_table as ptr<u8>, p.type_table_capacity, 8)
+        || !ir_span_valid(p.type_map as ptr<u8>, p.node_count, 8)
+        || !ir_span_valid(p.temporary as ptr<u8>, p.temporary_capacity, 8)
+        || !ir_span_valid(p.name_marks as ptr<u8>, p.name_count, 8)
+        || !ir_span_valid(p.layout_nodes as ptr<u8>, p.type_capacity, 32)
+        || !ir_span_valid(p.layouts as ptr<u8>, p.type_capacity, 40)
+        || !ir_span_valid(p.layout_offsets as ptr<u8>, p.type_edge_capacity, 8)
+        || !ir_storage_valid(p.storage) || !ir_power_two(p.type_table_capacity)
+        || p.type_capacity < 17 || p.max_depth > 32) {
+        return ir_lower_fail(p, 3, 0, 0, 0, 0);
+    }
+    p.type_count = 17; p.type_edge_count = 0; p.temporary_count = 0; p.marker = 1;
+    var at: u64 = 0;
+    while (at < 17) {
+        if (!ir_lower_charge(p, 1, 0)) { return false; }
+        p.types[at].kind = at; p.types[at].child = 0; p.types[at].first = 0;
+        p.types[at].count = 0; p.types[at].auxiliary = 0;
+        p.layout_nodes[at].kind = ir_lower_layout_kind(at);
+        p.layout_nodes[at].child = 0; p.layout_nodes[at].first = 0; p.layout_nodes[at].count = 0;
+        p.layouts[at].size = 0; p.layouts[at].align = 0; p.layouts[at].stride = 0;
+        p.layouts[at].allocation_align = 0; p.layouts[at].depth = 0; at += 1;
+    }
+    at = 0;
+    while (at < p.type_table_capacity) {
+        if (!ir_lower_charge(p, 1, 0)) { return false; }
+        p.type_table[at] = 0; at += 1;
+    }
+    at = 0;
+    while (at < p.node_count) {
+        if (!ir_lower_charge(p, 1, at)) { return false; }
+        p.type_map[at] = 18446744073709551615; at += 1;
+    }
+    at = 0;
+    while (at < p.name_count) {
+        if (!ir_lower_charge(p, 1, 0)) { return false; }
+        p.name_marks[at] = 0; at += 1;
+    }
+    return true;
+}
+
+// Native conformance probe shares the same canonical model and Wave layout
+// routines as the complete O0 lowering driver. The output ID is transactional.
+export(c) fun whale_ir_lower_type(p: ptr<IrLowerContext>, node: u64, output: ptr<u64>) -> i32 {
+    if (p == null || p.result == null || output == null) { return 3; }
+    if (!ir_lower_initialize(p)) { p.result.work = p.work; return p.result.status as i32; }
+    var ty: u64 = 0;
+    if (!ir_lower_type(p, node, 0, &ty)) { p.result.work = p.work; return p.result.status as i32; }
+    if (!ir_lower_layout(p, ty, node)) { p.result.work = p.work; return p.result.status as i32; }
+    output[0] = ty; p.result.work = p.work; return 0;
+}

@@ -1,0 +1,2083 @@
+// SPDX-License-Identifier: MPL-2.0
+// Canonical IR grammar and byte escaping live here. Rust supplies a flat,
+// borrowed model and drains bounded chunks; it does not choose print syntax.
+// The caller owns the resumable task stack. No global strings or allocation.
+struct IrPrintState {
+    nodes: ptr<u64>; node_count: u64;
+    edges: ptr<u64>; edge_count: u64;
+    stack: ptr<u64>; stack_capacity: u64; stack_len: u64;
+    output_limit: u64; total: u64; work: u64; depth_limit: u64;
+    status: u64; initialized: u64;
+}
+
+fun irp_push(s: ptr<IrPrintState>, kind: u64, a: u64, b: u64, c: u64,
+    d: u64, e: u64, f: u64, g: u64, h: u64, depth: u64) -> bool {
+    if (s.status != 0) { return false; }
+    if (s.work == 0) { s.status = 4; return false; }
+    s.work -= 1;
+    if (s.stack_len >= s.stack_capacity) { s.status = 3; return false; }
+    var p: ptr<u64> = &s.stack[s.stack_len * 10];
+    p[0] = kind; p[1] = a; p[2] = b; p[3] = c; p[4] = d;
+    p[5] = e; p[6] = f; p[7] = g; p[8] = h; p[9] = depth;
+    s.stack_len += 1;
+    return true;
+}
+
+fun irp_list(s: ptr<IrPrintState>, first: u64, count: u64, separator: u64,
+    separator_len: u64, before: u64, before_len: u64,
+    after: u64, after_len: u64, depth: u64) -> bool {
+    if (first > s.edge_count || count > s.edge_count - first) {
+        s.status = 1; return false;
+    }
+    return irp_push(s, 8, first, count, separator, separator_len,
+        before, before_len, after, after_len, depth);
+}
+
+fun irp_operator(s: ptr<IrPrintState>, family: u64, value: u64, depth: u64) -> bool {
+    if (family == 1) {
+        if (value == 0) {
+            // "add"
+            if (!irp_push(s, 1, 6579297, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 1) {
+            // "sub"
+            if (!irp_push(s, 1, 6452595, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 2) {
+            // "mul"
+            if (!irp_push(s, 1, 7107949, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 3) {
+            // "bit_and"
+            if (!irp_push(s, 1, 28268862163413346, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 4) {
+            // "bit_or"
+            if (!irp_push(s, 1, 125822668400994, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 5) {
+            // "bit_xor"
+            if (!irp_push(s, 1, 32210710133238114, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 6) {
+            // "div"
+            if (!irp_push(s, 1, 7760228, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 7) {
+            // "rem"
+            if (!irp_push(s, 1, 7169394, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 8) {
+            // "ft"
+            if (!irp_push(s, 1, 29798, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // "shift_le"
+            if (!irp_push(s, 1, 7308321248854501491, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 9) {
+            // "ght"
+            if (!irp_push(s, 1, 7628903, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // "shift_ri"
+            if (!irp_push(s, 1, 7598240474866477171, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 10) {
+            // "and"
+            if (!irp_push(s, 1, 6581857, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // "logical_"
+            if (!irp_push(s, 1, 6875977810685947756, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 11) {
+            // "or"
+            if (!irp_push(s, 1, 29295, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // "logical_"
+            if (!irp_push(s, 1, 6875977810685947756, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+    }
+    if (family == 2) {
+        if (value == 0) {
+            // "eq"
+            if (!irp_push(s, 1, 29029, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 1) {
+            // "ne"
+            if (!irp_push(s, 1, 25966, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 2) {
+            // "lt"
+            if (!irp_push(s, 1, 29804, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 3) {
+            // "le"
+            if (!irp_push(s, 1, 25964, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 4) {
+            // "gt"
+            if (!irp_push(s, 1, 29799, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 5) {
+            // "ge"
+            if (!irp_push(s, 1, 25959, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+    }
+    if (family == 3) {
+        if (value == 0) {
+            // "add"
+            if (!irp_push(s, 1, 6579297, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 1) {
+            // "sub"
+            if (!irp_push(s, 1, 6452595, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 2) {
+            // "mul"
+            if (!irp_push(s, 1, 7107949, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 3) {
+            // "udiv"
+            if (!irp_push(s, 1, 1986618485, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 4) {
+            // "sdiv"
+            if (!irp_push(s, 1, 1986618483, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 5) {
+            // "urem"
+            if (!irp_push(s, 1, 1835364981, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 6) {
+            // "srem"
+            if (!irp_push(s, 1, 1835364979, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 7) {
+            // "fadd"
+            if (!irp_push(s, 1, 1684300134, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 8) {
+            // "fsub"
+            if (!irp_push(s, 1, 1651864422, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 9) {
+            // "fmul"
+            if (!irp_push(s, 1, 1819635046, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 10) {
+            // "fdiv"
+            if (!irp_push(s, 1, 1986618470, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 11) {
+            // "frem"
+            if (!irp_push(s, 1, 1835364966, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 12) {
+            // "and"
+            if (!irp_push(s, 1, 6581857, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 13) {
+            // "or"
+            if (!irp_push(s, 1, 29295, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 14) {
+            // "xor"
+            if (!irp_push(s, 1, 7499640, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 15) {
+            // "shl"
+            if (!irp_push(s, 1, 7104627, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 16) {
+            // "lshr"
+            if (!irp_push(s, 1, 1919447916, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 17) {
+            // "ashr"
+            if (!irp_push(s, 1, 1919447905, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+    }
+    if (family == 4) {
+        if (value == 0) {
+            // "eq"
+            if (!irp_push(s, 1, 29029, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 1) {
+            // "ne"
+            if (!irp_push(s, 1, 25966, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 2) {
+            // "slt"
+            if (!irp_push(s, 1, 7629939, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 3) {
+            // "sle"
+            if (!irp_push(s, 1, 6646899, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 4) {
+            // "sgt"
+            if (!irp_push(s, 1, 7628659, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 5) {
+            // "sge"
+            if (!irp_push(s, 1, 6645619, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 6) {
+            // "ult"
+            if (!irp_push(s, 1, 7629941, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 7) {
+            // "ule"
+            if (!irp_push(s, 1, 6646901, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 8) {
+            // "ugt"
+            if (!irp_push(s, 1, 7628661, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 9) {
+            // "uge"
+            if (!irp_push(s, 1, 6645621, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 10) {
+            // "feq"
+            if (!irp_push(s, 1, 7431526, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 11) {
+            // "fne"
+            if (!irp_push(s, 1, 6647398, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 12) {
+            // "flt"
+            if (!irp_push(s, 1, 7629926, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 13) {
+            // "fle"
+            if (!irp_push(s, 1, 6646886, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 14) {
+            // "fgt"
+            if (!irp_push(s, 1, 7628646, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 15) {
+            // "fge"
+            if (!irp_push(s, 1, 6645606, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+    }
+    if (family == 5) {
+        if (value == 0) {
+            // "eq"
+            if (!irp_push(s, 1, 29029, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 1) {
+            // "ne"
+            if (!irp_push(s, 1, 25966, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 2) {
+            // "ult"
+            if (!irp_push(s, 1, 7629941, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 3) {
+            // "ule"
+            if (!irp_push(s, 1, 6646901, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 4) {
+            // "ugt"
+            if (!irp_push(s, 1, 7628661, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 5) {
+            // "uge"
+            if (!irp_push(s, 1, 6645621, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 6) {
+            // "slt"
+            if (!irp_push(s, 1, 7629939, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 7) {
+            // "sle"
+            if (!irp_push(s, 1, 6646899, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 8) {
+            // "sgt"
+            if (!irp_push(s, 1, 7628659, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 9) {
+            // "sge"
+            if (!irp_push(s, 1, 6645619, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+    }
+    if (family == 6) {
+        if (value == 0) {
+            // "oeq"
+            if (!irp_push(s, 1, 7431535, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 1) {
+            // "one"
+            if (!irp_push(s, 1, 6647407, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 2) {
+            // "olt"
+            if (!irp_push(s, 1, 7629935, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 3) {
+            // "ole"
+            if (!irp_push(s, 1, 6646895, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 4) {
+            // "ogt"
+            if (!irp_push(s, 1, 7628655, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 5) {
+            // "oge"
+            if (!irp_push(s, 1, 6645615, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 6) {
+            // "ord"
+            if (!irp_push(s, 1, 6582895, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 7) {
+            // "uno"
+            if (!irp_push(s, 1, 7302773, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 8) {
+            // "ueq"
+            if (!irp_push(s, 1, 7431541, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 9) {
+            // "une"
+            if (!irp_push(s, 1, 6647413, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 10) {
+            // "ult"
+            if (!irp_push(s, 1, 7629941, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 11) {
+            // "ule"
+            if (!irp_push(s, 1, 6646901, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 12) {
+            // "ugt"
+            if (!irp_push(s, 1, 7628661, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 13) {
+            // "uge"
+            if (!irp_push(s, 1, 6645621, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+    }
+    if (family == 7) {
+        if (value == 0) {
+            // "int"
+            if (!irp_push(s, 1, 7630441, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // "checked_"
+            if (!irp_push(s, 1, 6873730443177715811, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 1) {
+            // "zext"
+            if (!irp_push(s, 1, 1954047354, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 2) {
+            // "sext"
+            if (!irp_push(s, 1, 1954047347, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 3) {
+            // "trunc"
+            if (!irp_push(s, 1, 427054953076, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 4) {
+            // "fext"
+            if (!irp_push(s, 1, 1954047334, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 5) {
+            // "ftrunc"
+            if (!irp_push(s, 1, 109326067987558, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 6) {
+            // "itof_s"
+            if (!irp_push(s, 1, 126853577667689, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 7) {
+            // "itof_u"
+            if (!irp_push(s, 1, 129052600923241, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 8) {
+            // "ftoi_s"
+            if (!irp_push(s, 1, 126853627999334, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 9) {
+            // "ftoi_u"
+            if (!irp_push(s, 1, 129052651254886, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 10) {
+            // "bitcast"
+            if (!irp_push(s, 1, 32777959416031586, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 11) {
+            // "ptrtoint"
+            if (!irp_push(s, 1, 8389759083253757040, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 12) {
+            // "inttoptr"
+            if (!irp_push(s, 1, 8247340441619689065, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+    }
+    if (family == 8) {
+        if (value == 0) {
+            // "uadd"
+            if (!irp_push(s, 1, 1684300149, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 1) {
+            // "usub"
+            if (!irp_push(s, 1, 1651864437, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 2) {
+            // "umul"
+            if (!irp_push(s, 1, 1819635061, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 3) {
+            // "sadd"
+            if (!irp_push(s, 1, 1684300147, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 4) {
+            // "ssub"
+            if (!irp_push(s, 1, 1651864435, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+        if (value == 5) {
+            // "smul"
+            if (!irp_push(s, 1, 1819635059, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            return true;
+        }
+    }
+    s.status = 1; return false;
+}
+
+fun irp_expand(s: ptr<IrPrintState>, index: u64, depth: u64) -> bool {
+    if (index >= s.node_count) { s.status = 1; return false; }
+    if (depth > s.depth_limit) { s.status = 5; return false; }
+    var n: ptr<u64> = &s.nodes[index * 12];
+    var tag: u64 = n[0];
+    if (tag == 1) {
+        // "void"
+        if (!irp_push(s, 1, 1684631414, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 2) {
+        // "bool"
+        if (!irp_push(s, 1, 1819242338, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 3) {
+        // "i1"
+        if (!irp_push(s, 1, 12649, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 4) {
+        // "u1"
+        if (!irp_push(s, 1, 12661, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 5) {
+        // "i8"
+        if (!irp_push(s, 1, 14441, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 6) {
+        // "i16"
+        if (!irp_push(s, 1, 3551593, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 7) {
+        // "i32"
+        if (!irp_push(s, 1, 3289961, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 8) {
+        // "i64"
+        if (!irp_push(s, 1, 3421801, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 9) {
+        // "i128"
+        if (!irp_push(s, 1, 942813545, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 10) {
+        // "u8"
+        if (!irp_push(s, 1, 14453, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 11) {
+        // "u16"
+        if (!irp_push(s, 1, 3551605, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 12) {
+        // "u32"
+        if (!irp_push(s, 1, 3289973, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 13) {
+        // "u64"
+        if (!irp_push(s, 1, 3421813, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 14) {
+        // "u128"
+        if (!irp_push(s, 1, 942813557, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 15) {
+        // "f16"
+        if (!irp_push(s, 1, 3551590, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 16) {
+        // "f32"
+        if (!irp_push(s, 1, 3289958, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 17) {
+        // "f64"
+        if (!irp_push(s, 1, 3421798, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 18) {
+        // ">"
+        if (!irp_push(s, 1, 62, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "ptr<"
+        if (!irp_push(s, 1, 1014133872, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 19) {
+        // ">"
+        if (!irp_push(s, 1, 62, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "fnptr<"
+        if (!irp_push(s, 1, 66462277463654, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 20) {
+        // ">"
+        if (!irp_push(s, 1, 62, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "array<"
+        if (!irp_push(s, 1, 66492023599713, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 21) {
+        // "}"
+        if (!irp_push(s, 1, 125, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_list(s, n[1], n[2], 8236, 2, 0, 0, 0, 0, depth)) { return false; }
+        // "struct{"
+        if (!irp_push(s, 1, 34749392656430195, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 22) {
+        // ">"
+        if (!irp_push(s, 1, 62, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_list(s, n[1], n[2], 8236, 2, 0, 0, 0, 0, depth)) { return false; }
+        // "tuple<"
+        if (!irp_push(s, 1, 66406308672884, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 23) {
+        if (n[1] > 1) { s.status = 1; return false; }
+        if (!irp_push(s, 2, n[4], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ") -> "
+        if (!irp_push(s, 1, 138482098217, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[5] != 0) {
+            // ", ..."
+            if (!irp_push(s, 1, 198343270444, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        if (!irp_list(s, n[2], n[3], 8236, 2, 0, 0, 0, 0, depth)) { return false; }
+        // " ("
+        if (!irp_push(s, 1, 10272, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[1] == 0) {
+            // "whale"
+            if (!irp_push(s, 1, 435610019959, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        } else {
+            // "sysv64"
+            if (!irp_push(s, 1, 57408520157555, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        return true;
+    }
+    if (tag == 30) {
+        if (!irp_push(s, 7, n[1], n[2], 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 31) {
+        if (n[1] > 1) { s.status = 1; return false; }
+        if (n[1] != 0) {
+            // "true"
+            if (!irp_push(s, 1, 1702195828, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        } else {
+            // "false"
+            if (!irp_push(s, 1, 435728179558, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        return true;
+    }
+    if (tag == 32) {
+        if (!irp_push(s, 5, n[1], n[2], 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 33) {
+        if (!irp_push(s, 4, n[1], n[2], 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 34) {
+        if ((n[2] != 16 && n[2] != 32 && n[2] != 64)
+            || (n[2] == 16 && n[1] > 65535) || (n[2] == 32 && n[1] > 4294967295)) { s.status = 1; return false; }
+        if (!irp_push(s, 6, n[1], n[2] / 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "0x"
+        if (!irp_push(s, 1, 30768, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 35) {
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 36) {
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 37) {
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@g"
+        if (!irp_push(s, 1, 26432, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 38) {
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@f"
+        if (!irp_push(s, 1, 26176, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 40) {
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        return true;
+    }
+    if (tag == 41) {
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        return true;
+    }
+    if (tag == 42) {
+        // ")"
+        if (!irp_push(s, 1, 41, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "neg("
+        if (!irp_push(s, 1, 677864814, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 43) {
+        // ")"
+        if (!irp_push(s, 1, 41, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "bit_not("
+        if (!irp_push(s, 1, 2915077378654103906, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 44) {
+        // ")"
+        if (!irp_push(s, 1, 41, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "("
+        if (!irp_push(s, 1, 40, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_operator(s, 1, n[1], depth)) { return false; }
+        return true;
+    }
+    if (tag == 45) {
+        // ")"
+        if (!irp_push(s, 1, 41, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "("
+        if (!irp_push(s, 1, 40, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_operator(s, 2, n[1], depth)) { return false; }
+        return true;
+    }
+    if (tag == 50) {
+        // "}\n"
+        if (!irp_push(s, 1, 2685, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[7], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        if (!irp_push(s, 2, n[6], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        if (!irp_push(s, 2, n[5], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        if (!irp_push(s, 2, n[4], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " }\n\n"
+        if (!irp_push(s, 1, 168459552, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[3] == 0) {
+            // "little"
+            if (!irp_push(s, 1, 111516484659564, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        } else {
+            // "big"
+            if (!irp_push(s, 1, 6777186, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        // "="
+        if (!irp_push(s, 1, 61, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", endian"
+        if (!irp_push(s, 1, 7953754296982773804, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "ptr="
+        if (!irp_push(s, 1, 1030911088, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "ayout { "
+        if (!irp_push(s, 1, 2340500115907639649, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "\n  datal"
+        if (!irp_push(s, 1, 7809651190477627402, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "t "
+        if (!irp_push(s, 1, 8308, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "\n  targe"
+        if (!irp_push(s, 1, 7306934683317575690, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[9], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "sion "
+        if (!irp_push(s, 1, 139291748723, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "tics_ver"
+        if (!irp_push(s, 1, 8243124845301426548, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "\n  seman"
+        if (!irp_push(s, 1, 7953758699403616266, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[8], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "n "
+        if (!irp_push(s, 1, 8302, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "t_versio"
+        if (!irp_push(s, 1, 8028074745930342260, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "\n  forma"
+        if (!irp_push(s, 1, 7020393216920789002, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "module {"
+        if (!irp_push(s, 1, 8872202782420266861, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 51) {
+        if (n[3] != 0 && n[2] != 0) {
+            // "\n"
+            if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        if (!irp_list(s, n[1], n[2], 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 52) {
+        // "\n"
+        if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "_file @s"
+        if (!irp_push(s, 1, 8304673332853827167, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  source"
+        if (!irp_push(s, 1, 7305808869231632416, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 53) {
+        // "\n"
+        if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[2] != 18446744073709551615) {
+            if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        } else {
+            // "none"
+            if (!irp_push(s, 1, 1701736302, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "al "
+        if (!irp_push(s, 1, 2124897, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  origin"
+        if (!irp_push(s, 1, 7956003919315804192, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 54) {
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@s"
+        if (!irp_push(s, 1, 29504, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 55) {
+        // "\n"
+        if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@f"
+        if (!irp_push(s, 1, 26176, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "truction"
+        if (!irp_push(s, 1, 7957695015192719988, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "_map ins"
+        if (!irp_push(s, 1, 8317701149845187935, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  source"
+        if (!irp_push(s, 1, 7305808869231632416, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 56) {
+        // "\n"
+        if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@f"
+        if (!irp_push(s, 1, 26176, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "minator "
+        if (!irp_push(s, 1, 2338053702200224109, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "_map ter"
+        if (!irp_push(s, 1, 8243122375644769631, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  source"
+        if (!irp_push(s, 1, 7305808869231632416, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 57) {
+        // "\n"
+        if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@g"
+        if (!irp_push(s, 1, 26432, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "bal "
+        if (!irp_push(s, 1, 543973730, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "_map glo"
+        if (!irp_push(s, 1, 8028905624716799327, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  source"
+        if (!irp_push(s, 1, 7305808869231632416, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 58) {
+        // "\n"
+        if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[6], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "xpr "
+        if (!irp_push(s, 1, 544370808, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", init_e"
+        if (!irp_push(s, 1, 7304685116791005228, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[4], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " = const"
+        if (!irp_push(s, 1, 8391171955404848416, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@g"
+        if (!irp_push(s, 1, 26432, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  global"
+        if (!irp_push(s, 1, 7809631459536740384, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 59) {
+        if (n[6] > 1 || n[7] > 1) { s.status = 1; return false; }
+        // "\n"
+        if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[8] != 18446744073709551615) {
+            if (!irp_push(s, 2, n[8], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+            // "ame "
+            if (!irp_push(s, 1, 543518049, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // ", link_n"
+            if (!irp_push(s, 1, 7953193588918853676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        if (n[7] == 0) {
+            // "internal"
+            if (!irp_push(s, 1, 7809644666444607081, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        } else {
+            // "external"
+            if (!irp_push(s, 1, 7809644666444609637, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        // "e "
+        if (!irp_push(s, 1, 8293, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", linkag"
+        if (!irp_push(s, 1, 7449353380606779436, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[6] != 0) {
+            // "readonly"
+            if (!irp_push(s, 1, 8749489600778560882, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        } else {
+            // "e"
+            if (!irp_push(s, 1, 101, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // "readwrit"
+            if (!irp_push(s, 1, 8388361638065038706, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", access"
+        if (!irp_push(s, 1, 8319104414226915372, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[4] != 18446744073709551615) {
+            if (!irp_push(s, 2, n[4], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+            // " "
+            if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+            // "value "
+            if (!irp_push(s, 1, 35620133822838, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        } else {
+            // "lized"
+            if (!irp_push(s, 1, 431199250796, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // "uninitia"
+            if (!irp_push(s, 1, 7019269490406420085, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        // " = "
+        if (!irp_push(s, 1, 2112800, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@g"
+        if (!irp_push(s, 1, 26432, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "e "
+        if (!irp_push(s, 1, 8293, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  storag"
+        if (!irp_push(s, 1, 7449361081668149280, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 60) {
+        if (n[4] > 1) { s.status = 1; return false; }
+        // "\n"
+        if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[5] != 18446744073709551615) {
+            if (!irp_push(s, 2, n[5], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+            // "ame "
+            if (!irp_push(s, 1, 543518049, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // ", link_n"
+            if (!irp_push(s, 1, 7953193588918853676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        if (n[4] == 0) {
+            // "internal"
+            if (!irp_push(s, 1, 7809644666444607081, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        } else {
+            // "external"
+            if (!irp_push(s, 1, 7809644666444609637, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        // "e "
+        if (!irp_push(s, 1, 8293, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", linkag"
+        if (!irp_push(s, 1, 7449353380606779436, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@f"
+        if (!irp_push(s, 1, 26176, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "e "
+        if (!irp_push(s, 1, 8293, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  declar"
+        if (!irp_push(s, 1, 8241987967223341088, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 61) {
+        // "  }\n\n"
+        if (!irp_push(s, 1, 43125645344, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_list(s, n[7], n[8], 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " {\n"
+        if (!irp_push(s, 1, 686880, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[6], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", entry "
+        if (!irp_push(s, 1, 2340027325789577260, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[5], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ") -> "
+        if (!irp_push(s, 1, 138482098217, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_list(s, n[3], n[4], 8236, 2, 0, 0, 0, 0, depth)) { return false; }
+        // "("
+        if (!irp_push(s, 1, 40, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@f"
+        if (!irp_push(s, 1, 26176, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  fn "
+        if (!irp_push(s, 1, 139291140128, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 62) {
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 63) {
+        if (n[5] != 18446744073709551615) {
+            // "\n"
+            if (!irp_push(s, 1, 10, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            if (!irp_push(s, 2, n[5], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+            // "    "
+            if (!irp_push(s, 1, 538976288, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        if (!irp_list(s, n[3], n[4], 0, 0, 538976288, 4, 10, 1, depth)) { return false; }
+        // ":\n"
+        if (!irp_push(s, 1, 2618, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "  "
+        if (!irp_push(s, 1, 8224, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 100) {
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@g"
+        if (!irp_push(s, 1, 26432, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "al_addr "
+        if (!irp_push(s, 1, 2338041538851859553, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> = glob"
+        if (!irp_push(s, 1, 7093007128310128702, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": ptr<"
+        if (!irp_push(s, 1, 66462277443642, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 101) {
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "_end "
+        if (!irp_push(s, 1, 139123909983, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "lifetime"
+        if (!irp_push(s, 1, 7308613718930516332, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 102) {
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " ptrdiff"
+        if (!irp_push(s, 1, 7378700919631015968, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ": i128 ="
+        if (!irp_push(s, 1, 4404582223796838458, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 103) {
+        if (!irp_push(s, 2, n[4], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[5], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "t "
+        if (!irp_push(s, 1, 8308, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " => cons"
+        if (!irp_push(s, 1, 8317708033333280032, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "_decl "
+        if (!irp_push(s, 1, 35649896146015, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " = const"
+        if (!irp_push(s, 1, 8391171955404848416, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[5], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 104) {
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " = const"
+        if (!irp_push(s, 1, 8391171955404848416, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 105) {
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " = undef"
+        if (!irp_push(s, 1, 7378413990090652960, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 106) {
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " = mov "
+        if (!irp_push(s, 1, 9137420199017760, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 107) {
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_operator(s, 3, n[2], depth)) { return false; }
+        // " = "
+        if (!irp_push(s, 1, 2112800, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 108) {
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " = neg "
+        if (!irp_push(s, 1, 9120884591705376, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 109) {
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " = not "
+        if (!irp_push(s, 1, 9135221192539424, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 110) {
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_operator(s, 4, n[2], depth)) { return false; }
+        // " cmp "
+        if (!irp_push(s, 1, 139325170464, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ": bool ="
+        if (!irp_push(s, 1, 4404639661434216506, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 111) {
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_operator(s, 5, n[2], depth)) { return false; }
+        // " icmp "
+        if (!irp_push(s, 1, 35667243657504, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ": bool ="
+        if (!irp_push(s, 1, 4404639661434216506, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 112) {
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_operator(s, 6, n[2], depth)) { return false; }
+        // " fcmp "
+        if (!irp_push(s, 1, 35667243656736, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ": bool ="
+        if (!irp_push(s, 1, 4404639661434216506, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 113) {
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "t bool "
+        if (!irp_push(s, 1, 9126425120612468, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " = selec"
+        if (!irp_push(s, 1, 7162249965381631264, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 114) {
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " to "
+        if (!irp_push(s, 1, 544175136, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[4], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_operator(s, 7, n[2], depth)) { return false; }
+        // " = "
+        if (!irp_push(s, 1, 2112800, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 115) {
+        if (!irp_list(s, n[3], n[4], 8236, 2, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " = phi "
+        if (!irp_push(s, 1, 9123096533417248, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 116) {
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "ct "
+        if (!irp_push(s, 1, 2126947, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " = extra"
+        if (!irp_push(s, 1, 7021802829465533728, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 117) {
+        if (!irp_push(s, 3, n[5], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "_chk "
+        if (!irp_push(s, 1, 139240956767, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_operator(s, 8, n[2], depth)) { return false; }
+        // "= "
+        if (!irp_push(s, 1, 8253, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", bool> "
+        if (!irp_push(s, 1, 2323413683635626028, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": tuple<"
+        if (!irp_push(s, 1, 4352003845186134074, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 118) {
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "ca "
+        if (!irp_push(s, 1, 2122083, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> = allo"
+        if (!irp_push(s, 1, 8028911400103256126, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": ptr<"
+        if (!irp_push(s, 1, 66462277443642, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 119) {
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> "
+        if (!irp_push(s, 1, 8254, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ", ptr<"
+        if (!irp_push(s, 1, 66462277443628, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "ile_load"
+        if (!irp_push(s, 1, 7233184987781360745, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " = volat"
+        if (!irp_push(s, 1, 8386103207119568160, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 121) {
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> "
+        if (!irp_push(s, 1, 8254, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ", ptr<"
+        if (!irp_push(s, 1, 66462277443628, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " = load "
+        if (!irp_push(s, 1, 2334097638068075808, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 120) {
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> "
+        if (!irp_push(s, 1, 8254, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ", ptr<"
+        if (!irp_push(s, 1, 66462277443628, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "_store "
+        if (!irp_push(s, 1, 9118741425320799, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "volatile"
+        if (!irp_push(s, 1, 7308332243887091574, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 123) {
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> "
+        if (!irp_push(s, 1, 8254, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ", ptr<"
+        if (!irp_push(s, 1, 66462277443628, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "store "
+        if (!irp_push(s, 1, 35620083692659, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 122) {
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> "
+        if (!irp_push(s, 1, 8254, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ", ptr<"
+        if (!irp_push(s, 1, 66462277443628, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "uninit "
+        if (!irp_push(s, 1, 9135195427532405, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 124) {
+        if (!irp_list(s, n[4], n[5], 0, 0, 8236, 2, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " = gep "
+        if (!irp_push(s, 1, 9130780078914848, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 125) {
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", u64 "
+        if (!irp_push(s, 1, 35408624033836, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> "
+        if (!irp_push(s, 1, 8254, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", ptr<u8"
+        if (!irp_push(s, 1, 4068224300676554796, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "tr<u8> "
+        if (!irp_push(s, 1, 9075611460727412, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "memcpy p"
+        if (!irp_push(s, 1, 8079591255114081645, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 126) {
+        if (!irp_push(s, 3, n[4], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", align "
+        if (!irp_push(s, 1, 2336918959139397676, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", u64 "
+        if (!irp_push(s, 1, 35408624033836, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", u8 "
+        if (!irp_push(s, 1, 138386153516, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "tr<u8> "
+        if (!irp_push(s, 1, 9075611460727412, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "memset p"
+        if (!irp_push(s, 1, 8079585710579737965, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 127) {
+        // "n"
+        if (!irp_push(s, 1, 110, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "_functio"
+        if (!irp_push(s, 1, 8028075781168391775, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> = null"
+        if (!irp_push(s, 1, 7812748569428697150, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": fnptr<"
+        if (!irp_push(s, 1, 4355671815858036794, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 128) {
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@f"
+        if (!irp_push(s, 1, 26176, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "r "
+        if (!irp_push(s, 1, 8306, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "tion_add"
+        if (!irp_push(s, 1, 7234013963966441844, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "> = func"
+        if (!irp_push(s, 1, 7164793138681028670, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // ": fnptr<"
+        if (!irp_push(s, 1, 4355671815858036794, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 129) {
+        if (n[1] > 1) { s.status = 1; return false; }
+        // ")"
+        if (!irp_push(s, 1, 41, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_list(s, n[5], n[6], 8236, 2, 0, 0, 0, 0, depth)) { return false; }
+        // "("
+        if (!irp_push(s, 1, 40, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[4], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[1] == 0) {
+            // "whale"
+            if (!irp_push(s, 1, 435610019959, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        } else {
+            // "sysv64"
+            if (!irp_push(s, 1, 57408520157555, 6, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        // "call "
+        if (!irp_push(s, 1, 139257995619, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (n[2] != 18446744073709551615) {
+            // " = "
+            if (!irp_push(s, 1, 2112800, 3, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            if (!irp_push(s, 2, n[3], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+            // ": "
+            if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            // "%v"
+            if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        return true;
+    }
+    if (tag == 130) {
+        if (!irp_push(s, 2, n[2], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "="
+        if (!irp_push(s, 1, 61, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", reason"
+        if (!irp_push(s, 1, 7957705928737955884, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "bool "
+        if (!irp_push(s, 1, 139258195810, 5, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "trap_if "
+        if (!irp_push(s, 1, 2334669315466424948, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 140) {
+        // " ]"
+        if (!irp_push(s, 1, 23840, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", "
+        if (!irp_push(s, 1, 8236, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "[ "
+        if (!irp_push(s, 1, 8283, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 141) {
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "@f"
+        if (!irp_push(s, 1, 26176, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 142) {
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "indirect"
+        if (!irp_push(s, 1, 8386658473162862185, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 150) {
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "br label"
+        if (!irp_push(s, 1, 7810757299309408866, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 151) {
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", label "
+        if (!irp_push(s, 1, 2336353779914121260, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", label "
+        if (!irp_push(s, 1, 2336353779914121260, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[1], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "cbr bool"
+        if (!irp_push(s, 1, 7813586345752945251, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 152) {
+        // " ]"
+        if (!irp_push(s, 1, 23840, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_list(s, n[4], n[5], 44, 1, 32, 1, 0, 0, depth)) { return false; }
+        // " ["
+        if (!irp_push(s, 1, 23328, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[3], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ", label "
+        if (!irp_push(s, 1, 2336353779914121260, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%v"
+        if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // " "
+        if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "switch "
+        if (!irp_push(s, 1, 9121975618860915, 7, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 153) {
+        if (n[1] >= s.node_count) { s.status = 1; return false; }
+        if (s.nodes[n[1] * 12] != 1) {
+            if (n[2] != 18446744073709551615) {
+                if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+                // "%v"
+                if (!irp_push(s, 1, 30245, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            } else {
+                // ">"
+                if (!irp_push(s, 1, 62, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+                // "<missing"
+                if (!irp_push(s, 1, 7453010377923194172, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+            }
+            // " "
+            if (!irp_push(s, 1, 32, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "ret "
+        if (!irp_push(s, 1, 544499058, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 154) {
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        // "son="
+        if (!irp_push(s, 1, 1030647667, 4, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "trap rea"
+        if (!irp_push(s, 1, 7018141077976740468, 8, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        return true;
+    }
+    if (tag == 155) {
+        if (!irp_push(s, 3, n[2], 0, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // "%b"
+        if (!irp_push(s, 1, 25125, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        // ": "
+        if (!irp_push(s, 1, 8250, 2, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        if (!irp_push(s, 2, n[1], 0, 0, 0, 0, 0, 0, 0, depth + 1)) { return false; }
+        return true;
+    }
+    s.status = 1; return false;
+}
+
+// Expand a mathematical 128-bit magnitude with portable limb division.
+// Avoiding native u128 division keeps cross objects independent of libgcc.
+fun irp_integer(s: ptr<IrPrintState>, low: u64, high: u64, signed_value: bool,
+    depth: u64) -> bool {
+    var negative: bool = signed_value && (high >> 63) != 0;
+    if (negative) {
+        high = ~high;
+        if (low == 0) { high += 1; }
+        else { low = ~low + 1; }
+    }
+    var remaining: bool = true;
+    while (remaining) {
+        var q_high: u64 = high / 10;
+        var rem: u64 = high % 10;
+        var q_low: u64 = 0;
+        var bit: u64 = 64;
+        while (bit != 0) {
+            bit -= 1;
+            rem = rem * 2 + ((low >> bit) & 1);
+            if (rem >= 10) { rem -= 10; q_low = q_low | ((1 as u64) << bit); }
+        }
+        if (!irp_push(s, 1, rem + 48, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        low = q_low; high = q_high;
+        remaining = low != 0 || high != 0;
+    }
+    if (negative) { return irp_push(s, 1, 45, 1, 0, 0, 0, 0, 0, 0, depth); }
+    return true;
+}
+
+fun irp_hex(s: ptr<IrPrintState>, value: u64, digits: u64, depth: u64) -> bool {
+    if (digits > 16) { s.status = 1; return false; }
+    while (digits != 0) {
+        var digit: u64 = value & 15;
+        var octet: u64 = digit + 48;
+        if (digit >= 10) { octet = digit + 87; }
+        if (!irp_push(s, 1, octet, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        value = value >> 4;
+        digits -= 1;
+    }
+    return true;
+}
+
+fun irp_string(s: ptr<IrPrintState>, data: ptr<u8>, length: u64,
+    at: u64, depth: u64) -> bool {
+    if (at == length) { return irp_push(s, 1, 34, 1, 0, 0, 0, 0, 0, 0, depth); }
+    var width: u64 = 0;
+    var cp: u64 = 0;
+    if (!ir_lex_utf8(data, length, at, &width, &cp)) { s.status = 1; return false; }
+    if (!irp_push(s, 9, data as u64, length, at + width, 0, 0, 0, 0, 0, depth)) { return false; }
+    if (cp == 92 || cp == 34) {
+        return irp_push(s, 1, 92 | (cp << 8), 2, 0, 0, 0, 0, 0, 0, depth);
+    }
+    if (cp == 10 || cp == 13 || cp == 9 || cp == 0) {
+        var code: u64 = 48;
+        if (cp == 10) { code = 110; }
+        else if (cp == 13) { code = 114; }
+        else if (cp == 9) { code = 116; }
+        return irp_push(s, 1, 92 | (code << 8), 2, 0, 0, 0, 0, 0, 0, depth);
+    }
+    if (cp < 32 || (cp >= 127 && cp <= 159) || cp == 8232 || cp == 8233) {
+        if (!irp_push(s, 1, 125, 1, 0, 0, 0, 0, 0, 0, depth)) { return false; }
+        var digits: u64 = 1;
+        var remaining: u64 = cp >> 4;
+        while (remaining != 0) { digits += 1; remaining = remaining >> 4; }
+        if (!irp_hex(s, cp, digits, depth)) { return false; }
+        return irp_push(s, 1, 8090972, 3, 0, 0, 0, 0, 0, 0, depth);
+    }
+    var packed: u64 = 0;
+    var i: u64 = 0;
+    while (i < width) { packed = packed | ((data[at + i] as u64) << (8 * i)); i += 1; }
+    return irp_push(s, 1, packed, width, 0, 0, 0, 0, 0, 0, depth);
+}
+
+// Status: 0 complete, 1 malformed transport, 2 output limit, 3 stack,
+// 4 work, 5 depth, 6 chunk ready. Each call advances the same state and
+// publishes at most capacity bytes; all status/error paths respect the ceiling.
+export(c) fun whale_ir_print_step(s: ptr<IrPrintState>, root: u64,
+    output: ptr<u8>, capacity: u64, written: ptr<u64>) -> i32 {
+    if (s == null || written == null) { return 1; }
+    written[0] = 0;
+    if (!ir_span_valid(output, capacity, 1)
+        || !ir_span_valid(s.nodes as ptr<u8>, s.node_count, 96)
+        || !ir_span_valid(s.edges as ptr<u8>, s.edge_count, 8)
+        || !ir_span_valid(s.stack as ptr<u8>, s.stack_capacity, 80)
+        || s.stack_len > s.stack_capacity || s.total > s.output_limit
+        || s.initialized > 1 || s.depth_limit > 1024) { s.status = 1; return 1; }
+    if (s.status != 0) { return s.status as i32; }
+    if (s.initialized == 0) {
+        if (s.stack_len != 0) { s.status = 1; return 1; }
+        s.initialized = 1;
+        if (!irp_push(s, 2, root, 0, 0, 0, 0, 0, 0, 0, 0)) { return s.status as i32; }
+    }
+    // Locals are scalar fields, never a loop-local aggregate alloca.
+    while (s.stack_len != 0 && s.status == 0) {
+        if (s.work == 0) { s.status = 4; break; }
+        s.work -= 1;
+        var p: ptr<u64> = &s.stack[(s.stack_len - 1) * 10];
+        var kind: u64 = p[0];
+        var a: u64 = p[1]; var b: u64 = p[2]; var c: u64 = p[3]; var d: u64 = p[4];
+        var e: u64 = p[5]; var f: u64 = p[6]; var g: u64 = p[7]; var h: u64 = p[8];
+        var depth: u64 = p[9];
+        if (kind == 1) {
+            if (b > 8) { s.status = 1; break; }
+            if (b == 0) { s.stack_len -= 1; }
+            else {
+                if (s.total == s.output_limit) { s.status = 2; break; }
+                if (written[0] == capacity) { return 6; }
+                output[written[0]] = (a & 255) as u8;
+                written[0] += 1; s.total += 1;
+                p[1] = a >> 8; p[2] = b - 1;
+            }
+        } else {
+            s.stack_len -= 1;
+            if (kind == 2) { irp_expand(s, a, depth); }
+            else if (kind == 3) { irp_integer(s, a, 0, false, depth); }
+            else if (kind == 4) { irp_integer(s, a, b, false, depth); }
+            else if (kind == 5) { irp_integer(s, a, b, true, depth); }
+            else if (kind == 6) { irp_hex(s, a, b, depth); }
+            else if (kind == 7) {
+                if (!ir_span_valid(a as ptr<u8>, b, 1)) { s.status = 1; }
+                else if (irp_push(s, 9, a, b, 0, 0, 0, 0, 0, 0, depth)) {
+                    irp_push(s, 1, 34, 1, 0, 0, 0, 0, 0, 0, depth);
+                }
+            } else if (kind == 8) {
+                if (a > s.edge_count || b > s.edge_count - a || d > 8 || f > 8 || h > 8) { s.status = 1; }
+                else if (b != 0) {
+                    var child: u64 = s.edges[a];
+                    if (irp_push(s, 8, a + 1, b - 1, c, d, e, f, g, h, depth)
+                        && irp_push(s, 1, c, 0, 0, 0, 0, 0, 0, 0, depth)) {
+                        // The separator belongs before subsequent items, not after the last.
+                        // Encode the continuation's prefix in its first-item flag below.
+                        if (b > 1) { s.stack[(s.stack_len - 1) * 10 + 2] = d; }
+                        // Move separator beneath the child and its suffix.
+                        irp_push(s, 1, g, h, 0, 0, 0, 0, 0, 0, depth);
+                        irp_push(s, 2, child, 0, 0, 0, 0, 0, 0, 0, depth + 1);
+                        irp_push(s, 1, e, f, 0, 0, 0, 0, 0, 0, depth);
+                    }
+                }
+            } else if (kind == 9) { irp_string(s, a as ptr<u8>, b, c, depth); }
+            else { s.status = 1; }
+        }
+    }
+    return s.status as i32;
+}

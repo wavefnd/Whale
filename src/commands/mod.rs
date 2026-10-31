@@ -4,7 +4,10 @@ mod debug;
 
 mod input;
 
+#[cfg(feature = "native-linker")]
 pub mod linker;
+
+pub mod bytecode;
 
 pub mod object;
 

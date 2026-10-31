@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: MPL-2.0
+// A resume acknowledges one effect or buffer request, never re-executes it.
+fun ir_runtime_transport_valid(p: ptr<IrRuntimeDriver>) -> bool {
+    return ir_span_valid(p.types as ptr<u8>, p.type_count, 40)
+        && ir_span_valid(p.type_edges as ptr<u8>, p.type_edge_count, 8)
+        && ir_span_valid(p.functions as ptr<u8>, p.function_count, 88)
+        && ir_span_valid(p.blocks as ptr<u8>, p.block_count, 32)
+        && ir_span_valid(p.instructions as ptr<u8>, p.instruction_count, 168)
+        && ir_span_valid(p.operands as ptr<u8>, p.operand_count, 8)
+        && ir_span_valid(p.value_types as ptr<u8>, p.value_type_count, 8)
+        && ir_span_valid(p.globals as ptr<u8>, p.global_count, 216)
+        && ir_span_valid(p.global_values as ptr<u8>, p.global_count, 160)
+        && ir_span_valid(p.arguments as ptr<u8>, p.argument_count, 160)
+        && ir_span_valid(p.layout_nodes as ptr<u8>, p.type_count, 32)
+        && ir_span_valid(p.layouts as ptr<u8>, p.type_count, 40)
+        && ir_span_valid(p.layout_offsets as ptr<u8>, p.type_edge_count, 8)
+        && ir_span_valid(p.plans as ptr<u8>, p.plan_capacity, 40)
+        && ir_span_valid(p.ordinals as ptr<u8>, p.value_type_count, 8)
+        && ir_span_valid(p.function_table as ptr<u8>, p.function_table_capacity, 8)
+        && ir_span_valid(p.prepared, p.function_count, 1)
+        && ir_span_valid(p.pending_previous as ptr<u8>, p.function_count, 8)
+        && ir_span_valid(p.pending_next as ptr<u8>, p.function_count, 8)
+        && ir_span_valid(p.pending_flags, p.function_count, 1)
+        && ir_span_valid(p.callable_flags, p.function_count, 1)
+        && ir_span_valid(p.callable_targets as ptr<u8>, p.function_count, 8)
+        && ir_span_valid(p.indirect_signatures as ptr<u8>, p.indirect_capacity, 8)
+        && ir_span_valid(p.indirect_sites as ptr<u8>, p.indirect_capacity, 8)
+        && ir_span_valid(p.frames as ptr<u8>, p.frame_capacity, 80)
+        && ir_span_valid(p.slots as ptr<u8>, p.slot_capacity, 168)
+        && ir_span_valid(p.phis as ptr<u8>, p.phi_capacity, 160)
+        && p.frame_count <= p.frame_capacity && p.slot_count <= p.slot_capacity
+        && p.plan_count <= p.plan_capacity && p.indirect_count <= p.indirect_capacity
+        && p.callable_count <= p.function_count && p.work <= p.max_work;
+}
+
+export(c) fun whale_ir_runtime_step(p: ptr<IrRuntimeDriver>) -> i32 {
+    if (p == null || p.result == null) {
+        return 4;
+    }
+    p.result.status = 0;
+    p.result.error = 0;
+    p.result.steps = p.steps;
+    if (!ir_runtime_transport_valid(p)) {
+        ir_runtime_backend(p);
+        return 4;
+    }
+    if (p.phase == 5) {
+        return 0;
+    }
+    if (p.phase == 0) {
+        if (p.pending != 0 || p.resume != 0 || p.frame_count != 0 || p.slot_count != 0
+            || p.plan_count != 0 || p.indirect_count != 0 || p.callable_count != 0
+            || p.frames_created != 0 || p.steps != 0 || p.work != 0) {
+            ir_runtime_backend(p);
+            return 4;
+        }
+        if (!ir_runtime_initialize(p)) {
+            return p.result.status as i32;
+        }
+    } else if (!ir_runtime_resume(p)) {
+        return p.result.status as i32;
+    }
+    while (p.phase != 5) {
+        if (p.phase == 1) {
+            if (!ir_runtime_globals(p)) {
+                return p.result.status as i32;
+            }
+        } else if (p.phase == 2) {
+            if (!ir_runtime_admit(p, p.entry, true)) {
+                return p.result.status as i32;
+            }
+        } else if (p.phase == 3) {
+            if (!ir_runtime_execute_one(p)) {
+                return p.result.status as i32;
+            }
+        } else if (p.phase == 4) {
+            if (!ir_runtime_admit(p, p.pending_target, false)) {
+                return p.result.status as i32;
+            }
+        } else {
+            ir_runtime_backend(p);
+            return 4;
+        }
+    }
+    return 0;
+}

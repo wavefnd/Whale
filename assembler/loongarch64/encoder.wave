@@ -1,0 +1,149 @@
+// SPDX-License-Identifier: MPL-2.0
+// Complete current LP64S integer subset. Every register and field decision is native.
+fun loong_encode(instruction: ptr<FixedInstruction>, context: ptr<FixedContext>,
+    result: ptr<FixedResult>) -> bool {
+    var operation: LoongOpcode;
+    if (!loong_lookup(instruction.mnemonic, instruction.fold, &operation)) {
+        asm_fixed_fail(result, 3003, instruction.mnemonic, 0);
+        result.display = instruction.fold;
+        return false;
+    }
+    if (!asm_fixed_count(instruction, operation.count, result)) {
+        return false;
+    }
+    var index: u64 = 0;
+    while (index < operation.count) {
+        if (!asm_span_valid(instruction.operands[index].data,
+            instruction.operands[index].count, 1)) {
+            return asm_fixed_fail(result, 3004, instruction.mnemonic, 0);
+        }
+        if (!asm_fixed_charge(result, instruction.operands[index].count + 1)) {
+            return false;
+        }
+        index += 1;
+    }
+    var rd: u64 = 0;
+    var rj: u64 = 0;
+    var rk: u64 = 0;
+    var immediate: u64 = 0;
+    var offset: i64 = 0;
+    var a: FixedText;
+    var b: FixedText;
+    var c: FixedText;
+    if (operation.count > 0) {
+        a = instruction.operands[0];
+    }
+    if (operation.count > 1) {
+        b = instruction.operands[1];
+    }
+    if (operation.count > 2) {
+        c = instruction.operands[2];
+    }
+    if (operation.form == 0) {
+        if (!loong_register(a, &rd, result) || !loong_register(b, &rj, result)
+            || !loong_register(c, &rk, result)) {
+            return false;
+        }
+        result.word = loong_three(operation.opcode, rd, rj, rk);
+    } else if (operation.form == 1 || operation.form == 2) {
+        // The legacy immediate forms validate the field before both registers.
+        if (operation.form == 1) {
+            if (!asm_fixed_signed(c, 12, &immediate, result)) {
+                return false;
+            }
+        } else if (!asm_fixed_unsigned(c, 12, &immediate, result)) {
+            return false;
+        }
+        if (!loong_register(a, &rd, result) || !loong_register(b, &rj, result)) {
+            return false;
+        }
+        result.word = loong_immediate(operation.opcode, rd, rj, immediate);
+    } else if (operation.form == 3 || operation.form == 4) {
+        if (!loong_register(a, &rd, result) || !loong_register(b, &rj, result)) {
+            return false;
+        }
+        if (operation.form == 3) {
+            if (!asm_fixed_unsigned(c, operation.bits, &immediate, result)) {
+                return false;
+            }
+        } else if (!asm_fixed_signed(c, 12, &immediate, result)) {
+            return false;
+        }
+        result.word = loong_immediate(operation.opcode, rd, rj, immediate);
+    } else if (operation.form == 5) {
+        if (!loong_register(a, &rj, result) || !loong_register(b, &rd, result)
+            || !asm_fixed_pc_relative(context, c, 64, &offset, result)
+            || !asm_fixed_displacement(offset, 16, 4, &immediate, result)) {
+            return false;
+        }
+        result.word = loong_b16(operation.opcode, rj, rd, immediate);
+    } else if (operation.form == 6) {
+        result.word = operation.opcode;
+    } else if (operation.form == 7) {
+        if (!loong_register(a, &rd, result) || !loong_register(b, &rj, result)) {
+            return false;
+        }
+        result.word = operation.opcode | rd | (rj << 5);
+    } else if (operation.form == 8) {
+        if (!loong_register(a, &rd, result)
+            || !asm_fixed_signed(b, 12, &immediate, result)) {
+            return false;
+        }
+        result.word = operation.opcode | rd | (immediate << 10);
+    } else if (operation.form == 9) {
+        if (!loong_upper_immediate(b, &immediate, result)
+            || !loong_register(a, &rd, result)) {
+            return false;
+        }
+        result.word = loong_upper(operation.opcode, rd, immediate);
+    } else if (operation.form == 10) {
+        if (!asm_fixed_pc_relative(context, a, 66, &offset, result)
+            || !asm_fixed_displacement(offset, 26, 4, &immediate, result)) {
+            return false;
+        }
+        result.word = loong_b26(operation.opcode, immediate);
+    } else if (operation.form == 11) {
+        if (!loong_register(a, &rj, result)
+            || !asm_fixed_pc_relative(context, b, 65, &offset, result)
+            || !asm_fixed_displacement(offset, 21, 4, &immediate, result)) {
+            return false;
+        }
+        result.word = loong_b21(operation.opcode, rj, immediate);
+    } else if (operation.form == 12) {
+        if (!loong_jirl_offset(c, &offset, result)
+            || !loong_register(a, &rd, result) || !loong_register(b, &rj, result)
+            || !asm_fixed_displacement(offset, 16, 4, &immediate, result)) {
+            return false;
+        }
+        result.word = loong_b16(operation.opcode, rj, rd, immediate);
+    } else if (operation.form == 13) {
+        if (!asm_fixed_unsigned(a, 15, &immediate, result)) {
+            return false;
+        }
+        result.word = operation.opcode | immediate;
+    } else {
+        return asm_fixed_fail(result, 3004, instruction.mnemonic, 0);
+    }
+    return true;
+}
+
+export(c) fun whale_loongarch64_encode(instruction: ptr<FixedInstruction>,
+    context: ptr<FixedContext>, result: ptr<FixedResult>) -> i32 {
+    if (instruction == null || context == null || result == null) {
+        return 2;
+    }
+    result.status = 0;
+    result.error = 0;
+    result.word = 0;
+    if (!asm_span_valid(instruction.mnemonic.data, instruction.mnemonic.count, 1)
+        || !asm_span_valid(instruction.operands as ptr<u8>, instruction.count, 16)
+        || instruction.fold > 1) {
+        asm_fixed_fail(result, 3004, instruction.mnemonic, 0);
+        return result.status as i32;
+    }
+    if (!asm_fixed_charge(result, instruction.mnemonic.count + 1)
+        || !loong_encode(instruction, context, result)) {
+        return result.status as i32;
+    }
+    return 0;
+}

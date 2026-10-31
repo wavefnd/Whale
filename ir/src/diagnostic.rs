@@ -104,6 +104,7 @@ impl ToDiagnostic for InterpreterError {
         let code = match self.root_cause() {
             Self::Diagnostic { .. } => "ir.run.diagnostic",
             Self::Verification(..) => "ir.run.verification",
+            Self::Backend { .. } => "ir.run.backend",
             Self::UnknownFunction(..) => "ir.run.unknown-function",
             Self::UnsupportedGlobal(..) => "ir.run.unsupported-global",
             Self::GlobalMemory { .. } => "ir.run.global-memory",
@@ -119,6 +120,7 @@ impl ToDiagnostic for InterpreterError {
         };
         let mut d = Diagnostic::new("ir", "run", code, self.to_string());
         let site = match self.root_cause() {
+            Self::Backend { site, .. } => *site,
             Self::UnsupportedInstruction { site, .. }
             | Self::StepLimit { site, .. }
             | Self::MemoryLimit { site, .. }
@@ -180,6 +182,7 @@ impl ToDiagnostic for crate::lower_ast::LowerError {
             Self::InvalidLiteral { .. } => "ir.lower.invalid-literal",
             Self::AssignToConst(..) => "ir.lower.assign-to-const",
             Self::NonConstExpr => "ir.lower.non-const-expr",
+            Self::Backend(..) => "ir.lower.backend",
         };
         let mut d = Diagnostic::new("ir", "lower", code, self.to_string());
         if let Some(a) = self.annotation() {
@@ -209,6 +212,12 @@ impl ToDiagnostic for crate::ParseError {
                 Diagnostic::new("ir", "parse", "ir.parse.resource-limit", error.to_string())
             },
             crate::ParseErrorKind::Verification(error) => error.diagnostic(),
+            crate::ParseErrorKind::Backend(component) => Diagnostic::new(
+                "ir",
+                "parse",
+                "ir.parse.backend",
+                format!("IR Wave backend error: {component}"),
+            ),
         };
         d.contexts.push(Context::Source(SourceLocation {
             source: "<input>".into(),

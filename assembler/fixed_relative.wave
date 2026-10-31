@@ -1,0 +1,137 @@
+// SPDX-License-Identifier: MPL-2.0
+// Resolve one optional symbol/addend, retaining opaque ISA relocation codes.
+export(c) fun asm_fixed_expression(context: ptr<FixedContext>, text: FixedText,
+    number: ptr<AsmWide>, symbol: ptr<u64>, addend: ptr<i64>, result: ptr<FixedResult>) -> bool {
+    var value: FixedText = text;
+    var name: FixedText;
+    var suffix: FixedText;
+    var at: u64 = 1;
+    var split: u64 = value.count;
+    var extra: AsmWide;
+    if (number == null || symbol == null || addend == null) {
+        result.status = 2;
+        return false;
+    }
+    if (!asm_span_valid(text.data, text.count, 1)) {
+        result.status = 2;
+        return false;
+    }
+    if (!asm_fixed_charge(result, text.count + 1)) {
+        return false;
+    }
+    value = asm_fixed_trim(text);
+    symbol[0] = 18446744073709551615;
+    addend[0] = 0;
+    if (asm_fixed_try_integer(text, number, result)) {
+        return true;
+    }
+    if (result.status != 0) {
+        return false;
+    }
+    while (at < value.count) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        if (value.data[at] == 43 || value.data[at] == 45) {
+            split = at;
+            break;
+        }
+        at += 1;
+    }
+    name = asm_fixed_trim(asm_fixed_slice(value, 0, split));
+    if (split != value.count) {
+        suffix = asm_fixed_slice(value, split, value.count);
+        if (!asm_fixed_integer(suffix, &extra, result)) {
+            return false;
+        }
+        if (!asm_number_fits_signed(&extra, 64)) {
+            return asm_fixed_fail(result, 10, suffix, 0);
+        }
+        addend[0] = extra.low as i64;
+    }
+    if (!asm_fixed_identifier(name, result)) {
+        return false;
+    }
+    symbol[0] = asm_fixed_lookup(context, name, result);
+    result.text = name;
+    number.low = 0;
+    number.high = 0;
+    return result.status == 0;
+}
+
+export(c) fun asm_fixed_pc_relative(context: ptr<FixedContext>, text: FixedText,
+    code: u64, output: ptr<i64>, result: ptr<FixedResult>) -> bool {
+    var number: AsmWide;
+    var addition: AsmWide;
+    var origin: AsmWide;
+    var target: u64 = 0;
+    var extra: i64 = 0;
+    var symbol: ptr<FixedSymbol>;
+    var relocation: ptr<FixedRelocation>;
+    if (context == null || output == null
+        || !asm_span_valid(context.symbols as ptr<u8>, context.symbol_count, 64)
+        || !asm_span_valid(context.relocations as ptr<u8>, context.relocation_capacity, 40)
+        || context.relocation_count > context.relocation_capacity) {
+        result.status = 2;
+        return false;
+    }
+    if (!asm_fixed_expression(context, text, &number, &target, &extra, result)) {
+        return false;
+    }
+    if (target == 18446744073709551615) {
+        if (!asm_number_fits_signed(&number, 64)) {
+            return asm_fixed_fail(result, 14, text, 0);
+        }
+        output[0] = number.low as i64;
+        return true;
+    }
+    if (target >= context.symbol_count) {
+        return asm_fixed_fail(result, 12, result.text, 0);
+    }
+    symbol = &context.symbols[target];
+    if (symbol.section == context.section) {
+        number.low = symbol.offset;
+        number.high = 0;
+        addition.low = extra as u64;
+        addition.high = 0;
+        if (extra < 0) {
+            addition.high = 18446744073709551615;
+        }
+        origin.low = context.offset;
+        origin.high = 0;
+        if (!asm_number_add_checked(&number, &addition, &number)
+            || !asm_number_sub_checked(&number, &origin, &number)
+            || !asm_number_fits_signed(&number, 64)) {
+            return asm_fixed_fail(result, 14, text, 0);
+        }
+        output[0] = number.low as i64;
+        return true;
+    }
+    if (context.relocation_count >= context.relocation_capacity || code > 4294967295) {
+        result.status = 2;
+        return false;
+    }
+    relocation = &context.relocations[context.relocation_count];
+    relocation.section = context.section;
+    relocation.offset = context.offset;
+    relocation.symbol = target;
+    relocation.code = code;
+    relocation.addend = extra;
+    context.relocation_count += 1;
+    output[0] = 0;
+    return true;
+}
+
+export(c) fun whale_fixed_relative(context: ptr<FixedContext>, text: ptr<FixedText>,
+    code: u64, result: ptr<FixedResult>) -> i32 {
+    var value: i64 = 0;
+    if (result == null || context == null || text == null) {
+        return 2;
+    }
+    if (asm_fixed_pc_relative(context, text[0], code, &value, result)) {
+        result.word = value as u64;
+    } else if (result.status == 0) {
+        result.status = 2;
+    }
+    return result.status as i32;
+}

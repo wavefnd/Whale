@@ -8,7 +8,8 @@ implementation, or language-specific `wave/` subdirectory.
 | `model.wave` | Private borrowed input/output records and resource checks |
 | `sections.wave` | Section role and sparse-storage mapping |
 | `symbols.wave` | Symbol mapping, name lookup and undefined-symbol creation |
-| `relocations.wave` | ELF, COFF and Mach-O relocation translation by ISA |
+| `relocations.wave` | Bounded namespace/target dispatch and relocation records |
+| `relocations/*.wave` | ISA-owned ELF, COFF and Mach-O translation rules |
 | `entry.wave` | Validate the complete conversion before publishing output |
 
 Meson builds these explicit sources as one module. The calling Rust code in
@@ -17,7 +18,7 @@ Meson builds these explicit sources as one module. The calling Rust code in
 copy of asmobj's mapping rules. An executable built without this module reports
 that assembly-to-object conversion is unavailable.
 
-New architectures extend the relocation source and its tests, together with
+New architectures add a relocation role file and its tests, together with
 ordinary target/build-list edits elsewhere in Whale. The borrowed records are
 private implementation details.
 

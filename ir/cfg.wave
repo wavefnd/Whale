@@ -1,0 +1,216 @@
+// SPDX-License-Identifier: MPL-2.0
+// Structural CFG traversal for the IR verifier. Input is a caller-owned flat
+// successor graph; the published reverse postorder is unchanged on failure.
+struct IrCfgBlock {
+    first: u64;
+    count: u64;
+}
+
+struct IrCfgResult {
+    status: u64; // 1 entry predecessor, 2 capacity, 3 work, 5 invalid graph
+    index: u64;  // predecessor block for status 1
+    count: u64;
+    work: u64;
+}
+
+fun ir_cfg_charge(work: ptr<u64>, limit: u64) -> bool {
+    if (work[0] >= limit) { return false; }
+    work[0] += 1;
+    return true;
+}
+
+fun ir_cfg_error(result: ptr<IrCfgResult>, status: u64, index: u64, work: u64) -> i32 {
+    result.status = status; result.index = index; result.work = work;
+    return status as i32;
+}
+
+export(c) fun whale_ir_cfg_rpo(blocks: ptr<IrCfgBlock>, block_count: u64,
+    edges: ptr<u64>, edge_count: u64, entry: u64, max_work: u64,
+    scratch_seen: ptr<u8>, seen_capacity: u64,
+    scratch_stack_block: ptr<u64>, scratch_stack_next: ptr<u64>, stack_capacity: u64,
+    scratch_order: ptr<u64>, scratch_capacity: u64,
+    output_order: ptr<u64>, output_capacity: u64, result: ptr<IrCfgResult>) -> i32 {
+    if (result == null) { return 5; }
+    result.status = 0; result.index = 0; result.count = 0; result.work = 0;
+    if (entry >= block_count || !ir_span_valid(blocks as ptr<u8>, block_count, 16)
+        || !ir_span_valid(edges as ptr<u8>, edge_count, 8)
+        || !ir_span_valid(scratch_seen, block_count, 1)
+        || !ir_span_valid(scratch_stack_block as ptr<u8>, block_count, 8)
+        || !ir_span_valid(scratch_stack_next as ptr<u8>, block_count, 8)
+        || !ir_span_valid(scratch_order as ptr<u8>, block_count, 8)
+        || !ir_span_valid(output_order as ptr<u8>, block_count, 8)) {
+        return ir_cfg_error(result, 5, 0, 0);
+    }
+    if (block_count > seen_capacity || block_count > stack_capacity
+        || block_count > scratch_capacity || block_count > output_capacity) {
+        return ir_cfg_error(result, 2, 0, 0);
+    }
+    var work: u64 = 0;
+    var block: u64 = 0;
+    var current: ptr<IrCfgBlock> = &blocks[entry];
+    while (block < block_count) {
+        if (!ir_cfg_charge(&work, max_work)) { return ir_cfg_error(result, 3, block, work); }
+        current = &blocks[block];
+        if (current.first > edge_count || current.count > edge_count - current.first) {
+            return ir_cfg_error(result, 5, block, work);
+        }
+        scratch_seen[block] = 0;
+        var edge: u64 = 0;
+        while (edge < current.count) {
+            if (!ir_cfg_charge(&work, max_work)) {
+                return ir_cfg_error(result, 3, block, work);
+            }
+            var target: u64 = edges[current.first + edge];
+            if (target >= block_count) { return ir_cfg_error(result, 5, block, work); }
+            if (target == entry) { return ir_cfg_error(result, 1, block, work); }
+            edge += 1;
+        }
+        block += 1;
+    }
+    scratch_seen[entry] = 1;
+    scratch_stack_block[0] = entry;
+    scratch_stack_next[0] = 0;
+    var depth: u64 = 1;
+    var count: u64 = 0;
+    while (depth != 0) {
+        if (!ir_cfg_charge(&work, max_work)) { return ir_cfg_error(result, 3, 0, work); }
+        var top: u64 = depth - 1;
+        block = scratch_stack_block[top];
+        current = &blocks[block];
+        if (scratch_stack_next[top] == current.count) {
+            scratch_order[count] = block;
+            count += 1;
+            depth -= 1;
+        }
+        else {
+            var target: u64 = edges[current.first + scratch_stack_next[top]];
+            scratch_stack_next[top] += 1;
+            if (scratch_seen[target] == 0) {
+                scratch_seen[target] = 1;
+                scratch_stack_block[depth] = target;
+                scratch_stack_next[depth] = 0;
+                depth += 1;
+            }
+        }
+    }
+    if (count > max_work - work) { return ir_cfg_error(result, 3, 0, work); }
+    var index: u64 = 0;
+    while (index < count) {
+        output_order[index] = scratch_order[count - 1 - index];
+        index += 1;
+    }
+    result.count = count; result.work = work + count;
+    return 0;
+}
+
+// Cooper-style iterative immediate dominators over reverse postorder. The
+// unvisited sentinel is kept in the caller-owned result for unreachable
+// blocks, which remain present for later identity/type checks.
+export(c) fun whale_ir_cfg_idom(blocks: ptr<IrCfgBlock>, block_count: u64,
+    predecessors: ptr<u64>, predecessor_count: u64,
+    order: ptr<u64>, order_count: u64, entry: u64, max_work: u64,
+    scratch_rank: ptr<u64>, rank_capacity: u64,
+    scratch_idom: ptr<u64>, idom_capacity: u64,
+    output_idom: ptr<u64>, output_capacity: u64,
+    result: ptr<IrCfgResult>) -> i32 {
+    if (result == null) { return 5; }
+    result.status = 0; result.index = 0; result.count = 0; result.work = 0;
+    if (entry >= block_count || order_count == 0 || order_count > block_count
+        || !ir_span_valid(blocks as ptr<u8>, block_count, 16)
+        || !ir_span_valid(predecessors as ptr<u8>, predecessor_count, 8)
+        || !ir_span_valid(order as ptr<u8>, order_count, 8)
+        || !ir_span_valid(scratch_rank as ptr<u8>, block_count, 8)
+        || !ir_span_valid(scratch_idom as ptr<u8>, block_count, 8)
+        || !ir_span_valid(output_idom as ptr<u8>, block_count, 8)) {
+        return ir_cfg_error(result, 5, 0, 0);
+    }
+    if (block_count > rank_capacity || block_count > idom_capacity
+        || block_count > output_capacity) {
+        return ir_cfg_error(result, 2, 0, 0);
+    }
+    var sentinel: u64 = 18446744073709551615;
+    var work: u64 = 0;
+    var index: u64 = 0;
+    while (index < block_count) {
+        if (!ir_cfg_charge(&work, max_work)) { return ir_cfg_error(result, 3, index, work); }
+        scratch_rank[index] = sentinel;
+        scratch_idom[index] = sentinel;
+        var b: ptr<IrCfgBlock> = &blocks[index];
+        if (b.first > predecessor_count || b.count > predecessor_count - b.first) {
+            return ir_cfg_error(result, 5, index, work);
+        }
+        var e: u64 = 0;
+        while (e < b.count) {
+            if (!ir_cfg_charge(&work, max_work)) {
+                return ir_cfg_error(result, 3, index, work);
+            }
+            if (predecessors[b.first + e] >= block_count) {
+                return ir_cfg_error(result, 5, index, work);
+            }
+            e += 1;
+        }
+        index += 1;
+    }
+    if (order[0] != entry) { return ir_cfg_error(result, 5, 0, work); }
+    index = 0;
+    while (index < order_count) {
+        if (!ir_cfg_charge(&work, max_work)) { return ir_cfg_error(result, 3, index, work); }
+        var block: u64 = order[index];
+        if (block >= block_count || scratch_rank[block] != sentinel) {
+            return ir_cfg_error(result, 5, index, work);
+        }
+        scratch_rank[block] = index;
+        index += 1;
+    }
+    scratch_idom[entry] = entry;
+    var changed: bool = true;
+    while (changed) {
+        changed = false;
+        index = 1;
+        while (index < order_count) {
+            if (!ir_cfg_charge(&work, max_work)) { return ir_cfg_error(result, 3, index, work); }
+            var block: u64 = order[index];
+            var b: ptr<IrCfgBlock> = &blocks[block];
+            var next: u64 = sentinel;
+            var e: u64 = 0;
+            while (e < b.count) {
+                if (!ir_cfg_charge(&work, max_work)) {
+                    return ir_cfg_error(result, 3, block, work);
+                }
+                var pred: u64 = predecessors[b.first + e];
+                if (scratch_idom[pred] != sentinel) {
+                    if (next == sentinel) { next = pred; }
+                    else {
+                        var a: u64 = next;
+                        var c: u64 = pred;
+                        while (a != c) {
+                            if (!ir_cfg_charge(&work, max_work)) {
+                                return ir_cfg_error(result, 3, block, work);
+                            }
+                            if (scratch_rank[a] > scratch_rank[c]) {
+                                a = scratch_idom[a];
+                            }
+                            else { c = scratch_idom[c]; }
+                        }
+                        next = a;
+                    }
+                }
+                e += 1;
+            }
+            if (next == sentinel) { return ir_cfg_error(result, 5, block, work); }
+            if (next != scratch_idom[block]) {
+                scratch_idom[block] = next;
+                changed = true;
+            }
+            index += 1;
+        }
+    }
+    if (block_count > max_work - work) { return ir_cfg_error(result, 3, 0, work); }
+    index = 0;
+    while (index < block_count) {
+        output_idom[index] = scratch_idom[index];
+        index += 1;
+    }
+    result.count = block_count; result.work = work + block_count;
+    return 0;
+}

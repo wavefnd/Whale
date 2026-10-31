@@ -1,0 +1,589 @@
+// SPDX-License-Identifier: MPL-2.0
+// Register classification is shared by parsing and native encoding.
+struct Amd64Register {
+    kind: u64;
+    code: u64;
+    width: u64;
+    high8: u64;
+    rex8: u64;
+}
+
+fun amd64_lower_byte(value: u8) -> u8 {
+    if (value >= 65 && value <= 90) {
+        return value + 32;
+    }
+    return value;
+}
+
+fun amd64_name_is(name: ptr<AsmName>, key: u64, count: u64, fold: u64) -> bool {
+    if (name.count != count) {
+        return false;
+    }
+    var index: u64 = 0;
+    while (index < count) {
+        var value: u8 = name.bytes[index];
+        if (fold != 0) {
+            value = amd64_lower_byte(value);
+        }
+        if (value != ((key >> (index * 8)) & 255) as u8) {
+            return false;
+        }
+        index += 1;
+    }
+    return true;
+}
+
+fun amd64_register(name: ptr<AsmName>, fold: u64, output: ptr<Amd64Register>) -> bool {
+    if (name == null || output == null || fold > 1 || name.count > 8) {
+        return false;
+    }
+    output.kind = 0;
+    output.high8 = 0;
+    output.rex8 = 0;
+    // rax
+    if (amd64_name_is(name, 7889266, 3, fold)) {
+        output.code = 0;
+        output.width = 64;
+        return true;
+    }
+    // rcx
+    if (amd64_name_is(name, 7889778, 3, fold)) {
+        output.code = 1;
+        output.width = 64;
+        return true;
+    }
+    // rdx
+    if (amd64_name_is(name, 7890034, 3, fold)) {
+        output.code = 2;
+        output.width = 64;
+        return true;
+    }
+    // rbx
+    if (amd64_name_is(name, 7889522, 3, fold)) {
+        output.code = 3;
+        output.width = 64;
+        return true;
+    }
+    // rsp
+    if (amd64_name_is(name, 7369586, 3, fold)) {
+        output.code = 4;
+        output.width = 64;
+        return true;
+    }
+    // rbp
+    if (amd64_name_is(name, 7365234, 3, fold)) {
+        output.code = 5;
+        output.width = 64;
+        return true;
+    }
+    // rsi
+    if (amd64_name_is(name, 6910834, 3, fold)) {
+        output.code = 6;
+        output.width = 64;
+        return true;
+    }
+    // rdi
+    if (amd64_name_is(name, 6906994, 3, fold)) {
+        output.code = 7;
+        output.width = 64;
+        return true;
+    }
+    // r8
+    if (amd64_name_is(name, 14450, 2, fold)) {
+        output.code = 8;
+        output.width = 64;
+        return true;
+    }
+    // r9
+    if (amd64_name_is(name, 14706, 2, fold)) {
+        output.code = 9;
+        output.width = 64;
+        return true;
+    }
+    // r10
+    if (amd64_name_is(name, 3158386, 3, fold)) {
+        output.code = 10;
+        output.width = 64;
+        return true;
+    }
+    // r11
+    if (amd64_name_is(name, 3223922, 3, fold)) {
+        output.code = 11;
+        output.width = 64;
+        return true;
+    }
+    // r12
+    if (amd64_name_is(name, 3289458, 3, fold)) {
+        output.code = 12;
+        output.width = 64;
+        return true;
+    }
+    // r13
+    if (amd64_name_is(name, 3354994, 3, fold)) {
+        output.code = 13;
+        output.width = 64;
+        return true;
+    }
+    // r14
+    if (amd64_name_is(name, 3420530, 3, fold)) {
+        output.code = 14;
+        output.width = 64;
+        return true;
+    }
+    // r15
+    if (amd64_name_is(name, 3486066, 3, fold)) {
+        output.code = 15;
+        output.width = 64;
+        return true;
+    }
+    // eax
+    if (amd64_name_is(name, 7889253, 3, fold)) {
+        output.code = 0;
+        output.width = 32;
+        return true;
+    }
+    // ecx
+    if (amd64_name_is(name, 7889765, 3, fold)) {
+        output.code = 1;
+        output.width = 32;
+        return true;
+    }
+    // edx
+    if (amd64_name_is(name, 7890021, 3, fold)) {
+        output.code = 2;
+        output.width = 32;
+        return true;
+    }
+    // ebx
+    if (amd64_name_is(name, 7889509, 3, fold)) {
+        output.code = 3;
+        output.width = 32;
+        return true;
+    }
+    // esp
+    if (amd64_name_is(name, 7369573, 3, fold)) {
+        output.code = 4;
+        output.width = 32;
+        return true;
+    }
+    // ebp
+    if (amd64_name_is(name, 7365221, 3, fold)) {
+        output.code = 5;
+        output.width = 32;
+        return true;
+    }
+    // esi
+    if (amd64_name_is(name, 6910821, 3, fold)) {
+        output.code = 6;
+        output.width = 32;
+        return true;
+    }
+    // edi
+    if (amd64_name_is(name, 6906981, 3, fold)) {
+        output.code = 7;
+        output.width = 32;
+        return true;
+    }
+    // r8d
+    if (amd64_name_is(name, 6568050, 3, fold)) {
+        output.code = 8;
+        output.width = 32;
+        return true;
+    }
+    // r9d
+    if (amd64_name_is(name, 6568306, 3, fold)) {
+        output.code = 9;
+        output.width = 32;
+        return true;
+    }
+    // r10d
+    if (amd64_name_is(name, 1680879986, 4, fold)) {
+        output.code = 10;
+        output.width = 32;
+        return true;
+    }
+    // r11d
+    if (amd64_name_is(name, 1680945522, 4, fold)) {
+        output.code = 11;
+        output.width = 32;
+        return true;
+    }
+    // r12d
+    if (amd64_name_is(name, 1681011058, 4, fold)) {
+        output.code = 12;
+        output.width = 32;
+        return true;
+    }
+    // r13d
+    if (amd64_name_is(name, 1681076594, 4, fold)) {
+        output.code = 13;
+        output.width = 32;
+        return true;
+    }
+    // r14d
+    if (amd64_name_is(name, 1681142130, 4, fold)) {
+        output.code = 14;
+        output.width = 32;
+        return true;
+    }
+    // r15d
+    if (amd64_name_is(name, 1681207666, 4, fold)) {
+        output.code = 15;
+        output.width = 32;
+        return true;
+    }
+    // ax
+    if (amd64_name_is(name, 30817, 2, fold)) {
+        output.code = 0;
+        output.width = 16;
+        return true;
+    }
+    // cx
+    if (amd64_name_is(name, 30819, 2, fold)) {
+        output.code = 1;
+        output.width = 16;
+        return true;
+    }
+    // dx
+    if (amd64_name_is(name, 30820, 2, fold)) {
+        output.code = 2;
+        output.width = 16;
+        return true;
+    }
+    // bx
+    if (amd64_name_is(name, 30818, 2, fold)) {
+        output.code = 3;
+        output.width = 16;
+        return true;
+    }
+    // sp
+    if (amd64_name_is(name, 28787, 2, fold)) {
+        output.code = 4;
+        output.width = 16;
+        return true;
+    }
+    // bp
+    if (amd64_name_is(name, 28770, 2, fold)) {
+        output.code = 5;
+        output.width = 16;
+        return true;
+    }
+    // si
+    if (amd64_name_is(name, 26995, 2, fold)) {
+        output.code = 6;
+        output.width = 16;
+        return true;
+    }
+    // di
+    if (amd64_name_is(name, 26980, 2, fold)) {
+        output.code = 7;
+        output.width = 16;
+        return true;
+    }
+    // r8w
+    if (amd64_name_is(name, 7813234, 3, fold)) {
+        output.code = 8;
+        output.width = 16;
+        return true;
+    }
+    // r9w
+    if (amd64_name_is(name, 7813490, 3, fold)) {
+        output.code = 9;
+        output.width = 16;
+        return true;
+    }
+    // r10w
+    if (amd64_name_is(name, 1999647090, 4, fold)) {
+        output.code = 10;
+        output.width = 16;
+        return true;
+    }
+    // r11w
+    if (amd64_name_is(name, 1999712626, 4, fold)) {
+        output.code = 11;
+        output.width = 16;
+        return true;
+    }
+    // r12w
+    if (amd64_name_is(name, 1999778162, 4, fold)) {
+        output.code = 12;
+        output.width = 16;
+        return true;
+    }
+    // r13w
+    if (amd64_name_is(name, 1999843698, 4, fold)) {
+        output.code = 13;
+        output.width = 16;
+        return true;
+    }
+    // r14w
+    if (amd64_name_is(name, 1999909234, 4, fold)) {
+        output.code = 14;
+        output.width = 16;
+        return true;
+    }
+    // r15w
+    if (amd64_name_is(name, 1999974770, 4, fold)) {
+        output.code = 15;
+        output.width = 16;
+        return true;
+    }
+    // spl
+    if (amd64_name_is(name, 7106675, 3, fold)) {
+        output.code = 4;
+        output.width = 8;
+        output.rex8 = 1;
+        return true;
+    }
+    // bpl
+    if (amd64_name_is(name, 7106658, 3, fold)) {
+        output.code = 5;
+        output.width = 8;
+        output.rex8 = 1;
+        return true;
+    }
+    // sil
+    if (amd64_name_is(name, 7104883, 3, fold)) {
+        output.code = 6;
+        output.width = 8;
+        output.rex8 = 1;
+        return true;
+    }
+    // dil
+    if (amd64_name_is(name, 7104868, 3, fold)) {
+        output.code = 7;
+        output.width = 8;
+        output.rex8 = 1;
+        return true;
+    }
+    // al
+    if (amd64_name_is(name, 27745, 2, fold)) {
+        output.code = 0;
+        output.width = 8;
+        return true;
+    }
+    // cl
+    if (amd64_name_is(name, 27747, 2, fold)) {
+        output.code = 1;
+        output.width = 8;
+        return true;
+    }
+    // dl
+    if (amd64_name_is(name, 27748, 2, fold)) {
+        output.code = 2;
+        output.width = 8;
+        return true;
+    }
+    // bl
+    if (amd64_name_is(name, 27746, 2, fold)) {
+        output.code = 3;
+        output.width = 8;
+        return true;
+    }
+    // ah
+    if (amd64_name_is(name, 26721, 2, fold)) {
+        output.code = 4;
+        output.width = 8;
+        output.high8 = 1;
+        return true;
+    }
+    // ch
+    if (amd64_name_is(name, 26723, 2, fold)) {
+        output.code = 5;
+        output.width = 8;
+        output.high8 = 1;
+        return true;
+    }
+    // dh
+    if (amd64_name_is(name, 26724, 2, fold)) {
+        output.code = 6;
+        output.width = 8;
+        output.high8 = 1;
+        return true;
+    }
+    // bh
+    if (amd64_name_is(name, 26722, 2, fold)) {
+        output.code = 7;
+        output.width = 8;
+        output.high8 = 1;
+        return true;
+    }
+    // r8b
+    if (amd64_name_is(name, 6436978, 3, fold)) {
+        output.code = 8;
+        output.width = 8;
+        return true;
+    }
+    // r9b
+    if (amd64_name_is(name, 6437234, 3, fold)) {
+        output.code = 9;
+        output.width = 8;
+        return true;
+    }
+    // r10b
+    if (amd64_name_is(name, 1647325554, 4, fold)) {
+        output.code = 10;
+        output.width = 8;
+        return true;
+    }
+    // r11b
+    if (amd64_name_is(name, 1647391090, 4, fold)) {
+        output.code = 11;
+        output.width = 8;
+        return true;
+    }
+    // r12b
+    if (amd64_name_is(name, 1647456626, 4, fold)) {
+        output.code = 12;
+        output.width = 8;
+        return true;
+    }
+    // r13b
+    if (amd64_name_is(name, 1647522162, 4, fold)) {
+        output.code = 13;
+        output.width = 8;
+        return true;
+    }
+    // r14b
+    if (amd64_name_is(name, 1647587698, 4, fold)) {
+        output.code = 14;
+        output.width = 8;
+        return true;
+    }
+    // r15b
+    if (amd64_name_is(name, 1647653234, 4, fold)) {
+        output.code = 15;
+        output.width = 8;
+        return true;
+    }
+    // xmm0
+    if (amd64_name_is(name, 812477816, 4, fold)) {
+        output.code = 0;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm1
+    if (amd64_name_is(name, 829255032, 4, fold)) {
+        output.code = 1;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm2
+    if (amd64_name_is(name, 846032248, 4, fold)) {
+        output.code = 2;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm3
+    if (amd64_name_is(name, 862809464, 4, fold)) {
+        output.code = 3;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm4
+    if (amd64_name_is(name, 879586680, 4, fold)) {
+        output.code = 4;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm5
+    if (amd64_name_is(name, 896363896, 4, fold)) {
+        output.code = 5;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm6
+    if (amd64_name_is(name, 913141112, 4, fold)) {
+        output.code = 6;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm7
+    if (amd64_name_is(name, 929918328, 4, fold)) {
+        output.code = 7;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm8
+    if (amd64_name_is(name, 946695544, 4, fold)) {
+        output.code = 8;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm9
+    if (amd64_name_is(name, 963472760, 4, fold)) {
+        output.code = 9;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm10
+    if (amd64_name_is(name, 206987685240, 5, fold)) {
+        output.code = 10;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm11
+    if (amd64_name_is(name, 211282652536, 5, fold)) {
+        output.code = 11;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm12
+    if (amd64_name_is(name, 215577619832, 5, fold)) {
+        output.code = 12;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm13
+    if (amd64_name_is(name, 219872587128, 5, fold)) {
+        output.code = 13;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm14
+    if (amd64_name_is(name, 224167554424, 5, fold)) {
+        output.code = 14;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    // xmm15
+    if (amd64_name_is(name, 228462521720, 5, fold)) {
+        output.code = 15;
+        output.width = 128;
+        output.kind = 1;
+        return true;
+    }
+    return false;
+}
+
+export(c) fun whale_amd64_register(name: ptr<AsmName>, fold: u64,
+    output: ptr<Amd64Register>) -> i32 {
+    if (name == null || output == null || fold > 1
+        || !asm_span_valid(name.bytes, name.count, 1)) {
+        return 2;
+    }
+    output.kind = 0;
+    output.code = 0;
+    output.width = 0;
+    output.high8 = 0;
+    output.rex8 = 0;
+    if (amd64_register(name, fold, output)) {
+        return 0;
+    }
+    return 1;
+}

@@ -1,0 +1,75 @@
+// SPDX-License-Identifier: MPL-2.0
+// Observable effects; opcode tags follow the typed body model.
+fun ir_effect_mask(op: u64, sub: u64, pointer: u64) -> u64 {
+    if (op == 19) {
+        return 21;
+    }
+    if (op == 20) {
+        return 22;
+    }
+    if (op == 21) {
+        return 17;
+    }
+    if (op == 22 || op == 23 || op == 26) {
+        return 18;
+    }
+    if (op == 25) {
+        return 19;
+    }
+    if (op == 18 || op == 1) {
+        return 48;
+    }
+    if (op == 29) {
+        return 27;
+    }
+    if (op == 24 || op == 2 || op == 30 || op == 5) {
+        return 16;
+    }
+    if (op == 7 && sub >= 3 && sub <= 6) {
+        return 16;
+    }
+    if (op == 14 && (sub == 0 || sub == 8 || sub == 9)) {
+        return 16;
+    }
+    if ((op == 10 || op == 11) && pointer != 0) {
+        return 16;
+    }
+    return 0;
+}
+
+export(c) fun whale_ir_effects(
+    op: u64,
+    sub: u64,
+    pointer: u64,
+    terminator: u64,
+    output: ptr<u64>
+) -> i32 {
+    if (output == null || pointer > 1 || terminator > 1) {
+        return 1;
+    }
+    if (terminator == 1) {
+        if (op > 4 || sub != 0 || pointer != 0) {
+            return 1;
+        }
+        output[0] = 0;
+        if (op == 4) {
+            output[0] = 16;
+        }
+        return 0;
+    }
+    if (op > 30 || (op == 7 && sub > 17) || (op == 14 && sub > 12)) {
+        return 1;
+    }
+    output[0] = ir_effect_mask(op, sub, pointer);
+    return 0;
+}
+
+export(c) fun whale_ir_effects_removable(mask: u64) -> i32 {
+    if (mask > 63) {
+        return 2;
+    }
+    if (mask == 0) {
+        return 1;
+    }
+    return 0;
+}

@@ -5,6 +5,18 @@ use crate::{ConstValue, Type};
 /// Check a literal's category and range without rounding or wrapping its value.
 /// Floating payload widths must match the declared type.
 pub(crate) fn valid_constant(ty: &Type, value: &ConstValue) -> bool {
+    #[cfg(whale_wave_ir)]
+    {
+        crate::constant_wave::valid_literal(ty, value)
+    }
+    #[cfg(not(whale_wave_ir))]
+    {
+        valid_constant_reference(ty, value)
+    }
+}
+
+#[cfg(any(not(whale_wave_ir), test))]
+pub(crate) fn valid_constant_reference(ty: &Type, value: &ConstValue) -> bool {
     use Type::*;
     match (ty, value) {
         (Bool, ConstValue::Bool(_)) => true,

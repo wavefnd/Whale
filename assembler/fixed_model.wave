@@ -1,0 +1,139 @@
+// SPDX-License-Identifier: MPL-2.0
+// Borrowed fixed-width source records. Only the owning ISA selects opcodes.
+struct FixedText {
+    data: ptr<u8>;
+    count: u64;
+}
+
+struct FixedInstruction {
+    mnemonic: FixedText;
+    operands: ptr<FixedText>;
+    count: u64;
+    fold: u64;
+}
+
+struct FixedSymbol {
+    name: FixedText;
+    section: u64;
+    offset: u64;
+    start: u64;
+    end: u64;
+    line: u64;
+    flags: u64;
+}
+
+struct FixedRelocation {
+    section: u64;
+    offset: u64;
+    symbol: u64;
+    code: u64;
+    addend: i64;
+}
+
+struct FixedContext {
+    source: FixedText;
+    namespace: FixedText;
+    symbols: ptr<FixedSymbol>;
+    symbol_count: u64;
+    table: ptr<u64>;
+    table_capacity: u64;
+    section: u64;
+    offset: u64;
+    relocations: ptr<FixedRelocation>;
+    relocation_count: u64;
+    relocation_capacity: u64;
+}
+
+struct FixedResult {
+    status: u64;
+    error: u64;
+    start: u64;
+    end: u64;
+    line: u64;
+    previous_start: u64;
+    previous_end: u64;
+    previous_line: u64;
+    text: FixedText;
+    detail: u64;
+    display: u64;
+    word: u64;
+    sections: u64;
+    symbols: u64;
+    relocations: u64;
+    records: u64;
+    operands: u64;
+    bytes: u64;
+    work: u64;
+    max_work: u64;
+}
+
+struct FixedSection {
+    name: FixedText;
+    kind: u64;
+    align: u64;
+    size: u64;
+    first: u64;
+}
+
+struct FixedRecord {
+    section: u64;
+    offset: u64;
+    start: u64;
+    end: u64;
+    line: u64;
+    kind: u64;
+    unit: u64;
+    first: u64;
+    count: u64;
+    size: u64;
+    mnemonic: FixedText;
+}
+
+struct FixedGlobal {
+    start: u64;
+    end: u64;
+    line: u64;
+}
+
+struct FixedInput {
+    source: FixedText;
+    namespace: FixedText;
+    hash_comments: u64;
+    mode: u64;
+    max_output: u64;
+    max_passes: u64;
+    max_work: u64;
+    sections: ptr<FixedSection>;
+    section_capacity: u64;
+    symbols: ptr<FixedSymbol>;
+    symbol_capacity: u64;
+    table: ptr<u64>;
+    table_capacity: u64;
+    globals: ptr<FixedGlobal>;
+    global_capacity: u64;
+    records: ptr<FixedRecord>;
+    record_capacity: u64;
+    operands: ptr<FixedText>;
+    operand_capacity: u64;
+    order: ptr<u64>;
+    order_capacity: u64;
+    relocations: ptr<FixedRelocation>;
+    relocation_capacity: u64;
+    bytes: ptr<u8>;
+    byte_capacity: u64;
+}
+
+struct FixedState {
+    packet: ptr<FixedInput>;
+    context: FixedContext;
+    section_count: u64;
+    symbol_count: u64;
+    definition_count: u64;
+    global_count: u64;
+    record_count: u64;
+    operand_count: u64;
+    selected: u64;
+    materialized: u64;
+    next: u64;
+    pending: u64;
+}

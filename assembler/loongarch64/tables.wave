@@ -1,0 +1,432 @@
+// SPDX-License-Identifier: MPL-2.0
+// Complete current integer opcode inventory and operand forms.
+fun loong_lookup(text: FixedText, fold: u64, output: ptr<LoongOpcode>) -> bool {
+    if (asm_fixed_word(text, 511879439457, 5, fold)) { // add.w
+        output.form = 0;
+        output.opcode = 1048576;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 430275060833, 5, fold)) { // add.d
+        output.form = 0;
+        output.opcode = 1081344;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 511879312755, 5, fold)) { // sub.w
+        output.form = 0;
+        output.opcode = 1114112;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 430274934131, 5, fold)) { // sub.d
+        output.form = 0;
+        output.opcode = 1146880;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 7629939, 3, fold)) { // slt
+        output.form = 0;
+        output.opcode = 1179648;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1970564211, 4, fold)) { // sltu
+        output.form = 0;
+        output.opcode = 1212416;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 7499630, 3, fold)) { // nor
+        output.form = 0;
+        output.opcode = 1310720;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 6581857, 3, fold)) { // and
+        output.form = 0;
+        output.opcode = 1343488;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 29295, 2, fold)) { // or
+        output.form = 0;
+        output.opcode = 1376256;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 7499640, 3, fold)) { // xor
+        output.form = 0;
+        output.opcode = 1409024;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 511879965811, 5, fold)) { // sll.w
+        output.form = 0;
+        output.opcode = 1507328;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 511879967347, 5, fold)) { // srl.w
+        output.form = 0;
+        output.opcode = 1540096;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 511879246451, 5, fold)) { // sra.w
+        output.form = 0;
+        output.opcode = 1572864;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 430275587187, 5, fold)) { // sll.d
+        output.form = 0;
+        output.opcode = 1605632;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 430275588723, 5, fold)) { // srl.d
+        output.form = 0;
+        output.opcode = 1638400;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 430274867827, 5, fold)) { // sra.d
+        output.form = 0;
+        output.opcode = 1671168;
+        output.bits = 0;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1769237619, 4, fold)) { // slti
+        output.form = 1;
+        output.opcode = 33554432;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 452942130291, 5, fold)) { // sltui
+        output.form = 1;
+        output.opcode = 37748736;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 131041220387937, 6, fold)) { // addi.w
+        output.form = 1;
+        output.opcode = 41943040;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 110150499460193, 6, fold)) { // addi.d
+        output.form = 1;
+        output.opcode = 46137344;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 28198527019873644, 7, fold)) { // lu52i.d
+        output.form = 1;
+        output.opcode = 50331648;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1768189537, 4, fold)) { // andi
+        output.form = 2;
+        output.opcode = 54525952;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 6910575, 3, fold)) { // ori
+        output.form = 2;
+        output.opcode = 58720256;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1769107320, 4, fold)) { // xori
+        output.form = 2;
+        output.opcode = 62914560;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 131041220914291, 6, fold)) { // slli.w
+        output.form = 3;
+        output.opcode = 4227072;
+        output.bits = 5;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 131041220915827, 6, fold)) { // srli.w
+        output.form = 3;
+        output.opcode = 4489216;
+        output.bits = 5;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 131041220194931, 6, fold)) { // srai.w
+        output.form = 3;
+        output.opcode = 4751360;
+        output.bits = 5;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 110150499986547, 6, fold)) { // slli.d
+        output.form = 3;
+        output.opcode = 4259840;
+        output.bits = 6;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 110150499988083, 6, fold)) { // srli.d
+        output.form = 3;
+        output.opcode = 4521984;
+        output.bits = 6;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 110150499267187, 6, fold)) { // srai.d
+        output.form = 3;
+        output.opcode = 4784128;
+        output.bits = 6;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1647207532, 4, fold)) { // ld.b
+        output.form = 4;
+        output.opcode = 671088640;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1747870828, 4, fold)) { // ld.h
+        output.form = 4;
+        output.opcode = 675282944;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1999529068, 4, fold)) { // ld.w
+        output.form = 4;
+        output.opcode = 679477248;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1680761964, 4, fold)) { // ld.d
+        output.form = 4;
+        output.opcode = 683671552;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1647211635, 4, fold)) { // st.b
+        output.form = 4;
+        output.opcode = 687865856;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1747874931, 4, fold)) { // st.h
+        output.form = 4;
+        output.opcode = 692060160;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1999533171, 4, fold)) { // st.w
+        output.form = 4;
+        output.opcode = 696254464;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1680766067, 4, fold)) { // st.d
+        output.form = 4;
+        output.opcode = 700448768;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 504158381164, 5, fold)) { // ld.bu
+        output.form = 4;
+        output.opcode = 704643072;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 504259044460, 5, fold)) { // ld.hu
+        output.form = 4;
+        output.opcode = 708837376;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 504510702700, 5, fold)) { // ld.wu
+        output.form = 4;
+        output.opcode = 713031680;
+        output.bits = 12;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 7431522, 3, fold)) { // beq
+        output.form = 5;
+        output.opcode = 1476395008;
+        output.bits = 16;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 6647394, 3, fold)) { // bne
+        output.form = 5;
+        output.opcode = 1543503872;
+        output.bits = 16;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 7629922, 3, fold)) { // blt
+        output.form = 5;
+        output.opcode = 1610612736;
+        output.bits = 16;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 6645602, 3, fold)) { // bge
+        output.form = 5;
+        output.opcode = 1677721600;
+        output.bits = 16;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1970564194, 4, fold)) { // bltu
+        output.form = 5;
+        output.opcode = 1744830464;
+        output.bits = 16;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1969579874, 4, fold)) { // bgeu
+        output.form = 5;
+        output.opcode = 1811939328;
+        output.bits = 16;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 7368558, 3, fold)) { // nop
+        output.form = 6;
+        output.opcode = 54525952;
+        output.bits = 0;
+        output.count = 0;
+        return true;
+    }
+    else if (asm_fixed_word(text, 7628146, 3, fold)) { // ret
+        output.form = 6;
+        output.opcode = 1275068448;
+        output.bits = 0;
+        output.count = 0;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1702260589, 4, fold)) { // move
+        output.form = 7;
+        output.opcode = 1376256;
+        output.bits = 0;
+        output.count = 2;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1680763244, 4, fold)) { // li.d
+        output.form = 8;
+        output.opcode = 46137344;
+        output.bits = 12;
+        output.count = 2;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1999530348, 4, fold)) { // li.w
+        output.form = 8;
+        output.opcode = 41943040;
+        output.bits = 12;
+        output.count = 2;
+        return true;
+    }
+    else if (asm_fixed_word(text, 33546551577113964, 7, fold)) { // lu12i.w
+        output.form = 9;
+        output.opcode = 335544320;
+        output.bits = 20;
+        output.count = 2;
+        return true;
+    }
+    else if (asm_fixed_word(text, 28198527019742572, 7, fold)) { // lu32i.d
+        output.form = 9;
+        output.opcode = 369098752;
+        output.bits = 20;
+        output.count = 2;
+        return true;
+    }
+    else if (asm_fixed_word(text, 98, 1, fold)) { // b
+        output.form = 10;
+        output.opcode = 1342177280;
+        output.bits = 26;
+        output.count = 1;
+        return true;
+    }
+    else if (asm_fixed_word(text, 27746, 2, fold)) { // bl
+        output.form = 10;
+        output.opcode = 1409286144;
+        output.bits = 26;
+        output.count = 1;
+        return true;
+    }
+    else if (asm_fixed_word(text, 2054251874, 4, fold)) { // beqz
+        output.form = 11;
+        output.opcode = 1073741824;
+        output.bits = 21;
+        output.count = 2;
+        return true;
+    }
+    else if (asm_fixed_word(text, 2053467746, 4, fold)) { // bnez
+        output.form = 11;
+        output.opcode = 1140850688;
+        output.bits = 21;
+        output.count = 2;
+        return true;
+    }
+    else if (asm_fixed_word(text, 1819437418, 4, fold)) { // jirl
+        output.form = 12;
+        output.opcode = 1275068416;
+        output.bits = 16;
+        output.count = 3;
+        return true;
+    }
+    else if (asm_fixed_word(text, 30518463020890483, 7, fold)) { // syscall
+        output.form = 13;
+        output.opcode = 2818048;
+        output.bits = 15;
+        output.count = 1;
+        return true;
+    }
+    else if (asm_fixed_word(text, 461195539042, 5, fold)) { // break
+        output.form = 13;
+        output.opcode = 2752512;
+        output.bits = 15;
+        output.count = 1;
+        return true;
+    }
+    return false;
+}

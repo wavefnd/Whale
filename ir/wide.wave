@@ -1,0 +1,287 @@
+// SPDX-License-Identifier: MPL-2.0
+// Two-word arithmetic. No host pointer width, native u128 or runtime helpers.
+struct IrWide {
+    low: u64;
+    high: u64;
+}
+
+fun ir_wide_from(low: u64, high: u64, output: ptr<IrWide>) {
+    output.low = low;
+    output.high = high;
+}
+
+fun ir_wide_zero(output: ptr<IrWide>) {
+    output.low = 0;
+    output.high = 0;
+}
+
+fun ir_wide_cmp(a: ptr<IrWide>, b: ptr<IrWide>) -> i32 {
+    if (a.high < b.high || (a.high == b.high && a.low < b.low)) {
+        return -1;
+    }
+    if (a.high == b.high && a.low == b.low) {
+        return 0;
+    }
+    return 1;
+}
+
+fun ir_wide_add(a: ptr<IrWide>, b: ptr<IrWide>, output: ptr<IrWide>) -> u64 {
+    var al: u64 = a.low;
+    var ah: u64 = a.high;
+    var bl: u64 = b.low;
+    var bh: u64 = b.high;
+    var low: u64 = al + bl;
+    var carry: u64 = (low < al) as u64;
+    var high: u64 = ah + bh;
+    var overflow: bool = high < ah;
+    var result: u64 = high + carry;
+    output.low = low;
+    output.high = result;
+    return (overflow || result < high) as u64;
+}
+
+fun ir_wide_sub(a: ptr<IrWide>, b: ptr<IrWide>, output: ptr<IrWide>) -> u64 {
+    var al: u64 = a.low;
+    var ah: u64 = a.high;
+    var bl: u64 = b.low;
+    var bh: u64 = b.high;
+    var borrow: u64 = (al < bl) as u64;
+    var high: u64 = ah - bh;
+    output.low = al - bl;
+    output.high = high - borrow;
+    return (ah < bh || high < borrow) as u64;
+}
+
+fun ir_wide_neg(a: ptr<IrWide>, output: ptr<IrWide>) {
+    var low: u64 = 0 - a.low;
+    var high: u64 = ~a.high;
+    if (low == 0) {
+        high += 1;
+    }
+    output.low = low;
+    output.high = high;
+}
+
+fun ir_wide_shl(a: ptr<IrWide>, count: u64, output: ptr<IrWide>) {
+    var low: u64 = a.low;
+    var high: u64 = a.high;
+    if (count == 0) {
+        output.low = low;
+        output.high = high;
+    } else if (count >= 128) {
+        ir_wide_zero(output);
+    } else if (count >= 64) {
+        output.low = 0;
+        output.high = low << (count - 64);
+    } else {
+        output.low = low << count;
+        output.high = (high << count) | (low >> (64 - count));
+    }
+}
+
+fun ir_wide_shr(a: ptr<IrWide>, count: u64, output: ptr<IrWide>) {
+    var low: u64 = a.low;
+    var high: u64 = a.high;
+    if (count == 0) {
+        output.low = low;
+        output.high = high;
+    } else if (count >= 128) {
+        ir_wide_zero(output);
+    } else if (count >= 64) {
+        output.low = high >> (count - 64);
+        output.high = 0;
+    } else {
+        output.low = (low >> count) | (high << (64 - count));
+        output.high = high >> count;
+    }
+}
+
+fun ir_wide_mask(width: u64, output: ptr<IrWide>) {
+    if (width == 0) {
+        ir_wide_zero(output);
+    } else if (width < 64) {
+        output.low = (1 as u64 << width) - 1;
+        output.high = 0;
+    } else if (width == 64) {
+        output.low = 18446744073709551615;
+        output.high = 0;
+    } else if (width < 128) {
+        output.low = 18446744073709551615;
+        output.high = (1 as u64 << (width - 64)) - 1;
+    } else {
+        output.low = 18446744073709551615;
+        output.high = 18446744073709551615;
+    }
+}
+
+fun ir_wide_ashr(a: ptr<IrWide>, count: u64, output: ptr<IrWide>) {
+    var value: IrWide = a[0];
+    var negative: bool = (value.high & 9223372036854775808) != 0;
+    ir_wide_shr(&value, count, output);
+    if (negative && count != 0) {
+        var mask: IrWide;
+        if (count >= 128) {
+            ir_wide_zero(&mask);
+        } else {
+            ir_wide_mask(128 - count, &mask);
+        }
+        output.low = output.low | ~mask.low;
+        output.high = output.high | ~mask.high;
+    }
+}
+
+fun ir_wide_trim(a: ptr<IrWide>, width: u64, output: ptr<IrWide>) {
+    var mask: IrWide;
+    ir_wide_mask(width, &mask);
+    output.low = a.low & mask.low;
+    output.high = a.high & mask.high;
+}
+
+fun ir_wide_bit(a: ptr<IrWide>, index: u64) -> u64 {
+    if (index < 64) {
+        return (a.low >> index) & 1;
+    }
+    if (index < 128) {
+        return (a.high >> (index - 64)) & 1;
+    }
+    return 0;
+}
+
+fun ir_wide_clz(a: ptr<IrWide>) -> u64 {
+    if (a.high == 0 && a.low == 0) {
+        return 128;
+    }
+    var value: u64 = a.high;
+    var count: u64 = 0;
+    if (value == 0) {
+        value = a.low;
+        count = 64;
+    }
+    var mask: u64 = 9223372036854775808;
+    while ((value & mask) == 0) {
+        count += 1;
+        mask = mask >> 1;
+    }
+    return count;
+}
+
+fun ir_wide_mul64(a: u64, b: u64, output: ptr<IrWide>) {
+    var a0: u64 = a & 4294967295;
+    var a1: u64 = a >> 32;
+    var b0: u64 = b & 4294967295;
+    var b1: u64 = b >> 32;
+    var p00: u64 = a0 * b0;
+    var p01: u64 = a0 * b1;
+    var p10: u64 = a1 * b0;
+    var p11: u64 = a1 * b1;
+    var middle: u64 = (p00 >> 32) + (p01 & 4294967295) + (p10 & 4294967295);
+    output.low = (p00 & 4294967295) | (middle << 32);
+    output.high = p11 + (p01 >> 32) + (p10 >> 32) + (middle >> 32);
+}
+
+fun ir_wide_mul(a: ptr<IrWide>, b: ptr<IrWide>, output: ptr<IrWide>) -> bool {
+    var al: u64 = a.low;
+    var ah: u64 = a.high;
+    var bl: u64 = b.low;
+    var bh: u64 = b.high;
+    var p00: IrWide;
+    var p01: IrWide;
+    var p10: IrWide;
+    ir_wide_mul64(al, bl, &p00);
+    ir_wide_mul64(al, bh, &p01);
+    ir_wide_mul64(ah, bl, &p10);
+    var high: u64 = p00.high + p01.low;
+    var overflow: bool = high < p00.high;
+    var final_high: u64 = high + p10.low;
+    overflow = overflow || final_high < high || p01.high != 0 || p10.high != 0 || (ah != 0
+        && bh != 0);
+    output.low = p00.low;
+    output.high = final_high;
+    return overflow;
+}
+
+fun ir_wide_divmod(a: ptr<IrWide>, b: ptr<IrWide>, quotient: ptr<IrWide>,
+    remainder: ptr<IrWide>) -> bool {
+    var numerator: IrWide = a[0];
+    var divisor: IrWide = b[0];
+    var q: IrWide;
+    var r: IrWide;
+    ir_wide_zero(&q);
+    ir_wide_zero(&r);
+    if (divisor.low == 0 && divisor.high == 0) {
+        ir_wide_zero(quotient);
+        ir_wide_zero(remainder);
+        return false;
+    }
+    var index: u64 = 128;
+    while (index != 0) {
+        index -= 1;
+        var carry: u64 = r.high >> 63;
+        ir_wide_shl(&r, 1, &r);
+        r.low = r.low | ir_wide_bit(&numerator, index);
+        if (carry != 0 || ir_wide_cmp(&r, &divisor) >= 0) {
+            ir_wide_sub(&r, &divisor, &r);
+            if (index < 64) {
+                q.low = q.low | (1 as u64 << index);
+            } else {
+                q.high = q.high | (1 as u64 << (index - 64));
+            }
+        }
+    }
+    quotient[0] = q;
+    remainder[0] = r;
+    return true;
+}
+
+fun ir_wide_jam(a: ptr<IrWide>, count: u64, output: ptr<IrWide>) {
+    var value: IrWide = a[0];
+    if (count == 0) {
+        output[0] = value;
+        return;
+    }
+    if (count >= 128) {
+        output.low = (value.low != 0 || value.high != 0) as u64;
+        output.high = 0;
+        return;
+    }
+    var shifted: IrWide;
+    var back: IrWide;
+    ir_wide_shr(&value, count, &shifted);
+    ir_wide_shl(&shifted, count, &back);
+    if (ir_wide_cmp(&value, &back) != 0) {
+        shifted.low = shifted.low | 1;
+    }
+    output[0] = shifted;
+}
+
+fun ir_wide_round(a: ptr<IrWide>, count: u64, output: ptr<IrWide>) {
+    var value: IrWide = a[0];
+    if (count == 0) {
+        output[0] = value;
+        return;
+    }
+    if (count > 128) {
+        ir_wide_zero(output);
+        return;
+    }
+    var one: IrWide;
+    ir_wide_from(1, 0, &one);
+    var half: IrWide;
+    ir_wide_shl(&one, count - 1, &half);
+    if (count == 128) {
+        output.low = (ir_wide_cmp(&value, &half) > 0) as u64;
+        output.high = 0;
+        return;
+    }
+    var shifted: IrWide;
+    var back: IrWide;
+    var tail: IrWide;
+    ir_wide_shr(&value, count, &shifted);
+    ir_wide_shl(&shifted, count, &back);
+    ir_wide_sub(&value, &back, &tail);
+    var comparison: i32 = ir_wide_cmp(&tail, &half);
+    if (comparison > 0 || (comparison == 0 && (shifted.low & 1) != 0)) {
+        ir_wide_add(&shifted, &one, &shifted);
+    }
+    output[0] = shifted;
+}

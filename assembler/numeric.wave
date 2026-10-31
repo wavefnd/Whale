@@ -1,0 +1,105 @@
+// SPDX-License-Identifier: MPL-2.0
+// Exact checked signed arithmetic over two caller-owned words.
+export(c) fun asm_span_valid(data: ptr<u8>, count: u64, width: u64) -> bool {
+    return width != 0 && count <= 9223372036854775807 / width
+        && (count == 0 || data != null)
+        && count * width <= 18446744073709551615 - (data as u64);
+}
+
+export(c) fun asm_power_two(value: u64) -> bool {
+    return value != 0 && (value & (value - 1)) == 0;
+}
+
+export(c) fun asm_align_up(size: u64, align: u64, output: ptr<u64>) -> bool {
+    if (!asm_power_two(align) || output == null || size > 18446744073709551615 - (align - 1)) {
+        return false;
+    }
+    output[0] = (size + align - 1) & ~(align - 1);
+    return true;
+}
+
+export(c) fun asm_number_add_checked(a: ptr<AsmWide>, b: ptr<AsmWide>,
+    output: ptr<AsmWide>) -> bool {
+    if (a == null || b == null || output == null) {
+        return false;
+    }
+    var low: u64 = a.low + b.low;
+    var carry: u64 = (low < a.low) as u64;
+    var high: u64 = a.high + b.high + carry;
+    var a_negative: bool = a.high >= 9223372036854775808;
+    var b_negative: bool = b.high >= 9223372036854775808;
+    var negative: bool = high >= 9223372036854775808;
+    if ((a_negative && b_negative && !negative)
+        || (!a_negative && !b_negative && negative)) {
+        return false;
+    }
+    output.low = low;
+    output.high = high;
+    return true;
+}
+
+export(c) fun asm_number_neg_checked(value: ptr<AsmWide>, output: ptr<AsmWide>) -> bool {
+    if (value == null || output == null
+        || (value.low == 0 && value.high == 9223372036854775808)) {
+        return false;
+    }
+    var low: u64 = ~value.low + 1;
+    var high: u64 = ~value.high + (low == 0) as u64;
+    output.low = low;
+    output.high = high;
+    return true;
+}
+
+export(c) fun asm_number_sub_checked(a: ptr<AsmWide>, b: ptr<AsmWide>,
+    output: ptr<AsmWide>) -> bool {
+    if (a == null || b == null || output == null) {
+        return false;
+    }
+    var low: u64 = a.low - b.low;
+    var high: u64 = a.high - b.high - (a.low < b.low) as u64;
+    var a_negative: bool = a.high >= 9223372036854775808;
+    var b_negative: bool = b.high >= 9223372036854775808;
+    var negative: bool = high >= 9223372036854775808;
+    if ((a_negative && !b_negative && !negative)
+        || (!a_negative && b_negative && negative)) {
+        return false;
+    }
+    output.low = low;
+    output.high = high;
+    return true;
+}
+
+export(c) fun asm_number_fits_signed(value: ptr<AsmWide>, bits: u64) -> bool {
+    if (value == null || bits == 0 || bits > 128) {
+        return false;
+    }
+    if (bits == 128) {
+        return true;
+    }
+    var one: u64 = 1;
+    var all: u64 = 18446744073709551615;
+    if (bits <= 64) {
+        var top: u64 = one << (bits - 1);
+        return (value.high == 0 && value.low < top)
+            || (value.high == all && value.low >= all - top + 1);
+    }
+    var top: u64 = one << (bits - 65);
+    return value.high < top || value.high >= all - top + 1;
+}
+
+export(c) fun asm_number_fits_unsigned(value: ptr<AsmWide>, bits: u64) -> bool {
+    if (value == null || bits == 0 || bits > 128) {
+        return false;
+    }
+    if (bits == 128) {
+        return true;
+    }
+    var one: u64 = 1;
+    if (bits == 64) {
+        return value.high == 0;
+    }
+    if (bits < 64) {
+        return value.high == 0 && value.low < (one << bits);
+    }
+    return value.high < (one << (bits - 64));
+}

@@ -1,16 +1,18 @@
 # Bounded validation campaigns
 
-These opt-in mutation targets use the project's Rust APIs directly. They do not
-require libFuzzer, an external assembler, network access or a native backend.
+These mutation targets call the project APIs. With the selected Wave archives,
+IR/AST/assembler/bytecode algorithms execute in Wave; Rust owns the harness.
+Build the archives as described in [CONTRIBUTING.md](../CONTRIBUTING.md).
+Missing Wave modules fail explicitly; `rust-reference` is a separate comparison build.
 A fixed seed and case count make each campaign reproducible; the normal Rust
 suite also exercises every retained seed and small deterministic mutations.
 
 ```sh
-cargo build --locked --all-features --examples
+cargo build --locked --features socket-cli --examples
 python3 tools/fuzz_smoke.py --binary target/debug/examples/fuzz_boundaries --cases 512 --seed 1464353100
 ```
 
-Each target is independently visible (`assembler`, `object`, `ir`, `ast`). The runner
+Targets are independently selected: `assembler`, `object`, `ir`, `ast`, `bytecode`. The runner
 rejects an empty corpus or a corpus with no valid seed. Arguments cap runs at
 100,000 mutations; the Python wrapper bounds each process to 60 seconds by
 default, with a Linux RLIMIT_AS ceiling of 512 MiB (`--memory-mib`). Inputs and seed/replay reads are capped at 8192 bytes. Assembler output
@@ -26,7 +28,10 @@ Seed cases retain malformed syntax, numeric overflow, huge reservations, sparse
 IR identities, unknown versions, nested aggregates, strict JSON and exact-width
 float/call inputs. Mutations are byte insertion/deletion/repetition/bit flips and
 boundary-token injection. Library rejections are expected outcomes; a panic is
-a failure. The original failing bytes and replay command are saved before at
+a failure. Before every native call, one immutable current input and an atomic
+JSON replay manifest are published; SIGSEGV, abort and timeout evidence therefore
+survives outside Rust panic handling. On panic, the original failing bytes and
+replay command are saved before at
 most 256 deletion-minimization attempts or five seconds of reduction. Both the
 original and minimized bytes are written under
 `WHALE_FUZZ_ARTIFACT_DIR` (default `/tmp/whale-fuzz` for direct runs, or
@@ -34,7 +39,7 @@ original and minimized bytes are written under
 exact replay command:
 
 ```sh
-cargo run --locked --features socket-cli --example fuzz_boundaries -- ir --replay /path/to/ir-SEED-CASE.crash
+target/debug/examples/fuzz_boundaries ir --replay /path/to/ir-SEED-CASE.original
 ```
 
 The byte/token model for tracked memory is independent of production access and
@@ -102,7 +107,11 @@ relocations/tables, sparse BSS and conceptual NOBITS offsets beyond EOF. The
 reader bounds sections, symbols, relocations, payload, copied/inspected strings
 and work; BSS stays sparse.
 
-CI runs all four targets on pull requests. `fuzz.yml` also gives assembler and
-object separate jobs, with weekly scheduled campaigns of 50,000 cases each,
+Bytecode inputs use the bounded Wave loader/verifier with 64 KiB decoded bytes,
+4096 records, depth 32, 131072 work and 4 MiB workspace. Independent O0/O2 bytecode
+checkers also retain original inputs and literal replay argument arrays.
+
+CI runs all five targets on pull requests. `fuzz.yml` gives them separate jobs,
+with weekly scheduled campaigns of 50,000 cases each,
 300-second process deadlines and 512 MiB address-space limits. Logs, originals,
 minimized inputs and exact replay commands are retained as artifacts.

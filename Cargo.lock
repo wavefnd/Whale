@@ -312,6 +312,8 @@ dependencies = [
  "aarch64",
  "amd64",
  "assembler",
+ "backend-api",
+ "diagnostic",
  "ir",
  "linker",
  "loongarch64",
@@ -321,6 +323,7 @@ dependencies = [
  "same-file",
  "serde",
  "serde_json",
+ "target-spec",
  "tempfile",
  "toolchain",
 ]

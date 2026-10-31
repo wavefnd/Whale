@@ -1,0 +1,189 @@
+{
+  "wave_revision": "e0952ed65d07e14c6ed0aa64f3c9a5532dd7533b",
+  "functions": [
+    {
+      "name": "hir_scalar",
+      "parameters": [
+        {
+          "name": "x",
+          "ty": {
+            "Integer": {
+              "bits": 32,
+              "signed": true
+            }
+          }
+        },
+        {
+          "name": "n",
+          "ty": {
+            "Integer": {
+              "bits": 32,
+              "signed": true
+            }
+          }
+        },
+        {
+          "name": "flag",
+          "ty": "Bool"
+        }
+      ],
+      "return_type": {
+        "Integer": {
+          "bits": 32,
+          "signed": true
+        }
+      },
+      "body": [
+        {
+          "Variable": {
+            "name": "acc",
+            "ty": {
+              "Integer": {
+                "bits": 32,
+                "signed": true
+              }
+            },
+            "init": {
+              "id": 0,
+              "resolved_type": {
+                "Integer": {
+                  "bits": 32,
+                  "signed": true
+                }
+              },
+              "kind": {
+                "Local": "x"
+              }
+            }
+          }
+        },
+        {
+          "While": {
+            "condition": {
+              "id": 1,
+              "resolved_type": "Bool",
+              "kind": {
+                "Binary": {
+                  "left": {
+                    "id": 2,
+                    "resolved_type": {
+                      "Integer": {
+                        "bits": 32,
+                        "signed": true
+                      }
+                    },
+                    "kind": {
+                      "Local": "acc"
+                    }
+                  },
+                  "operator": "Less",
+                  "right": {
+                    "id": 3,
+                    "resolved_type": {
+                      "Integer": {
+                        "bits": 32,
+                        "signed": true
+                      }
+                    },
+                    "kind": {
+                      "Local": "n"
+                    }
+                  }
+                }
+              }
+            },
+            "body": [
+              {
+                "Assign": {
+                  "name": "acc",
+                  "value": {
+                    "id": 4,
+                    "resolved_type": {
+                      "Integer": {
+                        "bits": 32,
+                        "signed": true
+                      }
+                    },
+                    "kind": {
+                      "Binary": {
+                        "left": {
+                          "id": 5,
+                          "resolved_type": {
+                            "Integer": {
+                              "bits": 32,
+                              "signed": true
+                            }
+                          },
+                          "kind": {
+                            "Local": "acc"
+                          }
+                        },
+                        "operator": "Add",
+                        "right": {
+                          "id": 6,
+                          "resolved_type": {
+                            "Integer": {
+                              "bits": 32,
+                              "signed": true
+                            }
+                          },
+                          "kind": {
+                            "Integer": "1"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "If": {
+            "condition": {
+              "id": 7,
+              "resolved_type": "Bool",
+              "kind": {
+                "Local": "flag"
+              }
+            },
+            "body": [
+              {
+                "Return": {
+                  "id": 8,
+                  "resolved_type": {
+                    "Integer": {
+                      "bits": 32,
+                      "signed": true
+                    }
+                  },
+                  "kind": {
+                    "Local": "acc"
+                  }
+                }
+              }
+            ],
+            "else_body": [
+              {
+                "Return": {
+                  "id": 9,
+                  "resolved_type": {
+                    "Integer": {
+                      "bits": 32,
+                      "signed": true
+                    }
+                  },
+                  "kind": {
+                    "Local": "x"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "is_async": false
+    }
+  ]
+}

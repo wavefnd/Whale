@@ -22,6 +22,17 @@ fn archive_hash(path: &std::path::Path) -> String {
     }
 }
 
+fn bounded_hash(path: &std::path::Path, maximum: u64, label: &str) -> String {
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .unwrap_or_else(|_| panic!("missing {label}"))
+        .take(maximum + 1)
+        .read_to_end(&mut bytes)
+        .unwrap_or_else(|_| panic!("cannot read {label}"));
+    assert!(bytes.len() as u64 <= maximum, "oversized {label}");
+    hash(&bytes)
+}
+
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(whale_asmobj)");
     println!("cargo:rerun-if-env-changed=WHALE_ASMOBJ_DIR");
@@ -34,8 +45,10 @@ fn main() {
         "libwhale_asmobj.a"
     });
     let metadata = directory.join("asmobj.meta");
+    let provenance = directory.join("provenance.json");
     println!("cargo:rerun-if-changed={}", archive.display());
     println!("cargo:rerun-if-changed={}", metadata.display());
+    println!("cargo:rerun-if-changed={}", provenance.display());
     let mut text = String::new();
     fs::File::open(&metadata)
         .expect("missing asmobj.meta; build with tools/build_asmobj.py")
@@ -47,21 +60,49 @@ fn main() {
     for line in text.lines() {
         let (key, value) = line.split_once('=').expect("malformed asmobj metadata");
         assert!(
-            ["schema", "target", "source_fnv64", "archive_fnv64"].contains(&key)
+            [
+                "schema",
+                "target",
+                "wave_revision",
+                "opt_level",
+                "source_fnv64",
+                "abi_fnv64",
+                "archive_fnv64",
+                "provenance_fnv64"
+            ]
+            .contains(&key)
                 && fields.insert(key, value).is_none(),
             "invalid asmobj metadata fields"
         );
     }
-    assert_eq!(fields.len(), 4, "incomplete asmobj metadata");
-    assert_eq!(fields.get("schema"), Some(&"1"), "unsupported asmobj metadata");
+    assert_eq!(fields.len(), 8, "incomplete asmobj metadata");
+    assert_eq!(fields.get("schema"), Some(&"2"), "unsupported asmobj metadata");
     assert_eq!(fields.get("target"), Some(&target.as_str()), "asmobj archive target mismatch");
+    assert_eq!(
+        fields.get("wave_revision"),
+        Some(&"e0952ed65d07e14c6ed0aa64f3c9a5532dd7533b"),
+        "asmobj Wave compiler revision mismatch"
+    );
+    assert!(
+        [Some(&"0"), Some(&"2")].contains(&fields.get("opt_level")),
+        "unsupported asmobj optimization level"
+    );
     let root =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../assembler/asmobj");
     let mut source = Vec::new();
-    for (index, name) in
-        ["model.wave", "sections.wave", "symbols.wave", "relocations.wave", "entry.wave"]
-            .iter()
-            .enumerate()
+    for (index, name) in [
+        "model.wave",
+        "sections.wave",
+        "symbols.wave",
+        "relocations/amd64.wave",
+        "relocations/aarch64.wave",
+        "relocations/riscv64.wave",
+        "relocations/loongarch64.wave",
+        "relocations.wave",
+        "entry.wave",
+    ]
+    .iter()
+    .enumerate()
     {
         let path = root.join(name);
         println!("cargo:rerun-if-changed={}", path.display());
@@ -75,10 +116,23 @@ fn main() {
         Some(&hash(&source).as_str()),
         "stale asmobj archive; rebuild with tools/build_asmobj.py"
     );
+    let abi_path =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("src/assembly_object.rs");
+    println!("cargo:rerun-if-changed={}", abi_path.display());
+    assert_eq!(
+        fields.get("abi_fnv64"),
+        Some(&bounded_hash(&abi_path, 1024 * 1024, "asmobj ABI source").as_str()),
+        "stale asmobj ABI; rebuild with tools/build_asmobj.py"
+    );
     assert_eq!(
         fields.get("archive_fnv64"),
         Some(&archive_hash(&archive).as_str()),
         "corrupt asmobj archive"
+    );
+    assert_eq!(
+        fields.get("provenance_fnv64"),
+        Some(&bounded_hash(&provenance, 16 * 1024, "asmobj provenance").as_str()),
+        "corrupt asmobj provenance"
     );
     println!("cargo:rustc-link-search=native={}", directory.display());
     println!("cargo:rustc-link-lib=static=whale_asmobj");

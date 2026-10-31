@@ -1,0 +1,728 @@
+// SPDX-License-Identifier: MPL-2.0
+// Native execution uses generation-tagged SSA slots and explicit one-shot effects.
+fun ir_runtime_step_charge(p: ptr<IrRuntimeDriver>, site: u64) -> bool {
+    p.pending_site = site;
+    if (p.steps >= p.max_steps) {
+        return ir_runtime_error(p, 6, site, p.max_steps, 0);
+    }
+    p.steps += 1;
+    return ir_runtime_charge(p);
+}
+
+fun ir_runtime_get(p: ptr<IrRuntimeDriver>, frame: ptr<IrRuntimeFrame>,
+    slot: u64, output: ptr<IrRuntimeValue>) -> bool {
+    if (slot >= frame.value_count || frame.value_base > p.slot_count
+        || slot >= p.slot_count - frame.value_base) {
+        return ir_runtime_backend(p);
+    }
+    var source: ptr<IrRuntimeSlot> = &p.slots[frame.value_base + slot];
+    if (source.generation != frame.generation) {
+        return ir_runtime_backend(p);
+    }
+    output[0] = source.value;
+    return true;
+}
+
+fun ir_runtime_put(p: ptr<IrRuntimeDriver>, frame: ptr<IrRuntimeFrame>,
+    slot: u64, value: ptr<IrRuntimeValue>) -> bool {
+    if (slot >= frame.value_count || frame.value_base > p.slot_count
+        || slot >= p.slot_count - frame.value_base) {
+        return ir_runtime_backend(p);
+    }
+    var destination: ptr<IrRuntimeSlot> = &p.slots[frame.value_base + slot];
+    destination.value = value[0];
+    destination.value.ty = p.value_types[p.functions[frame.function].first_value_type + slot];
+    destination.generation = frame.generation;
+    return true;
+}
+
+fun ir_runtime_event(p: ptr<IrRuntimeDriver>, kind: u64, pending: u64,
+    inst: ptr<IrRuntimeInstruction>) -> bool {
+    p.result.status = 1;
+    p.result.site = p.pending_site;
+    p.result.steps = p.steps;
+    p.result.event.kind = kind;
+    p.result.event.ty = inst.ty;
+    p.result.event.size = inst.size;
+    p.result.event.natural = inst.natural;
+    p.result.event.align = inst.align;
+    p.result.event.flag = 0;
+    p.result.event.owner = 0;
+    p.result.event.first = 0;
+    p.result.event.count = 0;
+    p.pending = pending;
+    p.pending_destination = inst.dst;
+    p.pending_type = inst.ty;
+    p.resume = 0;
+    return false;
+}
+
+fun ir_runtime_buffers(p: ptr<IrRuntimeDriver>, frames: u64, slots: u64,
+    phis: u64) -> bool {
+    if (frames <= p.frame_capacity && slots <= p.slot_capacity && phis <= p.phi_capacity) {
+        return true;
+    }
+    p.result.status = 2;
+    p.result.site = p.pending_site;
+    p.result.event.frame_capacity = frames;
+    p.result.event.value_capacity = slots;
+    p.result.event.phi_capacity = phis;
+    p.result.steps = p.steps;
+    p.pending = 8;
+    p.resume = 0;
+    return false;
+}
+
+fun ir_runtime_admit(p: ptr<IrRuntimeDriver>, target: u64, entry: bool) -> bool {
+    if (target >= p.function_count || p.prepared[target] == 0) {
+        return ir_runtime_backend(p);
+    }
+    if (p.frame_count >= p.max_depth) {
+        return ir_runtime_error(p, 7, p.pending_site, p.max_depth, 0);
+    }
+    if (p.frames_created >= p.max_frames) {
+        return ir_runtime_error(p, 8, p.pending_site, p.max_frames, 0);
+    }
+    var function: ptr<IrRuntimeFunction> = &p.functions[target];
+    if (p.slot_count > p.max_values || function.value_count > p.max_values - p.slot_count) {
+        return ir_runtime_error(p, 9, p.pending_site, p.max_values, 0);
+    }
+    var required: u64 = p.slot_count + function.value_count;
+    if (!ir_runtime_buffers(p, p.frame_count + 1, required, p.phi_capacity)) {
+        return false;
+    }
+    var child: ptr<IrRuntimeFrame> = &p.frames[p.frame_count];
+    child.function = target;
+    child.block = function.entry;
+    child.predecessor = 18446744073709551615;
+    child.instruction = 0;
+    child.value_base = p.slot_count;
+    child.value_count = function.value_count;
+    child.generation = p.frames_created + 1;
+    child.allocation_start = p.memory_allocations;
+    child.return_slot = 18446744073709551615;
+    child.call_site = 18446744073709551615;
+    if (!entry) {
+        child.return_slot = p.instructions[p.pending_site].dst;
+        child.call_site = p.pending_site;
+    }
+    p.slot_count = required;
+    var i: u64 = 0;
+    while (i < function.parameter_count) {
+        if (!ir_runtime_charge(p)) {
+            return false;
+        }
+        var value: IrRuntimeValue;
+        if (entry) {
+            value = p.arguments[i];
+        } else {
+            var inst: ptr<IrRuntimeInstruction> = &p.instructions[p.pending_site];
+            if (i >= inst.count || !ir_runtime_get(p, &p.frames[p.frame_count - 1],
+                p.operands[inst.first + i], &value)) {
+                return ir_runtime_backend(p);
+            }
+        }
+        if (!ir_runtime_put(p, child, p.operands[function.first_parameter + i], &value)) {
+            return false;
+        }
+        i += 1;
+    }
+    p.frames_created += 1;
+    p.frame_count += 1;
+    p.phase = 3;
+    return true;
+}
+
+fun ir_runtime_compare_predicate(op: u64) -> u64 {
+    if (op < 2) {
+        return op;
+    }
+    if (op < 6) {
+        return op + 4;
+    }
+    return op - 4;
+}
+
+fun ir_runtime_float_predicate(op: u64) -> u64 {
+    if (op == 10) {
+        return 0;
+    }
+    if (op == 11) {
+        return 9;
+    }
+    return op - 10;
+}
+
+fun ir_runtime_numeric(p: ptr<IrRuntimeDriver>, inst: ptr<IrRuntimeInstruction>,
+    left: ptr<IrRuntimeValue>, right: ptr<IrRuntimeValue>, output: ptr<IrRuntimeValue>) -> bool {
+    var kind: u64 = p.types[inst.ty].kind;
+    var source: u64 = kind;
+    var mode: u64 = 0;
+    var operation: u64 = inst.sub;
+    var destination: u64 = kind;
+    if (inst.op == 8 || inst.op == 9) {
+        mode = 6;
+        operation = inst.op - 8;
+    } else if (inst.op == 10 || inst.op == 11 || inst.op == 12) {
+        mode = 3;
+        destination = 1;
+        if (inst.op == 10) {
+            operation = ir_runtime_compare_predicate(inst.sub);
+        }
+    } else if (inst.op == 14) {
+        source = p.types[inst.other].kind;
+        mode = 2;
+        if (inst.sub == 12) {
+            mode = 4;
+            operation = 0;
+        } else if (inst.sub == 9) {
+            operation = 3;
+        }
+    } else if (inst.op == 17) {
+        mode = 1;
+    }
+    ir_runtime_clear_value(output);
+    output.kind = 1;
+    output.ty = inst.ty;
+    output.literal = ir_runtime_literal(destination);
+    if (ir_verify_float(source) || ir_verify_float(destination)) {
+        var request: IrFloatRequest;
+        request.mode = 0;
+        request.operation = inst.sub;
+        if (inst.op == 7) {
+            request.operation = inst.sub - 7;
+        }
+        request.source = source;
+        request.destination = destination;
+        request.left_kind = left.literal;
+        request.left_low = left.low;
+        request.left_high = left.high;
+        request.right_kind = right.literal;
+        request.right_low = right.low;
+        request.right_high = right.high;
+        if (inst.op == 8) {
+            request.mode = 1;
+        } else if (inst.op == 10 || inst.op == 12) {
+            request.mode = 2;
+            request.destination = source;
+            if (inst.op == 10) {
+                request.operation = ir_runtime_float_predicate(inst.sub);
+            }
+        } else if (inst.op == 14) {
+            request.mode = 3;
+            request.operation = inst.sub - 3;
+        }
+        var result: IrFloatResult;
+        var status: i32 = whale_ir_float(&request, &result);
+        if (status == 1) {
+            return ir_runtime_error(p, 12, p.pending_site, 0, 0);
+        }
+        if (status != 0 || result.status != 0) {
+            return ir_runtime_backend(p);
+        }
+        output.low = result.low;
+        output.high = result.high;
+        if (request.mode == 2) {
+            output.low = result.flag;
+            output.high = 0;
+        }
+    } else {
+        var result: IrIntegerResult;
+        var status: i32 = whale_ir_integer(mode, operation, source, destination,
+            left.low, left.high, right.low, right.high, &result);
+        if (status >= 1 && status <= 3) {
+            return ir_runtime_error(p, 9 + status as u64, p.pending_site, 0, 0);
+        }
+        if (status != 0 || result.status != 0) {
+            return ir_runtime_backend(p);
+        }
+        output.low = result.low;
+        output.high = result.high;
+        output.flag = result.flag;
+        if (inst.op == 17) {
+            output.kind = 2;
+        }
+    }
+    return true;
+}
+
+fun ir_runtime_resume(p: ptr<IrRuntimeDriver>) -> bool {
+    var pending: u64 = p.pending;
+    if (pending == 0) {
+        if (p.resume != 0) {
+            return ir_runtime_backend(p);
+        }
+        return true;
+    }
+    if (pending == 8) {
+        if (p.resume != 2) {
+            return ir_runtime_backend(p);
+        }
+        p.pending = 0;
+        p.resume = 0;
+        return true;
+    }
+    if (p.resume != 1) {
+        return ir_runtime_backend(p);
+    }
+    p.pending = 0;
+    p.resume = 0;
+    if (pending == 5) {
+        p.global_values[p.cursor] = p.resume_value;
+        p.global_phase = 1;
+        return true;
+    }
+    if (pending == 6) {
+        p.global_phase = 2;
+        return true;
+    }
+    if (pending == 7) {
+        p.global_values[p.cursor] = p.resume_value;
+        p.cursor += 1;
+        p.global_phase = 0;
+        return true;
+    }
+    if (p.frame_count == 0) {
+        return ir_runtime_backend(p);
+    }
+    var frame: ptr<IrRuntimeFrame> = &p.frames[p.frame_count - 1];
+    if (pending == 1) {
+        return ir_runtime_put(p, frame, p.pending_destination, &p.resume_value);
+    }
+    if (pending == 2) {
+        return true;
+    }
+    if (pending == 3) {
+        var pred: u64 = p.pending_flag;
+        var answer: bool = false;
+        if (pred < 2) {
+            answer = p.resume_value.low != 0;
+            if (pred == 1) {
+                answer = !answer;
+            }
+        } else {
+            var negative: bool = (p.resume_value.high >> 63) != 0;
+            var zero: bool = p.resume_value.low == 0 && p.resume_value.high == 0;
+            if (pred == 2 || pred == 6) {
+                answer = negative;
+            } else if (pred == 3 || pred == 7) {
+                answer = negative || zero;
+            } else if (pred == 4 || pred == 8) {
+                answer = !negative && !zero;
+            } else {
+                answer = !negative;
+            }
+        }
+        var value: IrRuntimeValue;
+        ir_runtime_make_scalar(p, p.pending_type, answer as u64, 0, &value);
+        value.literal = 3;
+        return ir_runtime_put(p, frame, p.pending_destination, &value);
+    }
+    if (pending == 4) {
+        var destination: u64 = frame.return_slot;
+        p.slot_count = frame.value_base;
+        p.frame_count -= 1;
+        if (p.frame_count == 0) {
+            p.phase = 5;
+            p.result.status = 0;
+            p.result.steps = p.steps;
+            p.result.value = p.pending_value;
+            return false;
+        }
+        if (destination != 18446744073709551615) {
+            return ir_runtime_put(p, &p.frames[p.frame_count - 1], destination, &p.pending_value);
+        }
+        return true;
+    }
+    return ir_runtime_backend(p);
+}
+
+fun ir_runtime_globals(p: ptr<IrRuntimeDriver>) -> bool {
+    if (p.cursor >= p.global_count) {
+        p.result.global = 18446744073709551615;
+        p.pending_site = 18446744073709551615;
+        p.phase = 2;
+        return true;
+    }
+    p.result.global = p.cursor;
+    var global: ptr<IrRuntimeGlobal> = &p.globals[p.cursor];
+    var event: ptr<IrRuntimeEvent> = &p.result.event;
+    p.result.status = 1;
+    p.result.site = 18446744073709551615;
+    p.result.steps = p.steps;
+    event.ty = global.ty;
+    event.size = global.size;
+    event.natural = global.natural;
+    event.align = global.align;
+    event.flag = 0;
+    p.resume = 0;
+    if (p.global_phase == 0) {
+        event.kind = 1;
+        event.flag = 1;
+        p.pending = 5;
+    } else if (p.global_phase == 1 && global.initialized == 1) {
+        event.kind = 3;
+        event.left = p.global_values[p.cursor];
+        event.right = global.value;
+        p.pending = 6;
+    } else {
+        event.kind = 12;
+        event.left = p.global_values[p.cursor];
+        event.flag = global.readonly;
+        p.pending = 7;
+    }
+    return false;
+}
+
+fun ir_runtime_phis(p: ptr<IrRuntimeDriver>, frame: ptr<IrRuntimeFrame>) -> bool {
+    var block: ptr<IrRuntimeBlock> = &p.blocks[frame.block];
+    p.pending_site = block.first;
+    var count: u64 = 0;
+    while (count < block.count && p.instructions[block.first + count].op == 15) {
+        if (!ir_runtime_charge(p)) {
+            return false;
+        }
+        count += 1;
+    }
+    if (!ir_runtime_buffers(p, p.frame_count, p.slot_count, count)) {
+        return false;
+    }
+    var i: u64 = 0;
+    while (i < count) {
+        var inst: ptr<IrRuntimeInstruction> = &p.instructions[block.first + i];
+        if (!ir_runtime_step_charge(p, block.first + i)) {
+            return false;
+        }
+        var j: u64 = 0;
+        var found: bool = false;
+        while (j < inst.count) {
+            if (!ir_runtime_charge(p)) {
+                return false;
+            }
+            if (p.operands[inst.first + j * 2 + 1] == frame.predecessor) {
+                if (!ir_runtime_get(p, frame, p.operands[inst.first + j * 2], &p.phis[i])) {
+                    return false;
+                }
+                found = true;
+                break;
+            }
+            j += 1;
+        }
+        if (!found) {
+            return ir_runtime_backend(p);
+        }
+        i += 1;
+    }
+    i = 0;
+    while (i < count) {
+        if (!ir_runtime_put(p, frame, p.instructions[block.first + i].dst, &p.phis[i])) {
+            return false;
+        }
+        i += 1;
+    }
+    frame.instruction = count;
+    return true;
+}
+
+fun ir_runtime_execute_one(p: ptr<IrRuntimeDriver>) -> bool {
+    if (p.frame_count == 0) {
+        return ir_runtime_backend(p);
+    }
+    var frame: ptr<IrRuntimeFrame> = &p.frames[p.frame_count - 1];
+    if (frame.block >= p.block_count || p.blocks[frame.block].function != frame.function) {
+        return ir_runtime_backend(p);
+    }
+    var block: ptr<IrRuntimeBlock> = &p.blocks[frame.block];
+    if (frame.instruction == 0 && !ir_runtime_phis(p, frame)) {
+        return false;
+    }
+    if (frame.instruction >= block.count) {
+        return ir_runtime_backend(p);
+    }
+    var site: u64 = block.first + frame.instruction;
+    var inst: ptr<IrRuntimeInstruction> = &p.instructions[site];
+    if (!ir_runtime_step_charge(p, site)) {
+        return false;
+    }
+    frame.instruction += 1;
+    var left: IrRuntimeValue;
+    var right: IrRuntimeValue;
+    var third: IrRuntimeValue;
+    var value: IrRuntimeValue;
+    ir_runtime_clear_value(&left);
+    ir_runtime_clear_value(&right);
+    ir_runtime_clear_value(&third);
+    ir_runtime_clear_value(&value);
+    var op: u64 = inst.op;
+    if (op == 0) {
+        if (inst.global >= p.global_count) {
+            return ir_runtime_backend(p);
+        }
+        value = p.global_values[inst.global];
+    } else if (op == 1) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)) {
+            return false;
+        }
+        ir_runtime_event(p, 8, 2, inst);
+        p.result.event.left = left;
+        p.result.event.owner = frame.allocation_start;
+        return false;
+    } else if (op == 2) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)
+            || !ir_runtime_get(p, frame, inst.b, &right)) {
+            return false;
+        }
+        ir_runtime_event(p, 9, 1, inst);
+        p.result.event.left = left;
+        p.result.event.right = right;
+        return false;
+    } else if (op == 3 || op == 4) {
+        ir_runtime_make_scalar(p, inst.ty, inst.low, inst.high, &value);
+        value.literal = inst.literal;
+    } else if (op == 6) {
+        if (!ir_runtime_get(p, frame, inst.a, &value)) {
+            return false;
+        }
+    } else if (op >= 7 && op <= 12) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)) {
+            return false;
+        }
+        if (op != 8 && op != 9 && !ir_runtime_get(p, frame, inst.b, &right)) {
+            return false;
+        }
+        if ((op == 10 || op == 11) && p.types[inst.ty].kind == 17) {
+            var pred: u64 = inst.sub;
+            if (op == 10) {
+                pred = ir_runtime_compare_predicate(pred);
+            }
+            var event: u64 = 9;
+            if (pred < 2) {
+                event = 10;
+            }
+            ir_runtime_event(p, event, 3, inst);
+            p.pending_type = p.value_types[p.functions[frame.function].first_value_type + inst.dst];
+            p.pending_flag = pred;
+            p.result.event.left = left;
+            p.result.event.right = right;
+            return false;
+        }
+        if (!ir_runtime_numeric(p, inst, &left, &right, &value)) {
+            return false;
+        }
+    } else if (op == 13) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)) {
+            return false;
+        }
+        var source: u64 = inst.c;
+        if (left.low != 0) {
+            source = inst.b;
+        }
+        if (!ir_runtime_get(p, frame, source, &value)) {
+            return false;
+        }
+    } else if (op == 14) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)) {
+            return false;
+        }
+        var source: u64 = p.types[inst.other].kind;
+        var destination: u64 = p.types[inst.ty].kind;
+        if (inst.sub == 9 && source == 17) {
+            value = left;
+        } else if (inst.sub == 9 && (ir_verify_float(source) || ir_verify_float(destination))) {
+            if (ir_verify_float(destination)) {
+                var raw: IrWide;
+                var bits: IrWide;
+                ir_wide_from(left.low, left.high, &raw);
+                ir_wide_trim(&raw, ir_verify_width(destination), &bits);
+                ir_runtime_make_scalar(p, inst.ty, bits.low, bits.high, &value);
+            } else {
+                var result: IrIntegerResult;
+                var status: i32 = whale_ir_integer_bits(left.low, left.high,
+                    ir_integer_width(destination), ir_integer_signed(destination) as u64, &result);
+                if (status != 0 || result.status != 0) {
+                    return ir_runtime_backend(p);
+                }
+                ir_runtime_make_scalar(p, inst.ty, result.low, result.high, &value);
+            }
+        } else if (inst.sub == 11) {
+            value.kind = 3;
+            value.pointer.address = left.low;
+        } else if (inst.sub == 10) {
+            var result: IrIntegerResult;
+            var status: i32 = whale_ir_integer_bits(left.pointer.address, 0,
+                ir_integer_width(destination), ir_integer_signed(destination) as u64, &result);
+            if (status != 0 || result.status != 0) {
+                return ir_runtime_backend(p);
+            }
+            ir_runtime_make_scalar(p, inst.ty, result.low, result.high, &value);
+        } else if (!ir_runtime_numeric(p, inst, &left, &right, &value)) {
+            return false;
+        }
+    } else if (op == 16) {
+        if (!ir_runtime_get(p, frame, inst.a, &left) || left.kind != 2 || inst.sub > 1) {
+            return ir_runtime_backend(p);
+        }
+        value = left;
+        value.kind = 1;
+        if (inst.sub == 1) {
+            ir_runtime_make_scalar(p, inst.ty, left.flag, 0, &value);
+        }
+    } else if (op == 17) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)
+            || !ir_runtime_get(p, frame, inst.b, &right)
+            || !ir_runtime_numeric(p, inst, &left, &right, &value)) {
+            return false;
+        }
+    } else if (op == 18) {
+        return ir_runtime_event(p, 1, 1, inst);
+    } else if (op == 19 || op == 21) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)) {
+            return false;
+        }
+        ir_runtime_event(p, 2, 1, inst);
+        p.result.event.left = left;
+        return false;
+    } else if (op == 20 || op == 22) {
+        if (!ir_runtime_get(p, frame, inst.a, &right)
+            || !ir_runtime_get(p, frame, inst.b, &left)) {
+            return false;
+        }
+        ir_runtime_event(p, 3, 2, inst);
+        p.result.event.left = left;
+        p.result.event.right = right;
+        return false;
+    } else if (op == 23) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)) {
+            return false;
+        }
+        ir_runtime_event(p, 4, 2, inst);
+        p.result.event.left = left;
+        return false;
+    } else if (op == 24) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)) {
+            return false;
+        }
+        var i: u64 = 0;
+        while (i < inst.plan_count) {
+            if (!ir_runtime_charge(p)
+                || !ir_runtime_get(p, frame, p.operands[inst.first + i], &right)) {
+                return false;
+            }
+            var plan: ptr<IrMemGep> = &p.plans[inst.plan_first + i];
+            plan.low = right.low;
+            plan.high = right.high;
+            plan.signed = ir_verify_signed(p.types[right.ty].kind) as u64;
+            i += 1;
+        }
+        ir_runtime_event(p, 7, 1, inst);
+        p.result.event.left = left;
+        p.result.event.first = inst.plan_first;
+        p.result.event.count = inst.plan_count;
+        return false;
+    } else if (op == 25 || op == 26) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)
+            || !ir_runtime_get(p, frame, inst.b, &right)
+            || !ir_runtime_get(p, frame, inst.c, &third)) {
+            return false;
+        }
+        var event: u64 = 5;
+        if (op == 26) {
+            event = 6;
+        }
+        ir_runtime_event(p, event, 2, inst);
+        p.result.event.left = left;
+        p.result.event.right = right;
+        p.result.event.flag = right.low & 255;
+        p.result.event.size = third.low;
+        return false;
+    } else if (op == 27 || op == 28) {
+        value.kind = 4;
+        value.signature = inst.signature;
+        if (op == 28) {
+            value.target_kind = 1;
+            value.target = p.functions[inst.a].id;
+        }
+    } else if (op == 29) {
+        var target: u64 = inst.a;
+        if (inst.flags != 0) {
+            if (!ir_runtime_get(p, frame, inst.a, &left) || left.kind != 4) {
+                return ir_runtime_backend(p);
+            }
+            if (left.target_kind == 0) {
+                return ir_runtime_error(p, 14, site, 0, 0);
+            }
+            if (left.target_kind != 1) {
+                return ir_runtime_error(p, 15, site, 0, 0);
+            }
+            target = ir_runtime_find(p, left.target);
+            if (p.result.status != 0) {
+                return false;
+            }
+            if (target == 18446744073709551615
+                || !ir_runtime_equal(p, left.signature, p.functions[target].signature)) {
+                if (p.result.status != 0) {
+                    return false;
+                }
+                return ir_runtime_error(p, 16, site, 0, 0);
+            }
+        }
+        p.pending_target = target;
+        p.phase = 4;
+        return true;
+    } else if (op == 30) {
+        if (!ir_runtime_get(p, frame, inst.a, &left)) {
+            return false;
+        }
+        if (left.low != 0) {
+            return ir_runtime_error(p, 13, site, inst.global, 0);
+        }
+        return true;
+    } else if (op >= 31 && op <= 33) {
+        var next: u64 = inst.a;
+        if (op == 32) {
+            if (!ir_runtime_get(p, frame, inst.a, &left)) {
+                return false;
+            }
+            next = inst.c;
+            if (left.low != 0) {
+                next = inst.b;
+            }
+        } else if (op == 33) {
+            if (!ir_runtime_get(p, frame, inst.a, &left)) {
+                return false;
+            }
+            next = inst.b;
+            var i: u64 = 0;
+            while (i < inst.count) {
+                if (!ir_runtime_charge(p)) {
+                    return false;
+                }
+                var first: u64 = inst.first + i * 3;
+                if (left.low == p.operands[first] && left.high == p.operands[first + 1]) {
+                    next = p.operands[first + 2];
+                    break;
+                }
+                i += 1;
+            }
+        }
+        frame.predecessor = frame.block;
+        frame.block = next;
+        frame.instruction = 0;
+        return true;
+    } else if (op == 34) {
+        if (inst.a != 18446744073709551615
+            && !ir_runtime_get(p, frame, inst.a, &value)) {
+            return false;
+        }
+        p.pending_value = value;
+        p.pending_value.ty = inst.ty;
+        ir_runtime_event(p, 11, 4, inst);
+        p.result.event.owner = frame.allocation_start;
+        return false;
+    } else if (op == 35) {
+        return ir_runtime_error(p, 13, site, inst.global, 0);
+    } else {
+        return ir_runtime_backend(p);
+    }
+    return ir_runtime_put(p, frame, inst.dst, &value);
+}

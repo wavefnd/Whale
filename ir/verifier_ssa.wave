@@ -1,0 +1,182 @@
+// SPDX-License-Identifier: MPL-2.0
+// SSA and phi validation over caller-owned CFG/dominator intervals.
+struct IrSsaBlock {
+    id: u64; first: u64; count: u64; pred_first: u64; pred_count: u64;
+    reachable: u64; start: u64; end: u64; terminator_use: u64;
+}
+
+struct IrSsaInstruction { phi: u64; dst: u64; ty: u64; first: u64; count: u64; }
+
+struct IrSsaUse { value: u64; ty: u64; pred: u64; def_block: u64; def_position: u64; defined: u64; }
+
+struct IrSsaPredecessor { block: u64; seen: u64; }
+
+struct IrSsaResult { status: u64; instruction: u64; usage: u64; detail: u64; work: u64; queries: u64; }
+
+fun ir_ssa_error(result: ptr<IrSsaResult>, status: u64, instruction: u64,
+    usage: u64, detail: u64, semantic: ptr<IrVerifyResult>) -> i32 {
+    result.status = status; result.instruction = instruction; result.usage = usage;
+    result.detail = detail; result.work = semantic.work; return status as i32;
+}
+
+fun ir_ssa_available(usage: ptr<IrSsaUse>, block: u64, position: u64,
+    blocks: ptr<IrSsaBlock>, result: ptr<IrSsaResult>, semantic: ptr<IrVerifyResult>,
+    max_work: u64) -> u64 {
+    if (usage.defined == 0) { return 2; }
+    if (blocks[block].reachable == 0 || usage.def_block == 18446744073709551615) { return 0; }
+    if (usage.def_block == block) {
+        if (usage.def_position >= position) { return 3; }
+        return 0;
+    }
+    if (!ir_verify_charge(semantic, max_work)) { return 8; }
+    result.queries += 1;
+    var definition: ptr<IrSsaBlock> = &blocks[usage.def_block];
+    if (definition.reachable == 0 || definition.start > blocks[block].start
+        || blocks[block].end > definition.end) { return 3; }
+    return 0;
+}
+
+// Status: 1 invalid phi, 2 undefined value, 3 non-dominating use,
+// 4 invalid phi type category, 5 phi operand type, 7 transport, 8 work.
+export(c) fun whale_ir_verify_ssa(types: ptr<IrVerifyType>, type_count: u64,
+    edges: ptr<u64>, edge_count: u64, blocks: ptr<IrSsaBlock>, block_count: u64,
+    entry: u64, instructions: ptr<IrSsaInstruction>, instruction_count: u64,
+    uses: ptr<IrSsaUse>, use_count: u64, predecessors: ptr<u64>, predecessor_count: u64,
+    table: ptr<IrSsaPredecessor>, capacity: u64, max_work: u64,
+    result: ptr<IrSsaResult>) -> i32 {
+    if (result == null) { return 7; }
+    result.status = 0; result.instruction = 0; result.usage = 0;
+    result.detail = 0; result.work = 0; result.queries = 0;
+    var semantic: IrVerifyResult;
+    semantic.status = 0; semantic.index = 0; semantic.expected = 0;
+    semantic.actual = 0; semantic.detail = 0; semantic.work = 0;
+    if (!ir_verify_graph_valid(types, type_count, edges, edge_count, max_work, &semantic)) {
+        return ir_ssa_error(result, semantic.status, 0, 0, 0, &semantic);
+    }
+    if (!ir_span_valid(blocks as ptr<u8>, block_count, 72) || entry >= block_count
+        || !ir_span_valid(instructions as ptr<u8>, instruction_count, 40)
+        || !ir_span_valid(uses as ptr<u8>, use_count, 48)
+        || !ir_span_valid(predecessors as ptr<u8>, predecessor_count, 8)
+        || !ir_span_valid(table as ptr<u8>, capacity, 16)
+        || capacity < 2 || !ir_power_two(capacity)) {
+        return ir_ssa_error(result, 7, 0, 0, 0, &semantic);
+    }
+    var b: u64 = 0;
+    while (b < block_count) {
+        if (!ir_verify_charge(&semantic, max_work)) { return ir_ssa_error(result, 8, 0, 0, 0, &semantic); }
+        var block: ptr<IrSsaBlock> = &blocks[b];
+        if (block.first > instruction_count || block.count > instruction_count - block.first
+            || block.pred_first > predecessor_count || block.pred_count > predecessor_count - block.pred_first
+            || block.pred_count > capacity / 2 || block.reachable > 1
+            || (block.terminator_use != 18446744073709551615 && block.terminator_use >= use_count)) {
+            return ir_ssa_error(result, 7, block.first, 0, b, &semantic);
+        }
+        b += 1;
+    }
+    var i: u64 = 0;
+    while (i < instruction_count) {
+        if (!ir_verify_charge(&semantic, max_work)) { return ir_ssa_error(result, 8, i, 0, 0, &semantic); }
+        var instruction: ptr<IrSsaInstruction> = &instructions[i];
+        if (instruction.phi > 1 || instruction.ty >= type_count || instruction.first > use_count
+            || instruction.count > use_count - instruction.first) { return ir_ssa_error(result, 7, i, 0, 0, &semantic); }
+        i += 1;
+    }
+    i = 0;
+    while (i < use_count) {
+        if (!ir_verify_charge(&semantic, max_work)) { return ir_ssa_error(result, 8, 0, i, 0, &semantic); }
+        if (uses[i].defined > 1
+            || (uses[i].ty != 18446744073709551615 && uses[i].ty >= type_count)
+            || (uses[i].pred != 18446744073709551615 && uses[i].pred >= block_count)
+            || (uses[i].def_block != 18446744073709551615 && uses[i].def_block >= block_count)) {
+            return ir_ssa_error(result, 7, 0, i, 0, &semantic);
+        }
+        i += 1;
+    }
+    b = 0;
+    while (b < block_count) {
+        var block: ptr<IrSsaBlock> = &blocks[b];
+        // Only the required prefix is cleared; wide unrelated CFG blocks do
+        // not inflate a small block's validation cost.
+        var local_capacity: u64 = 2;
+        while (local_capacity / 2 < block.pred_count) { local_capacity *= 2; }
+        i = 0;
+        while (i < local_capacity) {
+            if (!ir_verify_charge(&semantic, max_work)) { return ir_ssa_error(result, 8, block.first, 0, 0, &semantic); }
+            table[i].block = 18446744073709551615; table[i].seen = 0; i += 1;
+        }
+        i = 0;
+        while (i < block.pred_count) {
+            var predecessor: u64 = predecessors[block.pred_first + i];
+            if (predecessor >= block_count) { return ir_ssa_error(result, 7, block.first, 0, 0, &semantic); }
+            var slot: u64 = (predecessor ^ (predecessor >> 16)) & (local_capacity - 1);
+            while (true) {
+                if (!ir_verify_charge(&semantic, max_work)) { return ir_ssa_error(result, 8, block.first, 0, 0, &semantic); }
+                if (table[slot].block == 18446744073709551615) { table[slot].block = predecessor; break; }
+                if (table[slot].block == predecessor) { return ir_ssa_error(result, 7, block.first, 0, 0, &semantic); }
+                slot = (slot + 1) & (local_capacity - 1);
+            }
+            i += 1;
+        }
+        var past_phi: bool = false;
+        var position: u64 = 0;
+        while (position < block.count) {
+            i = block.first + position;
+            if (!ir_verify_charge(&semantic, max_work)) { return ir_ssa_error(result, 8, i, 0, 0, &semantic); }
+            var instruction: ptr<IrSsaInstruction> = &instructions[i];
+            if (instruction.phi != 0) {
+                if (past_phi) { return ir_ssa_error(result, 1, i, 0, 0, &semantic); }
+                if (b == entry) { return ir_ssa_error(result, 1, i, 0, 1, &semantic); }
+                if (instruction.count == 0) { return ir_ssa_error(result, 1, i, 0, 2, &semantic); }
+                if (!ir_verify_storable(instruction.ty, types, edges, 1024, &semantic, max_work)) {
+                    if (semantic.status != 0) { return ir_ssa_error(result, semantic.status, i, 0, 0, &semantic); }
+                    return ir_ssa_error(result, 4, i, 0, 0, &semantic);
+                }
+                var j: u64 = 0;
+                while (j < instruction.count) {
+                    var u: u64 = instruction.first + j;
+                    var usage: ptr<IrSsaUse> = &uses[u];
+                    if (!ir_verify_charge(&semantic, max_work)) { return ir_ssa_error(result, 8, i, u, 0, &semantic); }
+                    var pred: u64 = usage.pred;
+                    if (pred == 18446744073709551615) { return ir_ssa_error(result, 1, i, u, 3, &semantic); }
+                    var slot: u64 = (pred ^ (pred >> 16)) & (local_capacity - 1);
+                    while (true) {
+                        if (!ir_verify_charge(&semantic, max_work)) { return ir_ssa_error(result, 8, i, u, 0, &semantic); }
+                        if (table[slot].block == 18446744073709551615) { return ir_ssa_error(result, 1, i, u, 4, &semantic); }
+                        if (table[slot].block == pred) {
+                            if (table[slot].seen == i + 1) { return ir_ssa_error(result, 1, i, u, 5, &semantic); }
+                            table[slot].seen = i + 1; break;
+                        }
+                        slot = (slot + 1) & (local_capacity - 1);
+                    }
+                    if (usage.ty == 18446744073709551615) { return ir_ssa_error(result, 6, i, u, 0, &semantic); }
+                    if (!ir_verify_equal(instruction.ty, usage.ty, types, edges, 1024, &semantic, max_work)) {
+                        if (semantic.status != 0) { return ir_ssa_error(result, semantic.status, i, u, 0, &semantic); }
+                        return ir_ssa_error(result, 5, i, u, 0, &semantic);
+                    }
+                    var status: u64 = ir_ssa_available(usage, pred, blocks[pred].count,
+                        blocks, result, &semantic, max_work);
+                    if (status != 0) { return ir_ssa_error(result, status, i, u, pred, &semantic); }
+                    j += 1;
+                }
+                if (instruction.count != block.pred_count) { return ir_ssa_error(result, 1, i, 0, 6, &semantic); }
+            } else {
+                past_phi = true;
+                var j: u64 = 0;
+                while (j < instruction.count) {
+                    var u: u64 = instruction.first + j;
+                    var status: u64 = ir_ssa_available(&uses[u], b, position, blocks, result, &semantic, max_work);
+                    if (status != 0) { return ir_ssa_error(result, status, i, u, b, &semantic); }
+                    j += 1;
+                }
+            }
+            position += 1;
+        }
+        if (block.terminator_use != 18446744073709551615) {
+            var u: u64 = block.terminator_use;
+            var status: u64 = ir_ssa_available(&uses[u], b, block.count, blocks, result, &semantic, max_work);
+            if (status != 0) { return ir_ssa_error(result, status, block.first + block.count, u, b, &semantic); }
+        }
+        b += 1;
+    }
+    result.work = semantic.work; return 0;
+}

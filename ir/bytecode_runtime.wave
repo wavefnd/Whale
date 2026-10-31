@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MPL-2.0
+// Bytecode admission precedes the existing tracked-memory execution engine.
+// Disk records never supply runtime layout plans or executable authority.
+export(c) fun whale_ir_bytecode_runtime_step(program: ptr<IrBytecodeProgram>,
+    driver: ptr<IrRuntimeDriver>, scratch: ptr<u64>, capacity: u64,
+    limits: ptr<IrBytecodeLimits>, admission: ptr<IrBytecodeResult>) -> i32 {
+    if (program == null || driver == null || driver.result == null
+        || limits == null || admission == null) {
+        return 4;
+    }
+    if (driver.phase == 0) {
+        var status: i32 = whale_ir_bytecode_verify(program, scratch, capacity, limits, admission);
+        if (status != 0) {
+            ir_runtime_backend(driver);
+            return 4;
+        }
+    }
+    if (driver.types != program.types || driver.type_count != program.type_count
+        || driver.type_edges != program.edges || driver.type_edge_count != program.edge_count
+        || driver.functions != program.functions || driver.function_count != program.function_count
+        || driver.blocks != program.blocks || driver.block_count != program.block_count
+        || driver.instructions != program.instructions
+        || driver.instruction_count != program.instruction_count
+        || driver.operands != program.operands || driver.operand_count != program.operand_count
+        || driver.value_types != program.value_types
+        || driver.value_type_count != program.value_type_count
+        || driver.globals != program.globals || driver.global_count != program.global_count) {
+        ir_runtime_backend(driver);
+        return 4;
+    }
+    return whale_ir_runtime_step(driver);
+}

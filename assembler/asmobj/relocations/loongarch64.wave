@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: MPL-2.0
+// LoongArch relocation numbers are preserved for ELF only.
+fun asmobj_loongarch64_relocation(target: ptr<AsmobjTarget>, relocation: ptr<AsmobjRelocation>,
+    code: ptr<u64>) -> i32 {
+    if (target.format != 0) {
+        return 6;
+    }
+    code[0] = relocation.code;
+    return 0;
+}

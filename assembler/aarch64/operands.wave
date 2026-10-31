@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: MPL-2.0
+// Shift modifiers and base-plus-offset addresses are parsed without allocation.
+struct A64Shift {
+    kind: u64;
+    amount: u64;
+}
+
+struct A64Memory {
+    base: A64Register;
+    offset: AsmWide;
+}
+
+fun a64_shift(text: FixedText, width: u64, output: ptr<A64Shift>,
+    result: ptr<FixedResult>) -> bool {
+    if (!asm_fixed_charge(result, text.count)) {
+        return false;
+    }
+    var trimmed: FixedText = asm_fixed_trim(text);
+    var start: u64 = 0;
+    var at: u64 = 0;
+    var count: u64 = 0;
+    var words: array<FixedText, 2>;
+    while (at < trimmed.count) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        var space: u64 = asm_fixed_space(trimmed, at);
+        if (space != 0) {
+            if (at > start) {
+                if (count >= 2) {
+                    return a64_fail(result, 1003);
+                }
+                words[count].data = &trimmed.data[start];
+                words[count].count = at - start;
+                count += 1;
+            }
+            at += space;
+            start = at;
+        } else {
+            at += 1;
+        }
+    }
+    if (at > start) {
+        if (count >= 2) {
+            return a64_fail(result, 1003);
+        }
+        words[count].data = &trimmed.data[start];
+        words[count].count = at - start;
+        count += 1;
+    }
+    if (count != 2) {
+        return a64_fail(result, 1003); // Shift requires kind and amount.
+    }
+    output.kind = 0;
+    if (asm_fixed_word(words[0], 7107436, 3, 1)) { // lsl
+        output.kind = 0;
+    } else if (asm_fixed_word(words[0], 7500652, 3, 1)) { // lsr
+        output.kind = 1;
+    } else if (asm_fixed_word(words[0], 7500641, 3, 1)) { // asr
+        output.kind = 2;
+    } else if (asm_fixed_word(words[0], 7499634, 3, 1)) { // ror
+        output.kind = 3;
+    } else {
+        return a64_fail(result, 1004); // Unsupported shift kind.
+    }
+    var bits: u64 = 5;
+    if (width == 64) {
+        bits = 6;
+    }
+    return asm_fixed_unsigned(words[1], bits, &output.amount, result);
+}
+
+fun a64_memory(text: FixedText, output: ptr<A64Memory>, result: ptr<FixedResult>) -> bool {
+    if (text.count < 2 || text.data[0] != 91 || text.data[text.count - 1] != 93) {
+        return a64_fail(result, 1005); // Writeback and non-bracketed memory are unsupported.
+    }
+    var inside: FixedText;
+    inside.data = &text.data[1];
+    inside.count = text.count - 2;
+    var count: u64 = 0;
+    if (!asm_fixed_operands(inside, null, 0, &count, result)) {
+        return false;
+    }
+    if (count == 0 || count > 2) {
+        return a64_fail(result, 1006);
+    }
+    var parts: array<FixedText, 2>;
+    if (!asm_fixed_operands(inside, &parts[0], 2, &count, result)
+        || !a64_register(parts[0], &output.base, result)) {
+        return false;
+    }
+    if (output.base.width != 64 || output.base.zero != 0) {
+        return a64_fail(result, 1007); // Base requires X0..X30 or SP.
+    }
+    output.offset.low = 0;
+    output.offset.high = 0;
+    if (count == 2) {
+        return asm_fixed_integer(parts[1], &output.offset, result);
+    }
+    return true;
+}

@@ -1,0 +1,327 @@
+// SPDX-License-Identifier: MPL-2.0
+// The complete AST lowering transaction has no host callbacks. The first pass
+// counts flat output; the second publishes records into exactly sized buffers.
+fun ir_lower_signature_type(p: ptr<IrLowerDriver>, ty: u64, depth: u64, node: u64) -> bool {
+    if (!ir_lower_charge(p.core, 1, node)) { return false; }
+    if (depth > p.core.max_depth) { return ir_lower_fail(p.core, 2, node, 0, 0, 0); }
+    if (ty >= p.core.type_count) { return ir_lower_fail(p.core, 21, node, 0, 0, 1); }
+    var t: ptr<IrLowerType> = &p.core.types[ty];
+    if (t.kind == 0) { return ir_lower_fail(p.core, 21, node, 0, 0, 1); }
+    if (t.kind == 18) { return ir_lower_signature_validate(p, ty, depth + 1, node); }
+    if (t.kind == 17) {
+        if (t.child == 0) { return true; }
+        return ir_lower_signature_type(p, t.child, depth + 1, node);
+    }
+    if (t.kind == 19) { return ir_lower_signature_type(p, t.child, depth + 1, node); }
+    var at: u64 = 0;
+    if (t.kind == 20 || t.kind == 21) {
+        while (at < t.count) {
+            if (!ir_lower_signature_type(p, p.core.type_edges[t.first + at], depth + 1, node)) { return false; }
+            at += 1;
+        }
+    }
+    return true;
+}
+
+fun ir_lower_signature_validate(p: ptr<IrLowerDriver>, ty: u64, depth: u64, node: u64) -> bool {
+    if (depth > p.core.max_depth) { return ir_lower_fail(p.core, 2, node, 0, 0, 0); }
+    if (ty >= p.core.type_count || p.core.types[ty].kind != 18) {
+        return ir_lower_fail(p.core, 21, node, 0, 0, 1);
+    }
+    var t: ptr<IrLowerType> = &p.core.types[ty];
+    if (t.child != 0) {
+        if (t.auxiliary == 1 && ir_lower_aggregate(p.core, t.child)) { return ir_lower_fail(p.core, 21, node, 0, 0, 1); }
+        if (!ir_lower_signature_type(p, t.child, depth + 1, node)) { return false; }
+    }
+    var at: u64 = 0;
+    while (at < t.count) {
+        var param: u64 = p.core.type_edges[t.first + at];
+        if (t.auxiliary == 1 && ir_lower_aggregate(p.core, param)) { return ir_lower_fail(p.core, 21, node, 0, 0, 1); }
+        if (!ir_lower_signature_type(p, param, depth + 1, node)) { return false; }
+        at += 1;
+    }
+    return true;
+}
+
+fun ir_lower_scalar_signature(p: ptr<IrLowerDriver>, ty: u64, node: u64) -> bool {
+    var signature: ptr<IrLowerType> = &p.core.types[ty];
+    if (ir_lower_aggregate(p.core, signature.child)) { return ir_lower_fail(p.core, 18, node, 0, 0, 9); }
+    var at: u64 = 0;
+    while (at < signature.count) {
+        var kind: u64 = p.core.types[p.core.type_edges[signature.first + at]].kind;
+        if (kind == 20 || kind == 21) { return ir_lower_fail(p.core, 18, node, 0, 0, 9); }
+        at += 1;
+    }
+    return true;
+}
+
+fun ir_lower_function_signature(p: ptr<IrLowerDriver>, node: u64, output: ptr<u64>) -> bool {
+    var n: ptr<IrLowerNode> = &p.core.nodes[node];
+    if (!ir_lower_edges(p.core, n.b, n.c, node)) { return false; }
+    var saved: u64 = p.core.temporary_count;
+    if (n.c > p.core.temporary_capacity - saved) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+    p.core.temporary_count += n.c;
+    var at: u64 = 0;
+    while (at < n.c) {
+        var parameter: u64 = p.core.edges[n.b + at];
+        if (!ir_lower_node(p.core, parameter, 0) || p.core.nodes[parameter].tag != 204) {
+            return ir_lower_fail(p.core, 3, parameter, 0, 0, 0);
+        }
+        var ty: u64 = 0;
+        if (!ir_lower_type(p.core, p.core.nodes[parameter].b, 0, &ty)) { return false; }
+        p.core.temporary[saved + at] = ty; at += 1;
+    }
+    var ret: u64 = 0;
+    if (!ir_lower_type(p.core, n.d, 0, &ret)) { return false; }
+    if (n.g > 1) { return ir_lower_fail(p.core, 21, node, 0, 0, 1); }
+    var success: bool = ir_lower_type_intern(p.core, 18, ret,
+        &p.core.temporary[saved], n.c, n.g, node, output);
+    p.core.temporary_count = saved; return success;
+}
+
+fun ir_lower_declare(p: ptr<IrLowerDriver>, name: u64, signature: u64, linkage: u64,
+    link: u64, node: u64) -> bool {
+    if (!ir_lower_name(p.core, name, node) || !ir_lower_scalar_signature(p, signature, node)
+        || !ir_lower_signature_validate(p, signature, 0, node)) { return false; }
+    if (linkage > 1 || (linkage == 0 && link != 18446744073709551615)
+        || (linkage == 1 && link == 18446744073709551615)) {
+        return ir_lower_fail(p.core, 21, node, name, 0, 9);
+    }
+    if (link != 18446744073709551615) {
+        if (!ir_lower_name(p.core, link, node)) { return false; }
+        var s: ptr<IrLowerString> = &p.core.names[link];
+        if (s.length == 0) { return ir_lower_fail(p.core, 21, node, name, 0, 9); }
+        var at: u64 = 0;
+        while (at < s.length) {
+            if (!ir_lower_charge(p.core, 1, node)) { return false; }
+            if (s.data[at] == 0) { return ir_lower_fail(p.core, 21, node, name, 0, 9); }
+            at += 1;
+        }
+    }
+    var existing: u64 = p.declaration_map[name];
+    if (existing != 18446744073709551615) {
+        var d: ptr<IrLowerDeclaration> = &p.declarations[existing];
+        if (d.signature != signature || d.linkage != linkage || d.link_name != link) {
+            return ir_lower_fail(p.core, 21, node, name, 0, 6);
+        }
+        return true;
+    }
+    if (link != 18446744073709551615 && p.field_slots[link] != 18446744073709551615) {
+        return ir_lower_fail(p.core, 21, node, link, 0, 10);
+    }
+    if (p.declaration_count >= p.declaration_capacity) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+    var id: u64 = p.declaration_count;
+    p.declarations[id].name = name; p.declarations[id].signature = signature;
+    p.declarations[id].linkage = linkage; p.declarations[id].link_name = link;
+    p.declarations[id].defined = 0; p.declarations[id].source = node;
+    p.declaration_map[name] = id;
+    if (link != 18446744073709551615) { p.field_slots[link] = id; }
+    p.declaration_count += 1; return ir_lower_expand(p, 1, node);
+}
+
+fun ir_lower_function(p: ptr<IrLowerDriver>, node: u64) -> bool {
+    var n: ptr<IrLowerNode> = &p.core.nodes[node];
+    var declaration: u64 = p.declaration_map[n.a];
+    if (declaration == 18446744073709551615 || p.function_count >= p.function_capacity) {
+        return ir_lower_fail(p.core, 4, node, 0, 0, 0);
+    }
+    if (p.declarations[declaration].defined != 0) { return ir_lower_fail(p.core, 21, node, declaration, 0, 8); }
+    p.declarations[declaration].defined = 1;
+    var signature: u64 = p.declarations[declaration].signature;
+    var f: ptr<IrLowerFunction> = &p.functions[p.function_count];
+    f.declaration = declaration; f.first_param = p.next_value; f.param_count = n.c;
+    f.first_block = p.block_count; f.block_count = 0; f.source = node;
+    p.current_function = p.function_count; p.return_type = p.core.types[signature].child;
+    var at: u64 = 0;
+    // Parameter SSA values all precede stack slots, matching canonical O0 IDs.
+    while (at < n.c) {
+        var value: u64 = 0;
+        if (!ir_lower_value(p, p.core.type_edges[p.core.types[signature].first + at], node, &value)) { return false; }
+        at += 1;
+    }
+    if (!ir_lower_block(p, 0, node, &p.entry)) { return false; }
+    p.current_block = p.entry; f.entry = p.entry;
+    at = 0;
+    while (at < n.c) {
+        var parameter: u64 = p.core.edges[n.b + at];
+        var ty: u64 = p.core.type_edges[p.core.types[signature].first + at];
+        var slot: u64 = 0;
+        if (!ir_lower_layout(p.core, ty, parameter)
+            || !ir_lower_alloca(p, ty, p.core.layouts[ty].allocation_align, parameter, &slot)
+            || !ir_lower_emit(p, 23, 18446744073709551615, ty, f.first_param + at,
+                slot, p.core.layouts[ty].allocation_align, 0, 0, null, 0, false, parameter)
+            || !ir_lower_bind(p, p.core.nodes[parameter].a, ty, slot, 0, 0, parameter)) { return false; }
+        at += 1;
+    }
+    if (!ir_lower_statements(p, n.e, n.f, 1, node)) { return false; }
+    if (p.blocks[p.current_block].term_kind == 0) {
+        if (p.return_type == 0) {
+            if (!ir_lower_term(p, 3, 0, 18446744073709551615, 0, 0, node)) { return false; }
+        } else if (!ir_lower_term(p, 4, 0, 0, 0, 0, node)) { return false; }
+    }
+    f.block_count = p.block_count - f.first_block; p.function_count += 1;
+    return ir_lower_restore(p, 0, node);
+}
+
+fun ir_lower_program(p: ptr<IrLowerDriver>, root: u64) -> bool {
+    if (!ir_lower_node(p.core, root, 0) || p.core.nodes[root].tag != 200) { return ir_lower_fail(p.core, 3, root, 0, 0, 0); }
+    var program: ptr<IrLowerNode> = &p.core.nodes[root];
+    if (!ir_lower_edges(p.core, program.a, program.b, root)
+        || !ir_lower_edges(p.core, program.c, program.d, root)
+        || !ir_lower_edges(p.core, program.e, program.f, root)) { return false; }
+    var at: u64 = 0;
+    // Validate all duplicate definitions/parameters before inspecting signatures.
+    while (at < program.f) {
+        var function: u64 = p.core.edges[program.e + at];
+        if (!ir_lower_node(p.core, function, 0) || p.core.nodes[function].tag != 203) {
+            return ir_lower_fail(p.core, 3, function, 0, 0, 0);
+        }
+        var f: ptr<IrLowerNode> = &p.core.nodes[function];
+        if (!ir_lower_name(p.core, f.a, function) || !ir_lower_edges(p.core, f.b, f.c, function)) { return false; }
+        if (p.local_slots[f.a] != 18446744073709551615) { return ir_lower_fail(p.core, 8, function, 0, 0, f.a); }
+        p.local_slots[f.a] = function;
+        var marker: u64 = p.core.marker; p.core.marker += 1;
+        var index: u64 = 0;
+        while (index < f.c) {
+            var param: u64 = p.core.edges[f.b + index];
+            if (!ir_lower_node(p.core, param, 0) || p.core.nodes[param].tag != 204) { return ir_lower_fail(p.core, 3, param, 0, 0, 0); }
+            var name: u64 = p.core.nodes[param].a;
+            if (!ir_lower_name(p.core, name, param)) { return false; }
+            if (p.core.name_marks[name] == marker) { return ir_lower_fail(p.core, 9, function, f.a, 0, name); }
+            p.core.name_marks[name] = marker; index += 1;
+        }
+        at += 1;
+    }
+    at = 0;
+    while (at < program.b) {
+        var node: u64 = p.core.edges[program.a + at];
+        if (!ir_lower_node(p.core, node, 0) || p.core.nodes[node].tag != 201) { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+        var n: ptr<IrLowerNode> = &p.core.nodes[node];
+        var signature: u64 = 0;
+        if (!ir_lower_type(p.core, n.b, 0, &signature)) { return false; }
+        if (p.core.types[signature].kind != 18) { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+        if (!ir_lower_declare(p, n.a, signature, n.c, n.d, node)) { return false; }
+        at += 1;
+    }
+    at = 0;
+    while (at < program.f) {
+        var node: u64 = p.core.edges[program.e + at];
+        var n: ptr<IrLowerNode> = &p.core.nodes[node]; var signature: u64 = 0;
+        if (!ir_lower_function_signature(p, node, &signature)
+            || !ir_lower_declare(p, n.a, signature, n.h, n.i, node)) { return false; }
+        at += 1;
+    }
+    at = 0;
+    while (at < program.b) {
+        var node: u64 = p.core.edges[program.a + at];
+        var n: ptr<IrLowerNode> = &p.core.nodes[node];
+        if (n.c == 0 && p.local_slots[n.a] == 18446744073709551615) {
+            return ir_lower_fail(p.core, 21, node, p.declaration_map[n.a], 0, 7);
+        }
+        at += 1;
+    }
+    at = 0;
+    // Reuse prepass/link registry workspace only after its whole scope ends.
+    while (at < p.core.name_count) {
+        p.local_slots[at] = 18446744073709551615; p.field_slots[at] = 18446744073709551615; at += 1;
+    }
+    at = 0;
+    while (at < program.d) {
+        var node: u64 = p.core.edges[program.c + at];
+        if (!ir_lower_node(p.core, node, 0) || p.core.nodes[node].tag != 202) { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+        var n: ptr<IrLowerNode> = &p.core.nodes[node];
+        if (!ir_lower_name(p.core, n.a, node)) { return false; }
+        if (p.global_slots[n.a] != 18446744073709551615) { return ir_lower_fail(p.core, 10, node, 0, 0, n.a); }
+        var ty: u64 = 0; var value: IrLowerValue;
+        if (!ir_lower_type(p.core, n.b, 0, &ty)
+            || !ir_lower_preserve_constant(p, n.c, 1, &value)) { return false; }
+        if (!ir_lower_evaluate_request(p, value.value, 0, p.global_count, node)) { return false; }
+        if (ty != value.ty) { return ir_lower_mismatch(p, n.c, ty, value.ty); }
+        if (!ir_lower_layout(p.core, ty, node)) { return false; }
+        if (p.global_count >= p.global_capacity) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+        var id: u64 = p.global_count;
+        p.globals[id].name = n.a; p.globals[id].ty = ty; p.globals[id].expression = value.value;
+        p.globals[id].align = p.core.layouts[ty].allocation_align;
+        p.globals[id].annotation = 18446744073709551615; p.globals[id].source = node;
+        if (p.core.nodes[n.c].tag == 0) {
+            p.globals[id].annotation = p.core.nodes[n.c].a;
+            if (!ir_lower_complete_source(p, p.core.nodes[n.c].a, node)) { return false; }
+        }
+        p.global_bindings[id].name = n.a; p.global_bindings[id].ty = ty;
+        p.global_bindings[id].value = id; p.global_bindings[id].kind = 2;
+        p.global_bindings[id].constant = value.value;
+        p.global_slots[n.a] = id; p.global_count += 1;
+        if (!ir_lower_expand(p, 1, node)) { return false; }
+        at += 1;
+    }
+    at = 0;
+    while (at < program.f) {
+        if (!ir_lower_function(p, p.core.edges[program.e + at])) { return false; }
+        at += 1;
+    }
+    return true;
+}
+
+fun ir_lower_driver_initialize(p: ptr<IrLowerDriver>) -> bool {
+    if (!ir_lower_initialize(p.core)) { return false; }
+    p.expansion = 0; p.instruction_count = 0; p.output_edge_count = 0;
+    p.block_count = 0; p.declaration_count = 0; p.function_count = 0; p.global_count = 0;
+    p.global_binding_count = 0; p.binding_count = 0; p.loop_count = 0;
+    p.source_count = 0; p.mapping_count = 0; p.source_work = 0;
+    p.field_binding_count = 0; p.next_value = 0; p.current_function = 0;
+    p.current_block = 18446744073709551615; p.entry = 18446744073709551615;
+    p.return_type = 0; p.error_index = 0; p.request_count = 0;
+    if (p.mode > 1 || !ir_span_valid(p.blocks as ptr<u8>, p.block_capacity, 112)
+        || !ir_span_valid(p.declarations as ptr<u8>, p.declaration_capacity, 48)
+        || !ir_span_valid(p.functions as ptr<u8>, p.function_capacity, 56)
+        || !ir_span_valid(p.globals as ptr<u8>, p.global_capacity, 48)
+        || !ir_span_valid(p.global_bindings as ptr<u8>, p.global_capacity, 40)
+        || !ir_span_valid(p.bindings as ptr<u8>, p.binding_capacity, 40)
+        || !ir_span_valid(p.loops as ptr<u8>, p.loop_capacity, 16)
+        || !ir_span_valid(p.annotations as ptr<u8>, p.annotation_count, 56)
+        || !ir_span_valid(p.source_marks as ptr<u8>, p.annotation_count, 8)
+        || !ir_span_valid(p.type_sizes as ptr<u8>, p.core.type_capacity, 8)
+        || !ir_span_valid(p.declaration_map as ptr<u8>, p.core.name_count, 8)
+        || !ir_span_valid(p.field_slots as ptr<u8>, p.core.name_count, 8)
+        || !ir_span_valid(p.local_slots as ptr<u8>, p.core.name_count, 8)
+        || !ir_span_valid(p.global_slots as ptr<u8>, p.core.name_count, 8)
+        || !ir_span_valid(p.field_bindings as ptr<u8>, p.field_binding_capacity, 32)
+        || !ir_span_valid(p.constants as ptr<u8>, p.core.node_count, 72)
+        || !ir_span_valid(p.requests as ptr<u8>, p.request_capacity, 32)) {
+        return ir_lower_fail(p.core, 3, 0, 0, 0, 0);
+    }
+    if (p.mode == 1 && (!ir_span_valid(p.instructions as ptr<u8>, p.instruction_capacity, 104)
+        || !ir_span_valid(p.output_edges as ptr<u8>, p.output_edge_capacity, 8)
+        || !ir_span_valid(p.value_types as ptr<u8>, p.value_capacity, 8)
+        || !ir_span_valid(p.source_order as ptr<u8>, p.source_capacity, 8)
+        || !ir_span_valid(p.mapping_order as ptr<u8>, p.mapping_capacity, 8))) {
+        return ir_lower_fail(p.core, 3, 0, 0, 0, 0);
+    }
+    var at: u64 = 0;
+    while (at < p.core.name_count) {
+        if (!ir_lower_charge(p.core, 1, 0)) { return false; }
+        var name: ptr<IrLowerString> = &p.core.names[at];
+        if (!ir_span_valid(name.data, name.length, 1)) { return ir_lower_fail(p.core, 3, 0, 0, 0, 0); }
+        p.declaration_map[at] = 18446744073709551615; p.field_slots[at] = 18446744073709551615;
+        p.local_slots[at] = 18446744073709551615; p.global_slots[at] = 18446744073709551615; at += 1;
+    }
+    at = 0;
+    while (at < p.core.type_capacity) {
+        if (!ir_lower_charge(p.core, 1, 0)) { return false; }
+        p.type_sizes[at] = 0; at += 1;
+    }
+    at = 0;
+    while (at < p.annotation_count) {
+        if (!ir_lower_charge(p.core, 1, 0)) { return false; }
+        p.source_marks[at] = 0; at += 1;
+    }
+    return true;
+}
+
+export(c) fun whale_ir_lower_o0(p: ptr<IrLowerDriver>, root: u64) -> i32 {
+    if (p == null || p.core == null || p.core.result == null) { return 3; }
+    var success: bool = ir_lower_driver_initialize(p) && ir_lower_program(p, root);
+    p.core.result.work = p.core.work;
+    if (!success) { return p.core.result.status as i32; }
+    return 0;
+}

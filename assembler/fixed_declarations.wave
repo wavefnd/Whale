@@ -1,0 +1,47 @@
+// SPDX-License-Identifier: MPL-2.0
+// Ordinary internal links to the shared fixed-width source helpers.
+extern(c) fun asm_fixed_trim(text: FixedText) -> FixedText;
+extern(c) fun asm_fixed_word(text: FixedText, word: u64, count: u64, fold: u64) -> bool;
+extern(c) fun asm_fixed_equal(left: FixedText, right: FixedText, fold: u64) -> bool;
+extern(c) fun asm_fixed_fail(result: ptr<FixedResult>, code: u64,
+    text: FixedText, detail: u64) -> bool;
+extern(c) fun asm_fixed_count(instruction: ptr<FixedInstruction>, count: u64,
+    result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_integer(text: FixedText, output: ptr<AsmWide>,
+    result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_try_integer(text: FixedText, output: ptr<AsmWide>,
+    result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_signed(text: FixedText, bits: u64, output: ptr<u64>,
+    result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_unsigned(text: FixedText, bits: u64, output: ptr<u64>,
+    result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_i64(text: FixedText, output: ptr<i64>,
+    result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_displacement(value: i64, bits: u64, alignment: i64,
+    output: ptr<u64>, result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_pc_relative(context: ptr<FixedContext>, text: FixedText,
+    code: u64, output: ptr<i64>, result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_operands(text: FixedText, output: ptr<FixedText>, capacity: u64,
+    count: ptr<u64>, result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_result_init(result: ptr<FixedResult>, max_work: u64);
+extern(c) fun asm_fixed_charge(result: ptr<FixedResult>, units: u64) -> bool;
+extern(c) fun asm_fixed_space(text: FixedText, at: u64) -> u64;
+extern(c) fun asm_fixed_prepare(packet: ptr<FixedInput>, state: ptr<FixedState>,
+    result: ptr<FixedResult>) -> bool;
+// next: 1 requests one instruction, 0 completes, -1 reports failure.
+extern(c) fun asm_fixed_next(state: ptr<FixedState>, instruction: ptr<FixedInstruction>,
+    result: ptr<FixedResult>) -> i32;
+extern(c) fun asm_fixed_commit(state: ptr<FixedState>, word: u64,
+    result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_identifier(text: FixedText, result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_symbol(state: ptr<FixedState>, name: FixedText, kind: u64,
+    result: ptr<FixedResult>) -> u64;
+extern(c) fun asm_fixed_section(state: ptr<FixedState>, name: FixedText,
+    result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_record(state: ptr<FixedState>, record: ptr<FixedRecord>,
+    result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_finish(state: ptr<FixedState>, result: ptr<FixedResult>) -> bool;
+extern(c) fun asm_fixed_lookup(context: ptr<FixedContext>, name: FixedText,
+    result: ptr<FixedResult>) -> u64;
+extern(c) fun asm_fixed_expression(context: ptr<FixedContext>, text: FixedText,
+    number: ptr<AsmWide>, symbol: ptr<u64>, addend: ptr<i64>, result: ptr<FixedResult>) -> bool;

@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: MPL-2.0
+// Bit-field placement for validated A64 operands.
+fun a64_direct_word(link: bool, immediate: u64) -> u64 {
+    if (link) {
+        return 2483027968 | immediate; // BL
+    }
+    return 335544320 | immediate; // B
+}
+
+fun a64_conditional_word(condition: u64, immediate: u64) -> u64 {
+    return 1409286144 | (immediate << 5) | condition; // B.cond
+}
+
+fun a64_compare_word(nonzero: bool, wide: bool, register: u64, immediate: u64) -> u64 {
+    var word: u64 = 872415232 | (immediate << 5) | register; // CBZ
+    if (nonzero) {
+        word = word | 16777216;
+    }
+    if (wide) {
+        word = word | 2147483648;
+    }
+    return word;
+}
+
+fun a64_address_word(register: u64, immediate: u64) -> u64 {
+    return 268435456 | ((immediate & 3) << 29) | ((immediate >> 2) << 5) | register; // ADR
+}
+
+fun a64_wide_base(operation: u64) -> u64 {
+    if (operation == 1) {
+        return 310378496; // MOVN
+    }
+    if (operation == 2) {
+        return 1920991232; // MOVK
+    }
+    return 1384120320; // MOVZ
+}
+
+fun a64_wide_word(register: ptr<A64Register>, operation: u64, lane: u64, immediate: u64) -> u64 {
+    return a64_wide_base(operation) | a64_sf(register) | (lane << 21)
+        | (immediate << 5) | register.index;
+}
+
+fun a64_mov_immediate(register: ptr<A64Register>, value: ptr<AsmWide>,
+    result: ptr<FixedResult>) -> bool {
+    if (!asm_number_fits_signed(value, register.width)
+        && !asm_number_fits_unsigned(value, register.width)) {
+        return a64_fail(result, 1016);
+    }
+    var mask: u64 = 18446744073709551615;
+    if (register.width == 32) {
+        mask = 4294967295;
+    }
+    // Preserve the established MOVN spelling for -65536..-1.
+    if (value.high == 18446744073709551615 && value.low >= 18446744073709486080) {
+        result.word = a64_wide_word(register, 1, 0, (~value.low) & 65535);
+        return true;
+    }
+    var lane_mask: u64 = 65535;
+    var operation: u64 = 0;
+    while (operation < 2) {
+        var pattern: u64 = value.low & mask;
+        if (operation == 1) {
+            pattern = ~pattern & mask;
+        }
+        var lane: u64 = 0;
+        while (lane < register.width / 16) {
+            var shift: u64 = lane * 16;
+            if ((pattern & ~(lane_mask << shift)) == 0) {
+                result.word = a64_wide_word(register, operation, lane,
+                    (pattern >> shift) & lane_mask);
+                return true;
+            }
+            lane += 1;
+        }
+        operation += 1;
+    }
+    return a64_fail(result, 1017); // Multi-instruction constants require MOVZ/MOVK.
+}
+
+fun a64_arithmetic(instruction: ptr<FixedInstruction>, compare: bool, sub: bool,
+    flags: bool, result: ptr<FixedResult>) -> bool {
+    var rd: A64Register;
+    var rn: A64Register;
+    var rm_position: u64 = 2;
+    var shift_position: u64 = 3;
+    var count: u64 = instruction.count;
+    if (compare) {
+        if (count == 0) {
+            return a64_fail(result, 1018);
+        }
+        // Comparison aliases inspect the first register before checking arity.
+        if (!a64_register(instruction.operands[0], &rn, result)) {
+            return false;
+        }
+        count += 1;
+        rm_position = 1;
+        shift_position = 2;
+        rd.index = 31;
+        rd.width = rn.width;
+        rd.sp = 0;
+        rd.zero = 1;
+    }
+    if (count < 3 || count > 4) {
+        return a64_fail(result, 1019);
+    }
+    if (!compare) {
+        if (!a64_register(instruction.operands[0], &rd, result)
+            || !a64_register(instruction.operands[1], &rn, result)) {
+            return false;
+        }
+    }
+    if (!a64_same(&rd, &rn, result)) {
+        return false;
+    }
+    var operation: u64 = 0;
+    if (sub) {
+        operation = operation | 1073741824;
+    }
+    if (flags) {
+        operation = operation | 536870912;
+    }
+    var immediate_value: AsmWide;
+    if (asm_fixed_try_integer(instruction.operands[rm_position], &immediate_value, result)) {
+        if (rn.zero != 0 || (flags && rd.sp != 0) || (!flags && rd.zero != 0)) {
+            return a64_fail(result, 1020);
+        }
+        var immediate: u64 = 0;
+        if (!asm_fixed_unsigned(instruction.operands[rm_position], 12, &immediate, result)) {
+            return false;
+        }
+        var shift: u64 = 0;
+        if (count == 4) {
+            var modifier: A64Shift;
+            if (!a64_shift(instruction.operands[shift_position], 64, &modifier, result)) {
+                return false;
+            }
+            if (modifier.kind != 0 || (modifier.amount != 0 && modifier.amount != 12)) {
+                return a64_fail(result, 1021);
+            }
+            if (modifier.amount == 12) {
+                shift = 1;
+            }
+        }
+        result.word = 285212672 | a64_sf(&rd) | operation | (shift << 22)
+            | (immediate << 10) | (rn.index << 5) | rd.index;
+        return true;
+    }
+    if (result.status != 0 || !a64_no_sp(&rd, result) || !a64_no_sp(&rn, result)) {
+        return false;
+    }
+    var rm: A64Register;
+    if (!a64_register(instruction.operands[rm_position], &rm, result)
+        || !a64_no_sp(&rm, result) || !a64_same(&rd, &rm, result)) {
+        return false;
+    }
+    var modifier: A64Shift;
+    modifier.kind = 0;
+    modifier.amount = 0;
+    if (count == 4
+        && !a64_shift(instruction.operands[shift_position], rd.width, &modifier, result)) {
+        return false;
+    }
+    if (modifier.kind == 3) {
+        return a64_fail(result, 1022);
+    }
+    result.word = 184549376 | a64_sf(&rd) | operation | (modifier.kind << 22)
+        | (rm.index << 16) | (modifier.amount << 10) | (rn.index << 5) | rd.index;
+    return true;
+}
+
+fun a64_logical(instruction: ptr<FixedInstruction>, operation: u64,
+    result: ptr<FixedResult>) -> bool {
+    if (instruction.count < 3 || instruction.count > 4) {
+        return a64_fail(result, 1012);
+    }
+    var rd: A64Register;
+    var rn: A64Register;
+    var rm: A64Register;
+    if (!a64_register(instruction.operands[0], &rd, result) || !a64_no_sp(&rd, result)
+        || !a64_register(instruction.operands[1], &rn, result) || !a64_no_sp(&rn, result)
+        || !a64_register(instruction.operands[2], &rm, result) || !a64_no_sp(&rm, result)
+        || !a64_same(&rd, &rn, result) || !a64_same(&rd, &rm, result)) {
+        return false;
+    }
+    var modifier: A64Shift;
+    modifier.kind = 0;
+    modifier.amount = 0;
+    if (instruction.count == 4
+        && !a64_shift(instruction.operands[3], rd.width, &modifier, result)) {
+        return false;
+    }
+    var base: u64 = 167772160 | (operation << 29); // AND/ORR/EOR/ANDS.
+    result.word = base | a64_sf(&rd) | (modifier.kind << 22) | (rm.index << 16)
+        | (modifier.amount << 10) | (rn.index << 5) | rd.index;
+    return true;
+}
+
+fun a64_shift_encoding(instruction: ptr<FixedInstruction>, operation: u64,
+    result: ptr<FixedResult>) -> bool {
+    if (!asm_fixed_count(instruction, 3, result)) {
+        return false;
+    }
+    var rd: A64Register;
+    var rn: A64Register;
+    if (!a64_register(instruction.operands[0], &rd, result) || !a64_no_sp(&rd, result)
+        || !a64_register(instruction.operands[1], &rn, result) || !a64_no_sp(&rn, result)
+        || !a64_same(&rd, &rn, result)) {
+        return false;
+    }
+    var bits: u64 = 5;
+    if (rd.width == 64) {
+        bits = 6;
+    }
+    var amount: u64 = 0;
+    if (!asm_fixed_unsigned(instruction.operands[2], bits, &amount, result)) {
+        return false;
+    }
+    var immr: u64 = amount;
+    var imms: u64 = rd.width - 1;
+    if (operation == 0) {
+        immr = (rd.width - amount) % rd.width;
+        imms -= amount;
+    }
+    var base: u64 = 1392508928; // UBFM for LSL/LSR.
+    if (operation == 2) {
+        base = 318767104; // SBFM for ASR.
+    }
+    var n: u64 = 0;
+    if (rd.width == 64) {
+        n = 4194304;
+    }
+    result.word = base | a64_sf(&rd) | n | (immr << 16) | (imms << 10)
+        | (rn.index << 5) | rd.index;
+    return true;
+}
+
+fun a64_memory_encoding(instruction: ptr<FixedInstruction>, load: bool,
+    size_kind: u64, unscaled: bool, sign_extend: bool, result: ptr<FixedResult>) -> bool {
+    if (!asm_fixed_count(instruction, 2, result)) {
+        return false;
+    }
+    var rt: A64Register;
+    var memory: A64Memory;
+    if (!a64_register(instruction.operands[0], &rt, result) || !a64_no_sp(&rt, result)
+        || !a64_memory(instruction.operands[1], &memory, result)) {
+        return false;
+    }
+    var size: u64 = size_kind;
+    if (size_kind == 2 && rt.width == 64) {
+        size = 3;
+    }
+    if (size < 2 && rt.width != 32) {
+        return a64_fail(result, 1023);
+    }
+    if (sign_extend && rt.width != 64) {
+        return a64_fail(result, 1024);
+    }
+    var load_bit: u64 = 0;
+    if (load) {
+        load_bit = 4194304;
+    }
+    var opcode: u64 = 0;
+    var immediate: u64 = 0;
+    if (unscaled) {
+        if (!asm_number_fits_signed(&memory.offset, 9)) {
+            return a64_fail(result, 1026);
+        }
+        opcode = 939524096 | (size << 30) | load_bit;
+        immediate = (memory.offset.low & 511) << 12;
+    } else {
+        if (sign_extend) {
+            size = 2;
+        }
+        var scale: u64 = 1 << size;
+        if (memory.offset.high != 0 || memory.offset.low % scale != 0
+            || memory.offset.low / scale > 4095) {
+            return a64_fail(result, 1025);
+        }
+        opcode = 956301312 | (size << 30) | load_bit;
+        if (sign_extend) {
+            opcode = 3112173568;
+        }
+        immediate = (memory.offset.low / scale) << 10;
+    }
+    result.word = opcode | immediate | (memory.base.index << 5) | rt.index;
+    return true;
+}

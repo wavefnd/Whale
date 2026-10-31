@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MPL-2.0
+// Internal link declarations for shared assembler source utilities.
+extern(c) fun asm_span_valid(data: ptr<u8>, count: u64, width: u64) -> bool;
+extern(c) fun asm_power_two(value: u64) -> bool;
+extern(c) fun asm_align_up(size: u64, align: u64, output: ptr<u64>) -> bool;
+extern(c) fun asm_number_add_checked(a: ptr<AsmWide>, b: ptr<AsmWide>,
+    output: ptr<AsmWide>) -> bool;
+extern(c) fun asm_number_neg_checked(value: ptr<AsmWide>, output: ptr<AsmWide>) -> bool;
+extern(c) fun asm_number_sub_checked(a: ptr<AsmWide>, b: ptr<AsmWide>,
+    output: ptr<AsmWide>) -> bool;
+extern(c) fun asm_number_fits_signed(value: ptr<AsmWide>, bits: u64) -> bool;
+extern(c) fun asm_number_fits_unsigned(value: ptr<AsmWide>, bits: u64) -> bool;
+extern(c) fun asm_unicode_alphanumeric(cp: u64) -> bool;
+extern(c) fun asm_output_grow(materialized: u64, section: u64, extra: u64,
+    limit: u64, logical: u64, output: ptr<AsmOutputGrowth>) -> i32;
+extern(c) fun asm_output_align(materialized: u64, section: u64, alignment: u64,
+    limit: u64, logical: u64, output: ptr<AsmOutputGrowth>) -> i32;

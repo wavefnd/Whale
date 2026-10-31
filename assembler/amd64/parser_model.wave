@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: MPL-2.0
+struct AsmParseToken {
+    kind: u64;
+    position: u64;
+    end: u64;
+    text: AsmName;
+    low: u64;
+    high: u64;
+}
+
+struct AsmParseSpan {
+    start: u64;
+    end: u64;
+}
+
+struct AsmParseInput {
+    tokens: ptr<AsmParseToken>;
+    count: u64;
+    mode: u64;
+    max_work: u64;
+}
+
+struct AsmParseOutput {
+    items: ptr<AsmItem>;
+    item_capacity: u64;
+    spans: ptr<AsmParseSpan>;
+    span_capacity: u64;
+    operands: ptr<AsmOperand>;
+    operand_capacity: u64;
+    values: ptr<AsmDirectiveValue>;
+    value_capacity: u64;
+    names: ptr<AsmName>;
+    name_capacity: u64;
+    bytes: ptr<u8>;
+    byte_capacity: u64;
+}
+
+struct AsmParseResult {
+    status: u64;
+    error: u64;
+    index: u64;
+    detail: u64;
+    items: u64;
+    operands: u64;
+    values: u64;
+    names: u64;
+    bytes: u64;
+    work: u64;
+}
+
+struct AsmParser {
+    packet: ptr<AsmParseInput>;
+    output: ptr<AsmParseOutput>;
+    result: ptr<AsmParseResult>;
+    position: u64;
+}

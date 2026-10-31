@@ -58,7 +58,30 @@ pub struct TargetSpec {
     pub memory: MemoryModel,
 }
 
+/// The built-in versioned bytecode target has tracked 64-bit little-endian storage.
+/// It does not describe a native machine or promise a native object encoder.
+pub fn whale_bytecode_v1() -> TargetSpec {
+    TargetSpec {
+        id: "whale-bytecode-v1".into(),
+        output: OutputKind::Bytecode("whale-bytecode-v1".into()),
+        storage: StorageLayout {
+            data: DataLayout { ptr_bits: 64, endian: crate::Endian::Little },
+            scalar_align: [1, 2, 4, 8, 16],
+            pointer_align: 8,
+            large_array: Some((16, 16)),
+        },
+        memory: MemoryModel::Tracked,
+    }
+}
+
 impl TargetSpec {
+    pub fn lookup_builtin(id: &str) -> Result<Self, crate::TargetError> {
+        if id == "whale-bytecode-v1" {
+            return Ok(whale_bytecode_v1());
+        }
+        Target::lookup(id).map(Target::specification)
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.id.is_empty() || self.id.chars().any(|c| c.is_control() || c.is_whitespace()) {
             return Err(

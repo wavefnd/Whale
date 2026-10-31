@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: MPL-2.0
+// Unicode White_Space is the property used by Rust str::trim/split_whitespace.
+export(c) fun asm_fixed_space(text: FixedText, at: u64) -> u64 {
+    if (at >= text.count) {
+        return 0;
+    }
+    var a: u64 = text.data[at] as u64;
+    if ((a >= 9 && a <= 13) || a == 32) {
+        return 1;
+    }
+    if (text.count - at >= 2 && a == 194
+        && (text.data[at + 1] == 133 || text.data[at + 1] == 160)) {
+        return 2;
+    }
+    if (text.count - at < 3) {
+        return 0;
+    }
+    var b: u64 = text.data[at + 1] as u64;
+    var c: u64 = text.data[at + 2] as u64;
+    if ((a == 225 && b == 154 && c == 128)
+        || (a == 226 && b == 128 && ((c >= 128 && c <= 138) || c == 168 || c == 169 || c == 175))
+        || (a == 226 && b == 129 && c == 159)
+        || (a == 227 && b == 128 && c == 128)) {
+        return 3;
+    }
+    return 0;
+}
+
+fun asm_fixed_slice(text: FixedText, start: u64, end: u64) -> FixedText {
+    var output: FixedText;
+    output.data = text.data;
+    output.count = 0;
+    if (start <= end && end <= text.count) {
+        output.data = &text.data[start];
+        output.count = end - start;
+    }
+    return output;
+}
+
+export(c) fun asm_fixed_trim(text: FixedText) -> FixedText {
+    var start: u64 = 0;
+    var end: u64 = text.count;
+    var width: u64 = 0;
+    if (!asm_span_valid(text.data, text.count, 1)) {
+        return text;
+    }
+    while (start < end) {
+        width = asm_fixed_space(text, start);
+        if (width == 0) {
+            break;
+        }
+        start += width;
+    }
+    while (end > start) {
+        width = 0;
+        if (asm_fixed_space(text, end - 1) == 1) {
+            width = 1;
+        } else if (end - start >= 2 && asm_fixed_space(text, end - 2) == 2) {
+            width = 2;
+        } else if (end - start >= 3 && asm_fixed_space(text, end - 3) == 3) {
+            width = 3;
+        }
+        if (width == 0) {
+            break;
+        }
+        end -= width;
+    }
+    return asm_fixed_slice(text, start, end);
+}
+
+export(c) fun asm_fixed_word(text: FixedText, word: u64, count: u64, fold: u64) -> bool {
+    if (text.count != count || count > 8 || fold > 1
+        || !asm_span_valid(text.data, text.count, 1)) {
+        return false;
+    }
+    var at: u64 = 0;
+    var octet: u64 = 0;
+    while (at < count) {
+        octet = text.data[at] as u64;
+        if (fold != 0 && octet >= 65 && octet <= 90) {
+            octet += 32;
+        }
+        if (octet != ((word >> (at * 8)) & 255)) {
+            return false;
+        }
+        at += 1;
+    }
+    return true;
+}
+
+export(c) fun asm_fixed_equal(left: FixedText, right: FixedText, fold: u64) -> bool {
+    if (left.count != right.count || fold > 1
+        || !asm_span_valid(left.data, left.count, 1)
+        || !asm_span_valid(right.data, right.count, 1)) {
+        return false;
+    }
+    var at: u64 = 0;
+    var a: u64 = 0;
+    var b: u64 = 0;
+    while (at < left.count) {
+        a = left.data[at] as u64;
+        b = right.data[at] as u64;
+        if (fold != 0) {
+            if (a >= 65 && a <= 90) {
+                a += 32;
+            }
+            if (b >= 65 && b <= 90) {
+                b += 32;
+            }
+        }
+        if (a != b) {
+            return false;
+        }
+        at += 1;
+    }
+    return true;
+}
+
+export(c) fun asm_fixed_result_init(result: ptr<FixedResult>, max_work: u64) {
+    result.status = 0;
+    result.error = 0;
+    result.start = 0;
+    result.end = 0;
+    result.line = 0;
+    result.previous_start = 0;
+    result.previous_end = 0;
+    result.previous_line = 0;
+    result.text.data = null;
+    result.text.count = 0;
+    result.detail = 0;
+    result.display = 0;
+    result.word = 0;
+    result.sections = 0;
+    result.symbols = 0;
+    result.relocations = 0;
+    result.records = 0;
+    result.operands = 0;
+    result.bytes = 0;
+    result.work = 0;
+    result.max_work = max_work;
+}
+
+export(c) fun asm_fixed_fail(result: ptr<FixedResult>, code: u64,
+    text: FixedText, detail: u64) -> bool {
+    if (result.status == 0) {
+        result.status = 1;
+        result.error = code;
+        result.text = text;
+        result.detail = detail;
+    }
+    return false;
+}
+
+export(c) fun asm_fixed_charge(result: ptr<FixedResult>, units: u64) -> bool {
+    if (result.status != 0) {
+        return false;
+    }
+    if (result.work > result.max_work || units > result.max_work - result.work) {
+        return asm_fixed_fail(result, 93, result.text, 0);
+    }
+    result.work += units;
+    return true;
+}
+
+export(c) fun asm_fixed_count(instruction: ptr<FixedInstruction>, count: u64,
+    result: ptr<FixedResult>) -> bool {
+    if (result.status != 0) {
+        return false;
+    }
+    if (instruction.count != count) {
+        result.display = instruction.fold;
+        return asm_fixed_fail(result, 1, instruction.mnemonic, count);
+    }
+    return true;
+}

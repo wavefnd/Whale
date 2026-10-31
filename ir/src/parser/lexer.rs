@@ -3,17 +3,76 @@ use super::{ParseError, ParseErrorKind, SourceLocation};
 
 use crate::{IrLimits, LimitError, Resource};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum Kind<'a> {
     Word(&'a str),
     String(String),
     Mark(&'a str),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) struct Token<'a> {
     pub kind: Kind<'a>,
     pub location: SourceLocation,
+}
+
+#[cfg(all(test, whale_wave_ir))]
+mod wave_tests {
+    use super::*;
+
+    #[test]
+    fn wave_lexer_matches_reference_on_unicode_escapes_and_generated_tokens() {
+        let seeds = [
+            "module { // comment\n  target \"🐋\\u{1f600}\\n\"\n}",
+            "  α β\u{2003}γ\u{0085}δ -> => \"\" ",
+            "\"escaped \\\" \\\\ \\0 \\t \\r\"",
+            "a->b a=>b : < > [ ] ( ) { } , =",
+        ];
+        for seed in seeds {
+            assert_eq!(
+                lex(seed, IrLimits::default()).unwrap(),
+                lex_reference(seed, IrLimits::default()).unwrap()
+            );
+        }
+        for malformed in [
+            "\"unterminated",
+            "\"\\",
+            "\"\\q\"",
+            "\"\\u123\"",
+            "\"\\u{}\"",
+            "\"\\u{1234567}\"",
+            "\"\\u{d800}\"",
+            "\"\\u{110000}\"",
+            "\"\n\"",
+        ] {
+            let wave = lex(malformed, IrLimits::default()).unwrap_err();
+            let reference = lex_reference(malformed, IrLimits::default()).unwrap_err();
+            assert_eq!(wave.location, reference.location, "{malformed:?}");
+            assert_eq!(wave.to_string(), reference.to_string(), "{malformed:?}");
+        }
+        let pieces =
+            ["a", "b", "=>", "->", "{", "}", "\"a\\u{1F40B}\"", "// note\n", " ", "\n", "\u{2009}"];
+        let mut state = 0x4839_0ab3_d541_u64;
+        for _ in 0..4000 {
+            let mut text = String::new();
+            for _ in 0..40 {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                text.push_str(pieces[(state as usize) % pieces.len()]);
+            }
+            let wave = lex(&text, IrLimits::default());
+            let reference = lex_reference(&text, IrLimits::default());
+            match (wave, reference) {
+                (Ok(a), Ok(b)) => assert_eq!(a, b, "{text:?}"),
+                (Err(a), Err(b)) => {
+                    assert_eq!(a.location, b.location, "{text:?}");
+                    assert_eq!(a.to_string(), b.to_string(), "{text:?}");
+                },
+                (a, b) => panic!("Wave/reference lexer divergence on {text:?}: {a:?} vs {b:?}"),
+            }
+        }
+    }
 }
 
 fn error(location: SourceLocation, message: &str) -> ParseError {
@@ -30,7 +89,18 @@ fn advance(location: &mut SourceLocation, c: char) {
     }
 }
 
+#[cfg(whale_wave_ir)]
 pub(super) fn lex(source: &str, limits: IrLimits) -> Result<Vec<Token<'_>>, ParseError> {
+    super::wave_lexer::lex(source, limits)
+}
+
+#[cfg(not(whale_wave_ir))]
+pub(super) fn lex(source: &str, limits: IrLimits) -> Result<Vec<Token<'_>>, ParseError> {
+    lex_reference(source, limits)
+}
+
+#[cfg_attr(whale_wave_ir, allow(dead_code))]
+pub(super) fn lex_reference(source: &str, limits: IrLimits) -> Result<Vec<Token<'_>>, ParseError> {
     let mut pos = SourceLocation { byte_offset: 0, line: 1, column: 1 };
     if source.len() > limits.max_input_bytes {
         return Err(ParseError {

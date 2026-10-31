@@ -1,0 +1,375 @@
+// SPDX-License-Identifier: MPL-2.0
+// Stable indexed dependency scheduling. Imported global indices are borrowed,
+// so each function visits only its own constants and references.
+
+struct IrConstDefinition {
+    kind: u64;
+    id: u64;
+    ty: u64;
+    root: u64;
+}
+
+struct IrConstKey {
+    kind: u64;
+    id: u64;
+}
+
+struct IrConstSlot {
+    kind: u64;
+    id: u64;
+    definition: u64;
+    present: u64;
+}
+
+struct IrConstDependency {
+    user: u64;
+    next: u64;
+}
+
+struct IrConstPending {
+    remaining: u64;
+    head: u64;
+    tail: u64;
+    mark: u64;
+    completed: u64;
+}
+
+struct IrConstSchedule {
+    definitions: ptr<IrConstDefinition>;
+    definition_count: u64;
+    nodes: ptr<IrConstNode>;
+    node_count: u64;
+    types: ptr<IrVerifyType>;
+    type_count: u64;
+    type_edges: ptr<u64>;
+    type_edge_count: u64;
+    base: ptr<IrConstKey>;
+    base_count: u64;
+    imported: ptr<IrConstSlot>;
+    imported_capacity: u64;
+    slots: ptr<IrConstSlot>;
+    capacity: u64;
+    pending: ptr<IrConstPending>;
+    pending_count: u64;
+    dependencies: ptr<IrConstDependency>;
+    dependency_capacity: u64;
+    stack: ptr<u64>;
+    stack_capacity: u64;
+    order: ptr<u64>;
+    order_capacity: u64;
+    max_work: u64;
+}
+
+struct IrConstScheduleResult {
+    status: u64;
+    definition: u64;
+    reference_kind: u64;
+    reference: u64;
+    count: u64;
+    work: u64;
+}
+
+fun ir_const_schedule_error(
+    result: ptr<IrConstScheduleResult>,
+    status: u64,
+    definition: u64
+) -> i32 {
+    result.status = status;
+    result.definition = definition;
+    return status as i32;
+}
+
+fun ir_const_schedule_slot(
+    slots: ptr<IrConstSlot>,
+    capacity: u64,
+    kind: u64,
+    id: u64,
+    result: ptr<IrConstScheduleResult>,
+    limit: u64
+) -> u64 {
+    if (capacity == 0) {
+        return 0;
+    }
+    var at: u64 = ir_source_mix((id << 1) ^ kind) & (capacity - 1);
+    while (true) {
+        if (!ir_cfg_charge(&result.work, limit)) {
+            result.status = 7;
+            return capacity;
+        }
+        if (slots[at].present == 0 || (slots[at].kind == kind && slots[at].id == id)) {
+            return at;
+        }
+        at = (at + 1) & (capacity - 1);
+    }
+    return capacity;
+}
+
+export(c) fun whale_ir_const_schedule(
+    p: ptr<IrConstSchedule>,
+    result: ptr<IrConstScheduleResult>
+) -> i32 {
+    if (result == null) {
+        return 8;
+    }
+    result.status = 0;
+    result.definition = 0;
+    result.reference_kind = 0;
+    result.reference = 0;
+    result.count = 0;
+    result.work = 0;
+    if (p == null) {
+        result.status = 8;
+        return 8;
+    }
+    if (p.capacity < 2 || !ir_power_two(p.capacity) || p.definition_count > p.capacity / 2 ||
+        p.base_count > p.capacity / 2 - p.definition_count ||
+        p.pending_count != p.definition_count || p.order_capacity < p.definition_count ||
+        (p.imported_capacity != 0 &&
+         (p.imported_capacity < 2 || !ir_power_two(p.imported_capacity))) ||
+        !ir_span_valid(p.definitions as ptr<u8>, p.definition_count, 32) ||
+        !ir_span_valid(p.nodes as ptr<u8>, p.node_count, 72) ||
+        !ir_span_valid(p.types as ptr<u8>, p.type_count, 40) ||
+        !ir_span_valid(p.type_edges as ptr<u8>, p.type_edge_count, 8) ||
+        !ir_span_valid(p.base as ptr<u8>, p.base_count, 16) ||
+        !ir_span_valid(p.imported as ptr<u8>, p.imported_capacity, 32) ||
+        !ir_span_valid(p.slots as ptr<u8>, p.capacity, 32) ||
+        !ir_span_valid(p.pending as ptr<u8>, p.pending_count, 40) ||
+        !ir_span_valid(p.dependencies as ptr<u8>, p.dependency_capacity, 16) ||
+        !ir_span_valid(p.stack as ptr<u8>, p.stack_capacity, 8) ||
+        !ir_span_valid(p.order as ptr<u8>, p.order_capacity, 8)) {
+        return ir_const_schedule_error(result, 8, 0);
+    }
+    var verification: IrVerifyResult;
+    verification.status = 0;
+    verification.index = 0;
+    verification.expected = 0;
+    verification.actual = 0;
+    verification.detail = 0;
+    verification.work = 0;
+    if (!ir_verify_graph_valid(p.types, p.type_count, p.type_edges, p.type_edge_count, p.max_work,
+                               &verification)) {
+        result.work = verification.work;
+        if (verification.status == 8) {
+            return ir_const_schedule_error(result, 7, 0);
+        }
+        return ir_const_schedule_error(result, 8, 0);
+    }
+    result.work = verification.work;
+    var at: u64 = 0;
+    while (at < p.capacity) {
+        if (!ir_cfg_charge(&result.work, p.max_work)) {
+            return ir_const_schedule_error(result, 7, 0);
+        }
+        p.slots[at].present = 0;
+        at += 1;
+    }
+    at = 0;
+    while (at < p.node_count) {
+        if (!ir_cfg_charge(&result.work, p.max_work)) {
+            return ir_const_schedule_error(result, 7, 0);
+        }
+        var node: ptr<IrConstNode> = &p.nodes[at];
+        if (node.kind > 6 || node.ty >= p.type_count || (node.kind >= 3 && node.left >= at) ||
+            ((node.kind == 5 || node.kind == 6) && node.right >= at) ||
+            ((node.kind == 1 || node.kind == 2) && node.reference > 4294967295) ||
+            (node.kind == 5 && node.op > 11) || (node.kind == 6 && node.op > 5)) {
+            return ir_const_schedule_error(result, 8, 0);
+        }
+        at += 1;
+    }
+    at = 0;
+    while (at < p.base_count) {
+        var key: ptr<IrConstKey> = &p.base[at];
+        if ((key.kind != 1 && key.kind != 2) || key.id > 4294967295) {
+            return ir_const_schedule_error(result, 8, 0);
+        }
+        var position: u64 = ir_const_schedule_slot(p.slots, p.capacity, key.kind, key.id, result,
+                                                    p.max_work);
+        if (result.status != 0) {
+            return result.status as i32;
+        }
+        p.slots[position].kind = key.kind;
+        p.slots[position].id = key.id;
+        p.slots[position].definition = 18446744073709551615;
+        p.slots[position].present = 1;
+        at += 1;
+    }
+    at = 0;
+    while (at < p.definition_count) {
+        var definition: ptr<IrConstDefinition> = &p.definitions[at];
+        if ((definition.kind != 1 && definition.kind != 2) || definition.id > 4294967295 ||
+            definition.ty >= p.type_count || definition.root >= p.node_count) {
+            return ir_const_schedule_error(result, 8, at);
+        }
+        var position: u64 = ir_const_schedule_slot(p.slots, p.capacity, definition.kind,
+                                                    definition.id, result, p.max_work);
+        if (result.status != 0) {
+            return result.status as i32;
+        }
+        if (p.slots[position].present != 0) {
+            return ir_const_schedule_error(result, 1, at);
+        }
+        if (p.imported_capacity != 0) {
+            var imported: u64 = ir_const_schedule_slot(p.imported, p.imported_capacity, definition.kind,
+                                               definition.id, result, p.max_work);
+            if (result.status != 0) {
+                return result.status as i32;
+            }
+            if (p.imported[imported].present != 0) {
+                return ir_const_schedule_error(result, 1, at);
+            }
+        }
+        p.slots[position].kind = definition.kind;
+        p.slots[position].id = definition.id;
+        p.slots[position].definition = at;
+        p.slots[position].present = 1;
+        verification.status = 0;
+        verification.work = result.work;
+        var equal: bool = ir_verify_equal(definition.ty, p.nodes[definition.root].ty, p.types,
+                                           p.type_edges, 258, &verification, p.max_work);
+        result.work = verification.work;
+        if (verification.status != 0) {
+            return ir_const_schedule_error(result, 7, at);
+        }
+        if (!equal) {
+            return ir_const_schedule_error(result, 2, at);
+        }
+        p.pending[at].remaining = 0;
+        p.pending[at].head = 18446744073709551615;
+        p.pending[at].tail = 18446744073709551615;
+        p.pending[at].mark = 0;
+        p.pending[at].completed = 0;
+        at += 1;
+    }
+    at = 0;
+    var dependency_count: u64 = 0;
+    var ready: u64 = 0;
+    while (at < p.definition_count) {
+        if (p.stack_capacity == 0) {
+            return ir_const_schedule_error(result, 8, at);
+        }
+        p.stack[0] = p.definitions[at].root;
+        var length: u64 = 1;
+        while (length != 0) {
+            if (!ir_cfg_charge(&result.work, p.max_work)) {
+                return ir_const_schedule_error(result, 7, at);
+            }
+            length -= 1;
+            var node: ptr<IrConstNode> = &p.nodes[p.stack[length]];
+            if (node.kind == 1 || node.kind == 2) {
+                var position: u64 = ir_const_schedule_slot(p.slots, p.capacity, node.kind,
+                                                            node.reference, result, p.max_work);
+                if (result.status != 0) {
+                    return result.status as i32;
+                }
+                if (p.slots[position].present == 0) {
+                    var found: bool = false;
+                    if (p.imported_capacity != 0) {
+                        var imported: u64 = ir_const_schedule_slot(p.imported, p.imported_capacity,
+                                                                    node.kind, node.reference,
+                                                                    result, p.max_work);
+                        if (result.status != 0) {
+                            return result.status as i32;
+                        }
+                        found = p.imported[imported].present != 0;
+                    }
+                    if (!found) {
+                        result.reference_kind = node.kind;
+                        result.reference = node.reference;
+                        return ir_const_schedule_error(result, 3, at);
+                    }
+                } else if (p.slots[position].definition != 18446744073709551615) {
+                    var dependency: u64 = p.slots[position].definition;
+                    if (dependency >= p.definition_count) {
+                        return ir_const_schedule_error(result, 8, at);
+                    }
+                    if (p.pending[dependency].mark != at + 1) {
+                        if (dependency_count >= p.dependency_capacity) {
+                            return ir_const_schedule_error(result, 8, at);
+                        }
+                        p.pending[dependency].mark = at + 1;
+                        p.dependencies[dependency_count].user = at;
+                        p.dependencies[dependency_count].next = 18446744073709551615;
+                        if (p.pending[dependency].tail != 18446744073709551615) {
+                            p.dependencies[p.pending[dependency].tail].next = dependency_count;
+                        } else {
+                            p.pending[dependency].head = dependency_count;
+                        }
+                        p.pending[dependency].tail = dependency_count;
+                        p.pending[at].remaining += 1;
+                        dependency_count += 1;
+                    }
+                }
+            } else if (node.kind >= 3) {
+                if (node.kind == 5 || node.kind == 6) {
+                    if (length >= p.stack_capacity) {
+                        return ir_const_schedule_error(result, 8, at);
+                    }
+                    p.stack[length] = node.right;
+                    length += 1;
+                }
+                if (length >= p.stack_capacity) {
+                    return ir_const_schedule_error(result, 8, at);
+                }
+                p.stack[length] = node.left;
+                length += 1;
+            }
+        }
+        if (p.pending[at].remaining == 0) {
+            p.order[ready] = at;
+            ready += 1;
+        }
+        at += 1;
+    }
+    at = 0;
+    while (at < ready) {
+        if (!ir_cfg_charge(&result.work, p.max_work)) {
+            return ir_const_schedule_error(result, 7, 0);
+        }
+        var definition: u64 = p.order[at];
+        p.pending[definition].completed = 1;
+        var link: u64 = p.pending[definition].head;
+        while (link != 18446744073709551615) {
+            if (!ir_cfg_charge(&result.work, p.max_work)) {
+                return ir_const_schedule_error(result, 7, definition);
+            }
+            if (link >= dependency_count) {
+                return ir_const_schedule_error(result, 8, definition);
+            }
+            var user: u64 = p.dependencies[link].user;
+            if (user >= p.definition_count || p.pending[user].remaining == 0) {
+                return ir_const_schedule_error(result, 8, definition);
+            }
+            p.pending[user].remaining -= 1;
+            if (p.pending[user].remaining == 0) {
+                p.order[ready] = user;
+                ready += 1;
+            }
+            link = p.dependencies[link].next;
+        }
+        at += 1;
+    }
+    result.count = ready;
+    at = 0;
+    while (at < p.definition_count) {
+        if (p.pending[at].completed == 0) {
+            return ir_const_schedule_error(result, 4, at);
+        }
+        at += 1;
+    }
+    return 0;
+}
+
+export(c) fun whale_ir_const_value_equal(
+    left_kind: u64,
+    left_low: u64,
+    left_high: u64,
+    right_kind: u64,
+    right_low: u64,
+    right_high: u64
+) -> i32 {
+    if (left_kind == right_kind && left_low == right_low && left_high == right_high) {
+        return 1;
+    }
+    return 0;
+}

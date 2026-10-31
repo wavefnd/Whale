@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! RV64I instruction formats and control-transfer bit layouts.
+#[cfg(test)]
 pub(crate) mod branch;
 
-pub(crate) mod formats;
+#[cfg(any(test, not(whale_wave_riscv64)))]
+#[path = "../encoding_reference.rs"]
+pub(crate) mod reference;

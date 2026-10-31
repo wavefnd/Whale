@@ -135,7 +135,11 @@ fn lookup_and_dominance_work_grow_linearly_without_reordering_ir() {
             let s = verify_module_with_stats(&m, IrLimits::default()).unwrap();
             assert_eq!(print_module(&m), before);
             assert!(s.value_type_lookups <= 5 * size as usize, "{s:?}");
-            assert!(s.analysis_work <= 20 * size as usize, "{s:?}");
+            // Wave charges identity/type tables, semantic operand type graphs,
+            // SSA transport validation and predecessor hash probes as well as
+            // dominance. Every traversal remains linear in this fixture.
+            let work_per_node = if IR_WAVE_ENABLED { 50 } else { 20 };
+            assert!(s.analysis_work <= work_per_node * size as usize, "{s:?}");
             stats.push(s);
         }
         assert!(stats[2].analysis_work <= 3 * stats[1].analysis_work);

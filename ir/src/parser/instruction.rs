@@ -3,10 +3,26 @@ use super::{syntax::Parser, ParseError};
 
 use crate::*;
 
-type ParsedInstruction = (Instruction, Option<(ValueId, Type)>);
+pub(super) type ParsedInstruction = (Instruction, Option<(ValueId, Type)>);
 
 impl Parser<'_> {
     pub(super) fn instruction(&mut self) -> Result<ParsedInstruction, ParseError> {
+        #[cfg(all(test, whale_wave_ir))]
+        if self.reference_types {
+            return self.instruction_reference();
+        }
+        #[cfg(whale_wave_ir)]
+        {
+            self.instruction_wave()
+        }
+        #[cfg(not(whale_wave_ir))]
+        {
+            self.instruction_reference()
+        }
+    }
+
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn instruction_reference(&mut self) -> Result<ParsedInstruction, ParseError> {
         let result = if self.peek().starts_with("%v") {
             let id = self.value()?;
             self.expect(":")?;
@@ -450,6 +466,22 @@ impl Parser<'_> {
     }
 
     pub(super) fn terminator(&mut self) -> Result<Terminator, ParseError> {
+        #[cfg(all(test, whale_wave_ir))]
+        if self.reference_types {
+            return self.terminator_reference();
+        }
+        #[cfg(whale_wave_ir)]
+        {
+            self.terminator_wave()
+        }
+        #[cfg(not(whale_wave_ir))]
+        {
+            self.terminator_reference()
+        }
+    }
+
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn terminator_reference(&mut self) -> Result<Terminator, ParseError> {
         Ok(match self.word()? {
             "br" => {
                 self.expect("label")?;

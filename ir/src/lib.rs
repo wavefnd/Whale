@@ -2,15 +2,23 @@
 
 pub mod block;
 
+pub mod bytecode;
+
 pub mod builder;
 
 pub mod const_expr;
 
 mod constant;
 
+#[cfg(whale_wave_ir)]
+mod constant_wave;
+
 pub mod float;
 
 pub mod effects;
+
+#[cfg(whale_wave_ir)]
+mod effects_wave;
 
 pub mod pass;
 
@@ -24,6 +32,9 @@ mod interpreter;
 
 pub mod layout;
 
+#[cfg(whale_wave_ir)]
+mod wave_layout;
+
 pub mod limits;
 
 pub mod module;
@@ -31,6 +42,9 @@ pub mod module;
 pub mod printer;
 
 pub mod source;
+
+#[cfg(whale_wave_ir)]
+mod source_wave;
 
 pub mod types;
 
@@ -63,6 +77,9 @@ pub use global_storage::*;
 pub const IR_FORMAT_VERSION: u32 = 8;
 
 pub const SEMANTICS_VERSION: u32 = 1;
+
+/// True when this IR crate is linked to the pinned Wave source module.
+pub const IR_WAVE_ENABLED: bool = cfg!(whale_wave_ir);
 
 pub use instr::*;
 
@@ -396,3 +413,34 @@ pub use parser::{
 };
 
 mod diagnostic;
+
+/// The implementation actually selected by this owning module.
+pub fn module_identity() -> &'static str {
+    #[cfg(whale_wave_ir)]
+    {
+        unsafe extern "C" {
+            fn whale_ir_module_identity() -> u64;
+        }
+        // This no-argument stamp is exported by this module's guarded archive.
+        if unsafe { whale_ir_module_identity() } == 6289348675458650625 {
+            "wave"
+        } else {
+            "invalid-wave"
+        }
+    }
+    #[cfg(not(whale_wave_ir))]
+    {
+        "rust-reference"
+    }
+}
+
+#[cfg(test)]
+mod implementation_identity_tests {
+    #[test]
+    fn selected_implementation_has_its_own_compiled_identity() {
+        assert_eq!(
+            super::module_identity(),
+            if cfg!(whale_wave_ir) { "wave" } else { "rust-reference" }
+        );
+    }
+}

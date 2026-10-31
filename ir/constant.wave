@@ -1,0 +1,546 @@
+// SPDX-License-Identifier: MPL-2.0
+// Typed constant validation and lazy evaluation; only reference values cross
+// the resumable data boundary. All arithmetic and error ordering stay in Wave.
+struct IrConstNode {
+    kind: u64;
+    op: u64;
+    ty: u64;
+    left: u64;
+    right: u64;
+    reference: u64;
+    literal: u64;
+    low: u64;
+    high: u64;
+}
+
+struct IrConstResolved {
+    ty: u64;
+    literal: u64;
+    low: u64;
+    high: u64;
+    present: u64;
+}
+
+struct IrConstValue {
+    literal: u64;
+    low: u64;
+    high: u64;
+    present: u64;
+}
+
+struct IrConstFrame {
+    node: u64;
+    phase: u64;
+    depth: u64;
+}
+
+struct IrConstState {
+    initialized: u64;
+    phase: u64;
+    length: u64;
+    checked_types: u64;
+    work: u64;
+    root: u64;
+}
+
+struct IrConstContext {
+    nodes: ptr<IrConstNode>;
+    node_count: u64;
+    types: ptr<IrVerifyType>;
+    type_count: u64;
+    edges: ptr<u64>;
+    edge_count: u64;
+    resolved: ptr<IrConstResolved>;
+    resolved_count: u64;
+    values: ptr<IrConstValue>;
+    value_count: u64;
+    frames: ptr<IrConstFrame>;
+    capacity: u64;
+    state: ptr<IrConstState>;
+    root: u64;
+    max_depth: u64;
+    max_work: u64;
+}
+
+struct IrConstResult {
+    status: u64;
+    index: u64;
+    detail: u64;
+    literal: u64;
+    low: u64;
+    high: u64;
+    work: u64;
+}
+
+fun ir_const_fail(
+    p: ptr<IrConstContext>,
+    result: ptr<IrConstResult>,
+    status: u64,
+    index: u64,
+    detail: u64
+) -> i32 {
+    result.status = status;
+    result.index = index;
+    result.detail = detail;
+    result.work = p.state.work;
+    return status as i32;
+}
+
+fun ir_const_charge(p: ptr<IrConstContext>) -> bool {
+    return ir_cfg_charge(&p.state.work, p.max_work);
+}
+
+fun ir_const_value_valid(kind: u64, literal: u64, low: u64, high: u64) -> bool {
+    if (!ir_verify_literal(kind, literal, low, high)) {
+        return false;
+    }
+    if (literal == 3) {
+        return low <= 1 && high == 0;
+    }
+    if (literal == 4) {
+        return low <= 65535 && high == 0;
+    }
+    if (literal == 5) {
+        return low <= 4294967295 && high == 0;
+    }
+    if (literal == 6) {
+        return high == 0;
+    }
+    return true;
+}
+
+fun ir_const_push(p: ptr<IrConstContext>, node: u64, phase: u64, depth: u64) -> bool {
+    if (p.state.length >= p.capacity || node >= p.node_count) {
+        return false;
+    }
+    var frame: ptr<IrConstFrame> = &p.frames[p.state.length];
+    frame.node = node;
+    frame.phase = phase;
+    frame.depth = depth;
+    p.state.length += 1;
+    return true;
+}
+
+fun ir_const_equal(p: ptr<IrConstContext>, a: u64, b: u64, valid: ptr<bool>) -> bool {
+    var result: IrVerifyResult;
+    result.status = 0;
+    result.index = 0;
+    result.expected = 0;
+    result.actual = 0;
+    result.detail = 0;
+    result.work = p.state.work;
+    var equal: bool = ir_verify_equal(a, b, p.types, p.edges, 258, &result, p.max_work);
+    p.state.work = result.work;
+    valid[0] = result.status == 0;
+    return equal;
+}
+
+fun ir_const_kind_literal(kind: u64) -> u64 {
+    if (kind == 1) {
+        return 3;
+    }
+    if (ir_verify_signed(kind)) {
+        return 1;
+    }
+    if (ir_verify_unsigned(kind)) {
+        return 2;
+    }
+    if (ir_verify_float(kind)) {
+        return kind - 10;
+    }
+    return 0;
+}
+
+fun ir_const_number(
+    p: ptr<IrConstContext>,
+    node: ptr<IrConstNode>,
+    left: ptr<IrConstValue>,
+    right: ptr<IrConstValue>,
+    output: ptr<IrConstValue>
+) -> u64 {
+    var kind: u64 = p.types[node.ty].kind;
+    if (node.kind == 6) {
+        kind = p.types[p.nodes[node.left].ty].kind;
+    }
+    output.literal = ir_const_kind_literal(p.types[node.ty].kind);
+    output.high = 0;
+    output.low = 0;
+    output.present = 1;
+    if (node.kind == 6 && kind == 1) {
+        var equal: bool = left.low == right.low;
+        if ((node.op == 0 && equal) || (node.op == 1 && !equal)) {
+            output.low = 1;
+        }
+        return 0;
+    }
+    if (ir_verify_float(kind)) {
+        var value: u64 = 0;
+        if (node.kind == 4) {
+            var format: IrFloatFormat;
+            if (!ir_float_format(kind, &format)) {
+                return 8;
+            }
+            output.low = left.low ^ ir_float_sign(&format);
+            return 0;
+        }
+        if (node.kind == 6) {
+            var format: IrFloatFormat;
+            var predicate: u64 = node.op;
+            if (node.op == 1) {
+                predicate = 9;
+            }
+            if (!ir_float_format(kind, &format) ||
+                !ir_float_predicate(&format, left.low, right.low, predicate, &value)) {
+                return 8;
+            }
+        } else {
+            var operation: u64 = node.op;
+            if (operation == 6 || operation == 7) {
+                operation -= 3;
+            }
+            if (!ir_float_arithmetic(operation, kind, left.low, right.low, &value)) {
+                return 8;
+            }
+        }
+        output.low = value;
+        return 0;
+    }
+    var mode: u64 = 0;
+    var operation: u64 = node.op;
+    if (node.kind == 3 || node.kind == 4) {
+        mode = 6;
+        operation = 1;
+        if (node.kind == 4) {
+            operation = 0;
+        }
+    } else if (node.kind == 6) {
+        mode = 3;
+        if (node.op >= 2 && ir_verify_signed(kind)) {
+            operation += 4;
+        }
+    } else {
+        if (node.op >= 3 && node.op <= 5) {
+            operation += 9;
+        } else if (node.op == 6) {
+            operation = 3;
+            if (ir_verify_signed(kind)) {
+                operation = 4;
+            }
+        } else if (node.op == 7) {
+            operation = 5;
+            if (ir_verify_signed(kind)) {
+                operation = 6;
+            }
+        } else if (node.op == 8) {
+            operation = 15;
+        } else if (node.op == 9) {
+            operation = 16;
+            if (ir_verify_signed(kind)) {
+                operation = 17;
+            }
+        }
+    }
+    var destination: u64 = kind;
+    if (node.kind == 6) {
+        destination = 1;
+    }
+    var numeric: IrIntegerResult;
+    var status: i32 = whale_ir_integer(mode, operation, kind, destination, left.low, left.high,
+                                       right.low, right.high, &numeric);
+    if (status != numeric.status as i32) {
+        return 8;
+    }
+    if (status == 1) {
+        return 4;
+    }
+    if (status == 2) {
+        return 5;
+    }
+    if (status != 0) {
+        return 8;
+    }
+    output.low = numeric.low;
+    output.high = numeric.high;
+    return 0;
+}
+
+export(c) fun whale_ir_const_step(p: ptr<IrConstContext>, result: ptr<IrConstResult>) -> i32 {
+    if (result == null) {
+        return 8;
+    }
+    result.status = 8;
+    result.index = 0;
+    result.detail = 0;
+    result.literal = 0;
+    result.low = 0;
+    result.high = 0;
+    result.work = 0;
+    if (p == null || p.state == null) {
+        return 8;
+    }
+    if (p.root >= p.node_count || p.max_depth > 256 || p.state.initialized > 1 ||
+        p.state.phase > 2 || p.state.length > p.capacity || p.state.work > p.max_work ||
+        p.state.checked_types > p.type_count || p.resolved_count != p.node_count ||
+        p.value_count != p.node_count || !ir_span_valid(p.nodes as ptr<u8>, p.node_count, 72) ||
+        !ir_span_valid(p.types as ptr<u8>, p.type_count, 40) ||
+        !ir_span_valid(p.edges as ptr<u8>, p.edge_count, 8) ||
+        !ir_span_valid(p.resolved as ptr<u8>, p.resolved_count, 40) ||
+        !ir_span_valid(p.values as ptr<u8>, p.value_count, 32) ||
+        !ir_span_valid(p.frames as ptr<u8>, p.capacity, 24)) {
+        return ir_const_fail(p, result, 8, 0, 0);
+    }
+    while (p.state.checked_types < p.type_count) {
+        var index: u64 = p.state.checked_types;
+        if (!ir_const_charge(p)) {
+            return ir_const_fail(p, result, 7, p.root, 0);
+        }
+        var ty: ptr<IrVerifyType> = &p.types[index];
+        if (ty.kind > 21 || ((ty.kind == 17 || ty.kind == 19) && ty.child >= index)) {
+            return ir_const_fail(p, result, 8, index, 0);
+        }
+        if (ty.kind == 18 || ty.kind == 20 || ty.kind == 21) {
+            if (ty.first > p.edge_count || ty.count > p.edge_count - ty.first) {
+                return ir_const_fail(p, result, 8, index, 0);
+            }
+            var at: u64 = 0;
+            while (at < ty.count) {
+                if (!ir_const_charge(p)) {
+                    return ir_const_fail(p, result, 7, p.root, 0);
+                }
+                if (p.edges[ty.first + at] >= index) {
+                    return ir_const_fail(p, result, 8, index, 0);
+                }
+                at += 1;
+            }
+        }
+        p.state.checked_types += 1;
+    }
+    if (p.state.initialized == 0) {
+        var index: u64 = 0;
+        while (index < p.node_count) {
+            if (!ir_const_charge(p)) {
+                return ir_const_fail(p, result, 7, p.root, 0);
+            }
+            var node: ptr<IrConstNode> = &p.nodes[index];
+            if (node.kind > 6 || node.ty >= p.type_count ||
+                ((node.kind == 3 || node.kind == 4 || node.kind == 5 || node.kind == 6) &&
+                 node.left >= index) ||
+                ((node.kind == 5 || node.kind == 6) && node.right >= index) ||
+                ((node.kind == 1 || node.kind == 2) && node.reference > 4294967295) ||
+                (node.kind == 5 && node.op > 11) || (node.kind == 6 && node.op > 5)) {
+                return ir_const_fail(p, result, 8, index, 0);
+            }
+            p.values[index].present = 0;
+            index += 1;
+        }
+        p.state.root = p.root;
+        p.state.phase = 0;
+        p.state.length = 0;
+        if (!ir_const_push(p, p.root, 0, 0)) {
+            return ir_const_fail(p, result, 8, p.root, 0);
+        }
+        p.state.initialized = 1;
+    } else if (p.state.root != p.root) {
+        return ir_const_fail(p, result, 8, p.root, 0);
+    }
+    while (p.state.phase == 0) {
+        if (p.state.length == 0) {
+            p.state.phase = 1;
+            if (!ir_const_push(p, p.root, 0, 0)) {
+                return ir_const_fail(p, result, 8, p.root, 0);
+            }
+            break;
+        }
+        var frame: IrConstFrame = p.frames[p.state.length - 1];
+        if (frame.node >= p.node_count) {
+            return ir_const_fail(p, result, 8, p.root, 0);
+        }
+        if (frame.depth > p.max_depth) {
+            return ir_const_fail(p, result, 7, frame.node, 1);
+        }
+        if (!ir_const_charge(p)) {
+            return ir_const_fail(p, result, 7, frame.node, 0);
+        }
+        var node: ptr<IrConstNode> = &p.nodes[frame.node];
+        var kind: u64 = p.types[node.ty].kind;
+        if (node.kind == 0) {
+            if (!ir_const_value_valid(kind, node.literal, node.low, node.high)) {
+                return ir_const_fail(p, result, 1, frame.node, 0);
+            }
+        } else if (node.kind == 1 || node.kind == 2) {
+            var resolved: ptr<IrConstResolved> = &p.resolved[frame.node];
+            if (resolved.present == 0) {
+                return ir_const_fail(p, result, 10, frame.node, node.reference);
+            }
+            if (resolved.present == 2) {
+                return ir_const_fail(p, result, 6, frame.node, node.reference);
+            }
+            if (resolved.present != 1 || resolved.ty >= p.type_count) {
+                return ir_const_fail(p, result, 8, frame.node, 0);
+            }
+            var valid: bool = true;
+            if (!ir_const_equal(p, node.ty, resolved.ty, &valid)) {
+                if (!valid) {
+                    return ir_const_fail(p, result, 7, frame.node, 0);
+                }
+                return ir_const_fail(p, result, 2, frame.node, 0);
+            }
+            if (!ir_const_value_valid(kind, resolved.literal, resolved.low, resolved.high)) {
+                return ir_const_fail(p, result, 1, frame.node, 0);
+            }
+        } else {
+            var left_type: u64 = p.nodes[node.left].ty;
+            var valid: bool = true;
+            var expected: u64 = node.ty;
+            if (node.kind == 6) {
+                expected = left_type;
+            }
+            if (!ir_const_equal(p, expected, left_type, &valid) ||
+                ((node.kind == 5 || node.kind == 6) &&
+                 !ir_const_equal(p, left_type, p.nodes[node.right].ty, &valid))) {
+                if (!valid) {
+                    return ir_const_fail(p, result, 7, frame.node, 0);
+                }
+                return ir_const_fail(p, result, 2, frame.node, 0);
+            }
+            if (node.kind == 6 && kind != 1) {
+                return ir_const_fail(p, result, 2, frame.node, 0);
+            }
+            var category: u64 = kind;
+            if (node.kind == 6) {
+                category = p.types[left_type].kind;
+            }
+            var supported: bool = ir_verify_integer(category);
+            if (node.kind == 4) {
+                supported = supported || ir_verify_float(category);
+            }
+            if (node.kind == 5 && ir_verify_float(category)) {
+                supported = node.op <= 2 || node.op == 6 || node.op == 7;
+            }
+            if (node.kind == 5 && (node.op == 10 || node.op == 11)) {
+                supported = category == 1;
+            }
+            if (node.kind == 6) {
+                supported =
+                    supported || ir_verify_float(category) || (category == 1 && node.op <= 1);
+            }
+            if (!supported) {
+                return ir_const_fail(p, result, 3, frame.node, 0);
+            }
+        }
+        p.state.length -= 1;
+        if (node.kind == 5 || node.kind == 6) {
+            if (!ir_const_push(p, node.right, 0, frame.depth + 1)) {
+                return ir_const_fail(p, result, 8, frame.node, 0);
+            }
+        }
+        if (node.kind >= 3) {
+            if (!ir_const_push(p, node.left, 0, frame.depth + 1)) {
+                return ir_const_fail(p, result, 8, frame.node, 0);
+            }
+        }
+    }
+    while (p.state.phase == 1 && p.state.length != 0) {
+        var position: u64 = p.state.length - 1;
+        var frame: IrConstFrame = p.frames[position];
+        if (frame.node >= p.node_count || frame.phase > 2) {
+            return ir_const_fail(p, result, 8, p.root, 0);
+        }
+        if (!ir_const_charge(p)) {
+            return ir_const_fail(p, result, 7, frame.node, 0);
+        }
+        var node: ptr<IrConstNode> = &p.nodes[frame.node];
+        var value: ptr<IrConstValue> = &p.values[frame.node];
+        if (node.kind == 0) {
+            value.literal = node.literal;
+            value.low = node.low;
+            value.high = node.high;
+            value.present = 1;
+            p.state.length -= 1;
+        } else if (node.kind == 1 || node.kind == 2) {
+            value.literal = p.resolved[frame.node].literal;
+            value.low = p.resolved[frame.node].low;
+            value.high = p.resolved[frame.node].high;
+            value.present = 1;
+            p.state.length -= 1;
+        } else if (frame.phase == 0) {
+            p.frames[position].phase = 1;
+            if (!ir_const_push(p, node.left, 0, frame.depth + 1)) {
+                return ir_const_fail(p, result, 8, frame.node, 0);
+            }
+        } else {
+            var left: ptr<IrConstValue> = &p.values[node.left];
+            if (left.present != 1) {
+                return ir_const_fail(p, result, 8, frame.node, 0);
+            }
+            if (node.kind == 5 && (node.op == 10 || node.op == 11)) {
+                if (frame.phase == 1 &&
+                    ((node.op == 10 && left.low != 0) || (node.op == 11 && left.low == 0))) {
+                    p.frames[position].phase = 2;
+                    if (!ir_const_push(p, node.right, 0, frame.depth + 1)) {
+                        return ir_const_fail(p, result, 8, frame.node, 0);
+                    }
+                } else {
+                    var answer: ptr<IrConstValue> = left;
+                    if (frame.phase == 2) {
+                        answer = &p.values[node.right];
+                    }
+                    if (answer.present != 1) {
+                        return ir_const_fail(p, result, 8, frame.node, 0);
+                    }
+                    value[0] = answer[0];
+                    p.state.length -= 1;
+                }
+            } else if ((node.kind == 5 || node.kind == 6) && frame.phase == 1) {
+                p.frames[position].phase = 2;
+                if (!ir_const_push(p, node.right, 0, frame.depth + 1)) {
+                    return ir_const_fail(p, result, 8, frame.node, 0);
+                }
+            } else {
+                var right: IrConstValue;
+                right.literal = 0;
+                right.low = 0;
+                right.high = 0;
+                right.present = 0;
+                if (node.kind == 5 || node.kind == 6) {
+                    right = p.values[node.right];
+                    if (right.present != 1) {
+                        return ir_const_fail(p, result, 8, frame.node, 0);
+                    }
+                }
+                var status: u64 = ir_const_number(p, node, left, &right, value);
+                if (status != 0) {
+                    return ir_const_fail(p, result, status, frame.node, 0);
+                }
+                if (!ir_const_value_valid(p.types[node.ty].kind, value.literal, value.low,
+                                          value.high)) {
+                    return ir_const_fail(p, result, 8, frame.node, 0);
+                }
+                p.state.length -= 1;
+            }
+        }
+    }
+    if (p.state.length == 0) {
+        p.state.phase = 2;
+    }
+    if (p.state.phase != 2 || p.values[p.root].present != 1) {
+        return ir_const_fail(p, result, 8, p.root, 0);
+    }
+    result.status = 0;
+    result.index = p.root;
+    result.literal = p.values[p.root].literal;
+    result.low = p.values[p.root].low;
+    result.high = p.values[p.root].high;
+    result.work = p.state.work;
+    return 0;
+}
+
+export(c) fun whale_ir_const_literal(kind: u64, literal: u64, low: u64, high: u64) -> i32 {
+    if (kind > 21 || literal > 6) {
+        return 2;
+    }
+    if (ir_const_value_valid(kind, literal, low, high)) {
+        return 1;
+    }
+    return 0;
+}

@@ -1,0 +1,443 @@
+// SPDX-License-Identifier: MPL-2.0
+// Shared native preparation and publication; the owning ISA supplies each word.
+fun asm_fixed_packet_valid(packet: ptr<FixedInput>, result: ptr<FixedResult>) -> bool {
+    if (packet == null || packet.mode > 1 || packet.hash_comments > 1
+        || packet.section_capacity == 0 || packet.global_capacity < packet.symbol_capacity
+        || packet.order_capacity < packet.symbol_capacity
+        || !asm_power_two(packet.table_capacity) || packet.table_capacity < 2
+        || packet.symbol_capacity > packet.table_capacity / 2
+        || !asm_span_valid(packet.source.data, packet.source.count, 1)
+        || !asm_span_valid(packet.namespace.data, packet.namespace.count, 1)
+        || !asm_span_valid(packet.sections as ptr<u8>, packet.section_capacity, 48)
+        || !asm_span_valid(packet.symbols as ptr<u8>, packet.symbol_capacity, 64)
+        || !asm_span_valid(packet.table as ptr<u8>, packet.table_capacity, 8)
+        || !asm_span_valid(packet.globals as ptr<u8>, packet.global_capacity, 24)
+        || !asm_span_valid(packet.records as ptr<u8>, packet.record_capacity, 96)
+        || !asm_span_valid(packet.operands as ptr<u8>, packet.operand_capacity, 16)
+        || !asm_span_valid(packet.order as ptr<u8>, packet.order_capacity, 8)
+        || !asm_span_valid(packet.relocations as ptr<u8>, packet.relocation_capacity, 40)
+        || !asm_span_valid(packet.bytes, packet.byte_capacity, 1)) {
+        return asm_fixed_fail(result, 94, result.text, 0);
+    }
+    if (packet.source.count > 8388608) {
+        return asm_fixed_fail(result, 41, packet.source, 0);
+    }
+    if (packet.max_passes == 0) {
+        return asm_fixed_fail(result, 42, packet.source, 0);
+    }
+    return true;
+}
+
+export(c) fun asm_fixed_prepare(packet: ptr<FixedInput>, state: ptr<FixedState>,
+    result: ptr<FixedResult>) -> bool {
+    if (result == null || packet == null || state == null) {
+        return false;
+    }
+    asm_fixed_result_init(result, packet.max_work);
+    if (!asm_fixed_packet_valid(packet, result)) {
+        return false;
+    }
+    state.packet = packet;
+    state.context.source = packet.source;
+    state.context.namespace = packet.namespace;
+    state.context.symbols = packet.symbols;
+    state.context.symbol_count = 0;
+    state.context.table = packet.table;
+    state.context.table_capacity = packet.table_capacity;
+    state.context.section = 0;
+    state.context.offset = 0;
+    state.context.relocations = packet.relocations;
+    state.context.relocation_count = 0;
+    state.context.relocation_capacity = packet.relocation_capacity;
+    state.section_count = 1;
+    state.symbol_count = 0;
+    state.definition_count = 0;
+    state.global_count = 0;
+    state.record_count = 0;
+    state.operand_count = 0;
+    state.selected = 0;
+    state.materialized = 0;
+    state.next = 0;
+    state.pending = 0;
+    packet.sections[0].name.data = null;
+    packet.sections[0].name.count = 0;
+    packet.sections[0].kind = 0;
+    packet.sections[0].align = 4;
+    packet.sections[0].size = 0;
+    packet.sections[0].first = 0;
+    var at: u64 = 0;
+    while (at < packet.table_capacity) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        packet.table[at] = 18446744073709551615;
+        at += 1;
+    }
+    if (!asm_fixed_source(state, result) || !asm_fixed_finish(state, result)) {
+        return false;
+    }
+    state.context.symbol_count = state.symbol_count;
+    if (packet.mode == 1 && state.materialized > packet.byte_capacity) {
+        return asm_fixed_fail(result, 94, packet.source, 0);
+    }
+    return true;
+}
+
+fun asm_fixed_publish(state: ptr<FixedState>, section: u64, offset: u64,
+    value: u64, width: u64, result: ptr<FixedResult>) -> bool {
+    var at: u64 = 0;
+    if (section >= state.section_count || width > 8
+        || offset > state.packet.sections[section].size
+        || width > state.packet.sections[section].size - offset) {
+        return asm_fixed_fail(result, 94, result.text, 0);
+    }
+    if (state.packet.mode == 1) {
+        var first: u64 = state.packet.sections[section].first;
+        if (first > state.packet.byte_capacity || offset > state.packet.byte_capacity - first
+            || width > state.packet.byte_capacity - first - offset) {
+            return asm_fixed_fail(result, 94, result.text, 0);
+        }
+        while (at < width) {
+            state.packet.bytes[first + offset + at] = (value >> (at * 8)) as u8;
+            at += 1;
+        }
+    }
+    return true;
+}
+
+fun asm_fixed_data(state: ptr<FixedState>, record: ptr<FixedRecord>,
+    result: ptr<FixedResult>) -> bool {
+    var at: u64 = 0;
+    var number: AsmWide;
+    var symbol: u64 = 0;
+    var addend: i64 = 0;
+    var location: u64 = record.offset;
+    var code: u64 = 18446744073709551615;
+    var relocation: ptr<FixedRelocation>;
+    if (record.unit != 1 && record.unit != 2 && record.unit != 4 && record.unit != 8) {
+        return asm_fixed_fail(result, 94, record.mnemonic, 0);
+    }
+    while (at < record.count) {
+        if (!asm_fixed_charge(result, 1)
+            || !asm_fixed_expression(&state.context,
+                state.packet.operands[record.first + at], &number, &symbol, &addend, result)) {
+            return false;
+        }
+        if (symbol == 18446744073709551615) {
+            if (!asm_number_fits_signed(&number, record.unit * 8)
+                && !asm_number_fits_unsigned(&number, record.unit * 8)) {
+                return asm_fixed_fail(result, 79, record.mnemonic, 0);
+            }
+        } else {
+            if (symbol >= state.context.symbol_count) {
+                return asm_fixed_fail(result, 13, result.text, 0);
+            }
+            if (record.unit != 4 && record.unit != 8) {
+                return asm_fixed_fail(result, 80, record.mnemonic, 0);
+            }
+            if (state.context.relocation_count >= state.context.relocation_capacity) {
+                return asm_fixed_fail(result, 94, record.mnemonic, 0);
+            }
+            code = 18446744073709551615;
+            if (record.unit == 8) {
+                code = 18446744073709551614;
+            }
+            relocation = &state.context.relocations[state.context.relocation_count];
+            relocation.section = record.section;
+            relocation.offset = location;
+            relocation.symbol = symbol;
+            relocation.code = code;
+            relocation.addend = addend;
+            state.context.relocation_count += 1;
+            number.low = 0;
+            number.high = 0;
+        }
+        if (!asm_fixed_publish(state, record.section, location, number.low, record.unit, result)) {
+            return false;
+        }
+        location += record.unit;
+        at += 1;
+    }
+    return true;
+}
+
+export(c) fun asm_fixed_next(state: ptr<FixedState>, instruction: ptr<FixedInstruction>,
+    result: ptr<FixedResult>) -> i32 {
+    if (state == null || instruction == null || result == null || state.packet == null) {
+        return -1;
+    }
+    if (result.status != 0 || state.pending != 0) {
+        if (result.status == 0) {
+            asm_fixed_fail(result, 94, result.text, 0);
+        }
+        return -1;
+    }
+    var record: ptr<FixedRecord>;
+    var section: ptr<FixedSection>;
+    var at: u64 = 0;
+    while (state.next < state.record_count) {
+        if (!asm_fixed_charge(result, 1)) {
+            return -1;
+        }
+        record = &state.packet.records[state.next];
+        result.start = record.start;
+        result.end = record.end;
+        result.line = record.line;
+        result.previous_line = 0;
+        result.previous_start = 0;
+        result.previous_end = 0;
+        result.text = record.mnemonic;
+        if (record.section >= state.section_count
+            || record.first > state.operand_count
+            || record.count > state.operand_count - record.first) {
+            asm_fixed_fail(result, 94, record.mnemonic, 0);
+            return -1;
+        }
+        section = &state.packet.sections[record.section];
+        state.context.section = record.section;
+        state.context.offset = record.offset;
+        if (section.kind == 3) {
+            state.next += 1;
+            continue;
+        }
+        if (record.kind == 0) {
+            instruction.mnemonic = record.mnemonic;
+            instruction.operands = state.packet.operands;
+            if (record.count != 0) {
+                instruction.operands = &state.packet.operands[record.first];
+            }
+            instruction.count = record.count;
+            instruction.fold = 1;
+            state.pending = 1;
+            return 1;
+        }
+        if (record.kind == 1) {
+            if (!asm_fixed_data(state, record, result)) {
+                return -1;
+            }
+        } else if (record.kind == 2 || record.kind == 3) {
+            if (state.packet.mode == 1) {
+                at = 0;
+                if (record.offset > section.size || record.size > section.size - record.offset
+                    || section.first > state.packet.byte_capacity
+                    || record.offset > state.packet.byte_capacity - section.first
+                    || record.size > state.packet.byte_capacity - section.first - record.offset) {
+                    asm_fixed_fail(result, 94, record.mnemonic, 0);
+                    return -1;
+                }
+                while (at < record.size) {
+                    if (!asm_fixed_charge(result, 1)) {
+                        return -1;
+                    }
+                    state.packet.bytes[section.first + record.offset + at] = 0;
+                    at += 1;
+                }
+            }
+        } else {
+            asm_fixed_fail(result, 94, record.mnemonic, 0);
+            return -1;
+        }
+        state.next += 1;
+    }
+    result.relocations = state.context.relocation_count;
+    return 0;
+}
+
+export(c) fun asm_fixed_commit(state: ptr<FixedState>, word: u64,
+    result: ptr<FixedResult>) -> bool {
+    if (state == null || result == null || state.packet == null) {
+        return false;
+    }
+    if (result.status != 0) {
+        return false;
+    }
+    if (state.pending != 1 || state.next >= state.record_count || word > 4294967295) {
+        return asm_fixed_fail(result, 94, result.text, 0);
+    }
+    var record: ptr<FixedRecord> = &state.packet.records[state.next];
+    if (record.kind != 0
+        || !asm_fixed_publish(state, record.section, record.offset, word, 4, result)) {
+        return false;
+    }
+    state.pending = 0;
+    state.next += 1;
+    return true;
+}
+
+fun asm_fixed_probe_bound(value: u64, extra: u64, maximum: u64) -> u64 {
+    if (value >= maximum || extra >= maximum - value) {
+        return maximum;
+    }
+    return value + extra;
+}
+
+fun asm_fixed_probe_data(text: FixedText, result: ptr<FixedResult>) -> bool {
+    var start: u64 = 0;
+    var at: u64 = 0;
+    var first: u64 = 0;
+    var part: FixedText;
+    while (at <= text.count) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        if (at == text.count || text.data[at] == 44) {
+            part = asm_fixed_trim(asm_fixed_slice(text, start, at));
+            if (part.count != 0) {
+                first = part.data[0] as u64;
+                if ((first >= 65 && first <= 90) || (first >= 97 && first <= 122)
+                    || first == 95 || first == 46 || first == 36) {
+                    result.relocations += 1;
+                }
+            }
+            start = at + 1;
+        }
+        at += 1;
+    }
+    return true;
+}
+
+fun asm_fixed_probe_line(text: FixedText, definitions: ptr<u64>, globals: ptr<u64>,
+    result: ptr<FixedResult>) -> bool {
+    var at: u64 = 0;
+    var colon: u64 = 0;
+    var word_end: u64 = 0;
+    var count: u64 = 0;
+    var mnemonic: FixedText;
+    var tail: FixedText;
+    text = asm_fixed_trim(text);
+    while (text.count != 0) {
+        colon = 0;
+        while (colon < text.count && text.data[colon] != 58) {
+            if (!asm_fixed_charge(result, 1)) {
+                return false;
+            }
+            colon += 1;
+        }
+        if (colon == text.count) {
+            break;
+        }
+        definitions[0] = asm_fixed_probe_bound(definitions[0], 1, 65537);
+        text = asm_fixed_trim(asm_fixed_slice(text, colon + 1, text.count));
+    }
+    if (text.count == 0) {
+        return true;
+    }
+    while (word_end < text.count && asm_fixed_space(text, word_end) == 0) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        word_end += 1;
+    }
+    mnemonic = asm_fixed_slice(text, 0, word_end);
+    tail = asm_fixed_trim(asm_fixed_slice(text, word_end, text.count));
+    if (asm_fixed_word(mnemonic, 500236121134, 5, 1)
+        || asm_fixed_word(mnemonic, 418564367406, 5, 1)
+        || asm_fixed_word(mnemonic, 27431034386608686, 7, 1)
+        || asm_fixed_word(mnemonic, 1936941614, 4, 1)
+        || asm_fixed_word(mnemonic, 7957695015191671598, 8, 1)) {
+        result.sections = asm_fixed_probe_bound(result.sections, 1, 4097);
+        return true;
+    }
+    if (tail.count != 0) {
+        count = 1;
+        while (at < tail.count) {
+            if (!asm_fixed_charge(result, 1)) {
+                return false;
+            }
+            if (tail.data[at] == 44) {
+                count += 1;
+            }
+            at += 1;
+        }
+    }
+    if (asm_fixed_word(mnemonic, 30506372888815406, 7, 1)
+        || asm_fixed_word(mnemonic, 119170031970094, 6, 1)
+        || asm_fixed_word(mnemonic, 31088027509482798, 7, 1)) {
+        globals[0] = asm_fixed_probe_bound(globals[0], count, 65537);
+        if (asm_fixed_word(mnemonic, 31088027509482798, 7, 1)) {
+            definitions[0] = asm_fixed_probe_bound(definitions[0], count, 65537);
+        }
+        result.operands += count;
+        return true;
+    }
+    // Source stops at the first record beyond its hard limit. Later records
+    // cannot require buffers and must not amplify a short-record input.
+    if (result.records >= 262145) {
+        return true;
+    }
+    result.records += 1;
+    if (asm_fixed_word(mnemonic, 478660622894, 5, 1)
+        || asm_fixed_word(mnemonic, 111477510927150, 6, 1)
+        || asm_fixed_word(mnemonic, 31075949925720622, 7, 1)
+        || asm_fixed_word(mnemonic, 7955443180981350446, 8, 1)
+        || asm_fixed_word(mnemonic, 121390429397294, 6, 1)) {
+        return true;
+    }
+    result.operands += count;
+    if (asm_fixed_word(mnemonic, 435745808942, 5, 1)
+        || asm_fixed_word(mnemonic, 110442659145774, 6, 1)
+        || asm_fixed_word(mnemonic, 128034844209966, 6, 1)
+        || asm_fixed_word(mnemonic, 431416637230, 5, 1)
+        || asm_fixed_word(mnemonic, 444234427438, 5, 1)
+        || asm_fixed_word(mnemonic, 431131816238, 5, 1)) {
+        return asm_fixed_probe_data(tail, result);
+    }
+    result.relocations += 1;
+    return true;
+}
+
+export(c) fun whale_fixed_probe(source: ptr<FixedText>, hash_comments: u64,
+    result: ptr<FixedResult>) -> i32 {
+    if (result == null || source == null) {
+        return 2;
+    }
+    var max_work: u64 = result.max_work;
+    asm_fixed_result_init(result, max_work);
+    if (hash_comments > 1 || !asm_span_valid(source.data, source.count, 1)) {
+        asm_fixed_fail(result, 94, source[0], 0);
+        return result.status as i32;
+    }
+    if (source.count > 8388608) {
+        asm_fixed_fail(result, 41, source[0], 0);
+        return result.status as i32;
+    }
+    result.sections = 1;
+    var definitions: u64 = 0;
+    var globals: u64 = 0;
+    var line_start: u64 = 0;
+    var line_end: u64 = 0;
+    var comment: u64 = 0;
+    var at: u64 = 0;
+    while (line_start < source.count) {
+        line_end = line_start;
+        while (line_end < source.count && source.data[line_end] != 10) {
+            if (!asm_fixed_charge(result, 1)) {
+                return result.status as i32;
+            }
+            line_end += 1;
+        }
+        comment = line_end;
+        at = line_start;
+        while (at < line_end) {
+            if (!asm_fixed_charge(result, 1)) {
+                return result.status as i32;
+            }
+            if (source.data[at] == 59 || (hash_comments != 0 && source.data[at] == 35)
+                || (source.data[at] == 47 && at + 1 < line_end && source.data[at + 1] == 47)) {
+                comment = at;
+                break;
+            }
+            at += 1;
+        }
+        if (!asm_fixed_probe_line(asm_fixed_slice(source[0], line_start, comment),
+            &definitions, &globals, result)) {
+            return result.status as i32;
+        }
+        line_start = line_end;
+        if (line_start < source.count) {
+            line_start += 1;
+        }
+    }
+    result.symbols = definitions + globals;
+    return 0;
+}

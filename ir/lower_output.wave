@@ -1,0 +1,264 @@
+// SPDX-License-Identifier: MPL-2.0
+// Typed O0 output is a caller-owned flat model. Wave chooses every identity,
+// body link, hoisted allocation position and source identity before Rust reads it.
+struct IrLowerInstruction {
+    tag: u64; dst: u64; ty: u64; a: u64; b: u64; c: u64; d: u64; e: u64;
+    first: u64; count: u64; next: u64; annotation: u64; source: u64;
+}
+
+struct IrLowerBlock {
+    id: u64; function: u64; name: u64; first: u64; last: u64; allocation_last: u64;
+    instruction_count: u64; term_kind: u64; term_a: u64; term_b: u64; term_c: u64;
+    term_ty: u64; term_annotation: u64; term_source: u64;
+}
+
+struct IrLowerConstant {
+    kind: u64; operation: u64; ty: u64; low: u64; high: u64;
+    left: u64; right: u64; reference: u64; annotation: u64;
+}
+
+struct IrLowerDeclaration { name: u64; signature: u64; linkage: u64; link_name: u64; defined: u64; source: u64; }
+
+struct IrLowerFunction { declaration: u64; first_param: u64; param_count: u64; first_block: u64; block_count: u64; entry: u64; source: u64; }
+
+struct IrLowerGlobal { name: u64; ty: u64; expression: u64; align: u64; annotation: u64; source: u64; }
+
+struct IrLowerFieldBinding { name: u64; ordinal: u64; previous: u64; used: u64; }
+
+struct IrLowerLoop { condition: u64; exit: u64; }
+
+struct IrLowerAnnotation { original: u64; has_source: u64; file: u64; line: u64; column: u64; end_line: u64; end_column: u64; }
+
+struct IrLowerOriginalSlot { id: u64; occupied: u64; }
+
+struct IrLowerEvalRequest { expression: u64; kind: u64; identity: u64; annotation: u64; }
+
+struct IrLowerDriver {
+    core: ptr<IrLowerContext>; mode: u64; expansion: u64; max_expansion: u64;
+    instructions: ptr<IrLowerInstruction>; instruction_count: u64; instruction_capacity: u64;
+    output_edges: ptr<u64>; output_edge_count: u64; output_edge_capacity: u64;
+    blocks: ptr<IrLowerBlock>; block_count: u64; block_capacity: u64;
+    constants: ptr<IrLowerConstant>;
+    declarations: ptr<IrLowerDeclaration>; declaration_count: u64; declaration_capacity: u64;
+    functions: ptr<IrLowerFunction>; function_count: u64; function_capacity: u64;
+    globals: ptr<IrLowerGlobal>; global_count: u64; global_capacity: u64;
+    global_bindings: ptr<IrLowerBinding>; global_binding_count: u64;
+    bindings: ptr<IrLowerBinding>; binding_count: u64; binding_capacity: u64;
+    loops: ptr<IrLowerLoop>; loop_count: u64; loop_capacity: u64;
+    annotations: ptr<IrLowerAnnotation>; annotation_count: u64;
+    original_table: ptr<IrLowerOriginalSlot>; original_capacity: u64;
+    source_order: ptr<u64>; source_count: u64; source_capacity: u64; source_marks: ptr<u64>;
+    type_sizes: ptr<u64>; value_types: ptr<u64>; value_capacity: u64; next_value: u64;
+    declaration_map: ptr<u64>;
+    field_slots: ptr<u64>; field_bindings: ptr<IrLowerFieldBinding>;
+    field_binding_count: u64; field_binding_capacity: u64;
+    current_function: u64; current_block: u64; entry: u64; return_type: u64;
+    local_slots: ptr<u64>; global_slots: ptr<u64>;
+    mapping_order: ptr<u64>; mapping_count: u64; mapping_capacity: u64;
+    source_work: u64; max_source_work: u64; error_index: u64;
+    requests: ptr<IrLowerEvalRequest>; request_count: u64; request_capacity: u64;
+}
+
+fun ir_lower_source_charge(p: ptr<IrLowerDriver>, amount: u64, node: u64) -> bool {
+    if (amount > p.max_source_work - p.source_work) {
+        return ir_lower_fail(p.core, 22, node, 0, 0, 0);
+    }
+    p.source_work += amount; return ir_lower_charge(p.core, amount, node);
+}
+
+fun ir_lower_expand(p: ptr<IrLowerDriver>, amount: u64, node: u64) -> bool {
+    if (!ir_lower_charge(p.core, amount, node)) { return false; }
+    if (amount > p.max_expansion - p.expansion) {
+        return ir_lower_fail(p.core, 23, node, 0, 0, 0);
+    }
+    p.expansion += amount; return true;
+}
+
+fun ir_lower_type_size(p: ptr<IrLowerDriver>, ty: u64, node: u64, depth: u64, size: ptr<u64>) -> bool {
+    if (ty >= p.core.type_count || depth > 32) { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+    if (!ir_lower_charge(p.core, 1, node)) { return false; }
+    if (p.type_sizes[ty] != 0) { size[0] = p.type_sizes[ty]; return true; }
+    var count: u64 = 1;
+    var child: u64 = 0;
+    var t: ptr<IrLowerType> = &p.core.types[ty];
+    if (t.kind == 17 || t.kind == 18 || t.kind == 19) {
+        if (!ir_lower_type_size(p, t.child, node, depth + 1, &child)) { return false; }
+        count += child;
+    }
+    var at: u64 = 0;
+    if (t.kind == 18 || t.kind == 20 || t.kind == 21) {
+        while (at < t.count) {
+            if (!ir_lower_type_size(p, p.core.type_edges[t.first + at], node, depth + 1, &child)) { return false; }
+            if (child > p.max_expansion - count) { return ir_lower_fail(p.core, 23, node, 0, 0, 0); }
+            count += child; at += 1;
+        }
+    }
+    p.type_sizes[ty] = count; size[0] = count; return true;
+}
+
+fun ir_lower_value(p: ptr<IrLowerDriver>, ty: u64, node: u64, output: ptr<u64>) -> bool {
+    var size: u64 = 0;
+    if (!ir_lower_type_size(p, ty, node, 0, &size) || !ir_lower_expand(p, 1 + size, node)) { return false; }
+    if (p.next_value >= 4294967295) { return ir_lower_fail(p.core, 23, node, 0, 0, 0); }
+    if (p.mode == 1) {
+        if (p.next_value >= p.value_capacity) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+        p.value_types[p.next_value] = ty;
+    }
+    output[0] = p.next_value; p.next_value += 1; return true;
+}
+
+fun ir_lower_block(p: ptr<IrLowerDriver>, name: u64, node: u64, output: ptr<u64>) -> bool {
+    if (!ir_lower_expand(p, 1, node)) { return false; }
+    if (p.block_count >= p.block_capacity || p.block_count >= 4294967295) {
+        return ir_lower_fail(p.core, 4, node, 0, 0, 0);
+    }
+    var id: u64 = p.block_count;
+    p.blocks[id].id = id; p.blocks[id].function = p.current_function; p.blocks[id].name = name;
+    p.blocks[id].first = 18446744073709551615; p.blocks[id].last = 18446744073709551615;
+    p.blocks[id].allocation_last = 18446744073709551615;
+    p.blocks[id].instruction_count = 0; p.blocks[id].term_kind = 0;
+    p.blocks[id].term_a = 0; p.blocks[id].term_b = 0; p.blocks[id].term_c = 0;
+    p.blocks[id].term_ty = 0; p.blocks[id].term_annotation = 18446744073709551615;
+    p.blocks[id].term_source = node; p.block_count += 1; output[0] = id; return true;
+}
+
+fun ir_lower_emit(p: ptr<IrLowerDriver>, tag: u64, dst: u64, ty: u64,
+    a: u64, b: u64, c: u64, d: u64, e: u64, edges: ptr<u64>, count: u64,
+    hoisted: bool, node: u64) -> bool {
+    var type_size: u64 = 0;
+    if (ty != 18446744073709551615
+        && !ir_lower_type_size(p, ty, node, 0, &type_size)) { return false; }
+    if (!ir_lower_expand(p, 1 + type_size, node)
+        || !ir_lower_charge(p.core, count, node)) { return false; }
+    if (p.core.annotation != 18446744073709551615
+        && !ir_lower_source_charge(p, 1, node)) { return false; }
+    var block: u64 = p.current_block;
+    if (hoisted) { block = p.entry; }
+    if (block >= p.block_count || (p.blocks[block].term_kind != 0 && !hoisted)) {
+        return ir_lower_fail(p.core, 3, node, 0, 0, 0);
+    }
+    if (p.mode == 1) {
+        if (p.instruction_count >= p.instruction_capacity
+            || count > p.output_edge_capacity - p.output_edge_count) {
+            return ir_lower_fail(p.core, 4, node, 0, 0, 0);
+        }
+        var id: u64 = p.instruction_count;
+        var record: ptr<IrLowerInstruction> = &p.instructions[id];
+        record.tag = tag; record.dst = dst; record.ty = ty; record.a = a; record.b = b; record.c = c;
+        record.d = d; record.e = e; record.first = p.output_edge_count; record.count = count;
+        record.next = 18446744073709551615; record.annotation = p.core.annotation; record.source = node;
+        var at: u64 = 0;
+        while (at < count) { p.output_edges[p.output_edge_count + at] = edges[at]; at += 1; }
+        // Hoisting is Wave's linked-list operation, independent of when Rust
+        // later allocates the compatibility vectors for the completed module.
+        var last: u64 = p.blocks[block].last;
+        var allocation_last: u64 = p.blocks[block].allocation_last;
+        if (hoisted) {
+            if (allocation_last == 18446744073709551615) {
+                record.next = p.blocks[block].first; p.blocks[block].first = id;
+            } else {
+                record.next = p.instructions[allocation_last].next;
+                p.instructions[allocation_last].next = id;
+            }
+            p.blocks[block].allocation_last = id;
+            if (last == 18446744073709551615 || last == allocation_last) { p.blocks[block].last = id; }
+        } else {
+            if (last == 18446744073709551615) { p.blocks[block].first = id; }
+            else { p.instructions[last].next = id; }
+            p.blocks[block].last = id;
+        }
+    }
+    if (count > 18446744073709551615 - p.output_edge_count) { return ir_lower_fail(p.core, 23, node, 0, 0, 0); }
+    p.output_edge_count += count; p.instruction_count += 1;
+    p.blocks[block].instruction_count += 1; return true;
+}
+
+fun ir_lower_term(p: ptr<IrLowerDriver>, kind: u64, ty: u64, a: u64,
+    b: u64, c: u64, node: u64) -> bool {
+    if (!ir_lower_expand(p, 1, node)) { return false; }
+    if (p.current_block >= p.block_count || p.blocks[p.current_block].term_kind != 0) {
+        return ir_lower_fail(p.core, 3, node, 0, 0, 0);
+    }
+    if (p.core.annotation != 18446744073709551615
+        && !ir_lower_source_charge(p, 1, node)) { return false; }
+    var block: ptr<IrLowerBlock> = &p.blocks[p.current_block];
+    block.term_kind = kind; block.term_ty = ty; block.term_a = a; block.term_b = b;
+    block.term_c = c; block.term_annotation = p.core.annotation; block.term_source = node; return true;
+}
+
+fun ir_lower_source(p: ptr<IrLowerDriver>, annotation: u64, node: u64) -> bool {
+    if (annotation >= p.annotation_count) { return ir_lower_fail(p.core, 3, node, 0, 0, 0); }
+    if (!ir_lower_source_charge(p, 1, node)) { return false; }
+    if (p.source_marks[annotation] != 0) { return true; }
+    var source: ptr<IrLowerAnnotation> = &p.annotations[annotation];
+    if (source.has_source != 0) {
+        if (!ir_lower_name(p.core, source.file, node)
+            || !ir_lower_source_charge(p, p.core.names[source.file].length, node)) { return false; }
+    }
+    if (p.mode == 1) {
+        if (p.source_count >= p.source_capacity) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+        p.source_order[p.source_count] = annotation;
+    }
+    p.source_count += 1; p.source_marks[annotation] = 1; return true;
+}
+
+// Binding.constant stores the previous local slot. Typed constant payloads are
+// separate records, so a scope restores names by popping only its own bindings.
+fun ir_lower_binding(p: ptr<IrLowerDriver>, name: u64, node: u64,
+    global_only: bool, output: ptr<IrLowerBinding>) -> bool {
+    if (!ir_lower_charge(p.core, 1, node) || !ir_lower_name(p.core, name, node)) { return false; }
+    var slot: u64 = 18446744073709551615;
+    if (!global_only) { slot = p.local_slots[name]; }
+    if (slot != 18446744073709551615) { output[0] = p.bindings[slot]; return true; }
+    slot = p.global_slots[name];
+    if (slot != 18446744073709551615) { output[0] = p.global_bindings[slot]; return true; }
+    return ir_lower_fail(p.core, 11, node, 0, 0, name);
+}
+
+fun ir_lower_bind(p: ptr<IrLowerDriver>, name: u64, ty: u64, value: u64,
+    kind: u64, constant: u64, node: u64) -> bool {
+    if (!ir_lower_charge(p.core, 1, node) || !ir_lower_name(p.core, name, node)) { return false; }
+    if (p.binding_count >= p.binding_capacity) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+    var at: u64 = p.binding_count;
+    p.bindings[at].name = name; p.bindings[at].ty = ty; p.bindings[at].value = value;
+    p.bindings[at].kind = kind; p.bindings[at].constant = p.local_slots[name];
+    p.local_slots[name] = at; p.binding_count += 1; return true;
+}
+
+fun ir_lower_restore(p: ptr<IrLowerDriver>, saved: u64, node: u64) -> bool {
+    while (p.binding_count > saved) {
+        if (!ir_lower_charge(p.core, 1, node)) { return false; }
+        p.binding_count -= 1;
+        var binding: ptr<IrLowerBinding> = &p.bindings[p.binding_count];
+        p.local_slots[binding.name] = binding.constant;
+    }
+    return true;
+}
+
+fun ir_lower_local_binding(p: ptr<IrLowerDriver>, name: u64, node: u64,
+    output: ptr<IrLowerBinding>) -> bool {
+    if (!ir_lower_charge(p.core, 1, node) || !ir_lower_name(p.core, name, node)) { return false; }
+    var slot: u64 = p.local_slots[name];
+    if (slot != 18446744073709551615) { output[0] = p.bindings[slot]; return true; }
+    return ir_lower_fail(p.core, 11, node, 0, 0, name);
+}
+
+fun ir_lower_complete_source(p: ptr<IrLowerDriver>, annotation: u64, node: u64) -> bool {
+    if (!ir_lower_source(p, annotation, node)) { return false; }
+    if (p.mode == 1) {
+        if (p.mapping_count >= p.mapping_capacity) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+        p.mapping_order[p.mapping_count] = annotation;
+    }
+    p.mapping_count += 1; return true;
+}
+
+// A completed constexpr is evaluated by the central numeric engine before a
+// later AST error is reported. Partial preservation never publishes a request.
+fun ir_lower_evaluate_request(p: ptr<IrLowerDriver>, expression: u64, kind: u64,
+    identity: u64, node: u64) -> bool {
+    if (p.request_count >= p.request_capacity) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+    var record: ptr<IrLowerEvalRequest> = &p.requests[p.request_count];
+    record.expression = expression; record.kind = kind; record.identity = identity;
+    record.annotation = p.core.annotation; p.request_count += 1;
+    return ir_lower_charge(p.core, 1, node);
+}

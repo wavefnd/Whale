@@ -5,5 +5,7 @@ target/
 *.swp
 
 .ci-artifacts/
+.ci-asmobj/
+.ci-wave/
 __pycache__/
 /docs/

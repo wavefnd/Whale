@@ -1,0 +1,213 @@
+// SPDX-License-Identifier: MPL-2.0
+// Verified transactional pass control. Actions call other IR components or the
+// caller's existing Pass trait; no host callback is invoked from Wave.
+struct IrPassState {
+    phase: u64;
+    epoch0: u64;
+    epoch1: u64;
+    epoch2: u64;
+    work: u64;
+    changed: u64;
+    mask: u64;
+    failure_stage: u64;
+    failure_detail: u64;
+}
+
+struct IrPassReply {
+    action: u64;
+    failed: u64;
+    changed: u64;
+    mask: u64;
+}
+
+struct IrPassResult {
+    status: u64;
+    action: u64;
+    stage: u64;
+    detail: u64;
+    changed: u64;
+    mask: u64;
+    epoch0: u64;
+    epoch1: u64;
+    epoch2: u64;
+    work: u64;
+}
+
+fun ir_pass_output(state: ptr<IrPassState>, result: ptr<IrPassResult>, action: u64) -> i32 {
+    result.status = 0;
+    result.action = action;
+    result.stage = state.failure_stage;
+    result.detail = state.failure_detail;
+    result.changed = state.changed;
+    result.mask = state.mask;
+    result.epoch0 = state.epoch0;
+    result.epoch1 = state.epoch1;
+    result.epoch2 = state.epoch2;
+    result.work = state.work;
+    return 0;
+}
+
+fun ir_pass_fail(state: ptr<IrPassState>, result: ptr<IrPassResult>, stage: u64,
+    detail: u64, rollback: bool) -> i32 {
+    state.failure_stage = stage;
+    state.failure_detail = detail;
+    if (rollback) {
+        state.phase = 8;
+        return ir_pass_output(state, result, 8);
+    }
+    state.phase = 10;
+    return ir_pass_output(state, result, 10);
+}
+
+// Exact packet equality. One unit covers at most eight examined bytes.
+fun ir_pass_equal(state: ptr<IrPassState>, before: ptr<u8>, before_count: u64,
+    after: ptr<u8>, after_count: u64, max_work: u64, equal: ptr<u64>) -> bool {
+    equal[0] = 0;
+    if (before_count != after_count) {
+        return true;
+    }
+    var index: u64 = 0;
+    while (index < before_count) {
+        if (state.work >= max_work) {
+            return false;
+        }
+        state.work += 1;
+        var count: u64 = before_count - index;
+        if (count > 8) {
+            count = 8;
+        }
+        var offset: u64 = 0;
+        while (offset < count) {
+            if (before[index + offset] != after[index + offset]) {
+                return true;
+            }
+            offset += 1;
+        }
+        index += count;
+    }
+    equal[0] = 1;
+    return true;
+}
+
+// Action 1 before verify, 2 snapshot, 3 transform, 4 after verify,
+// 5 after packet, 7 epoch commit, 8 rollback, 9 success, 10 failure.
+// Failure stages match Before/Transform/After/Contract (0..3).
+// Detail 0 preserves the adapter's error; 1 report, 2 epoch, 3 work.
+export(c) fun whale_ir_pass_step(state: ptr<IrPassState>, reply: ptr<IrPassReply>,
+    before: ptr<u8>, before_count: u64, after: ptr<u8>, after_count: u64,
+    max_work: u64, result: ptr<IrPassResult>) -> i32 {
+    if (result == null) {
+        return 1;
+    }
+    result.status = 1;
+    if (state == null || reply == null || state.phase > 10 || state.phase == 6
+        || state.work > max_work || state.changed > 1 || state.mask > 7
+        || reply.failed > 1 || reply.changed > 1 || reply.mask > 7) {
+        return 1;
+    }
+    if (state.phase == 9 || state.phase == 10) {
+        return ir_pass_output(state, result, state.phase);
+    }
+    if (reply.action != state.phase) {
+        return 1;
+    }
+    if (state.phase == 0) {
+        if (reply.failed != 0) {
+            return 1;
+        }
+        state.phase = 1;
+        return ir_pass_output(state, result, 1);
+    }
+    if (state.phase == 1) {
+        if (reply.failed != 0) {
+            return ir_pass_fail(state, result, 0, 0, false);
+        }
+        state.phase = 2;
+        return ir_pass_output(state, result, 2);
+    }
+    if (state.phase == 2) {
+        if (reply.failed != 0) {
+            return ir_pass_fail(state, result, 0, 0, false);
+        }
+        state.phase = 3;
+        return ir_pass_output(state, result, 3);
+    }
+    if (state.phase == 3) {
+        if (reply.failed != 0) {
+            return ir_pass_fail(state, result, 1, 0, true);
+        }
+        state.changed = reply.changed;
+        state.mask = reply.mask;
+        state.phase = 4;
+        return ir_pass_output(state, result, 4);
+    }
+    if (state.phase == 4) {
+        if (reply.failed != 0) {
+            return ir_pass_fail(state, result, 2, 0, true);
+        }
+        state.phase = 5;
+        return ir_pass_output(state, result, 5);
+    }
+    if (state.phase == 5) {
+        if (reply.failed != 0) {
+            return ir_pass_fail(state, result, 3, 0, true);
+        }
+        if (!ir_span_valid(before, before_count, 1) || !ir_span_valid(after, after_count, 1)) {
+            return 1;
+        }
+        var equal: u64 = 0;
+        if (!ir_pass_equal(state, before, before_count, after, after_count, max_work, &equal)) {
+            return ir_pass_fail(state, result, 3, 3, true);
+        }
+        var changed: u64 = 1 - equal;
+        if (state.changed != changed || (changed == 1 && state.mask != 7)
+            || (changed == 0 && state.mask != 0)) {
+            return ir_pass_fail(state, result, 3, 1, true);
+        }
+        if (((state.mask & 1) != 0 && state.epoch0 == 18446744073709551615)
+            || ((state.mask & 2) != 0 && state.epoch1 == 18446744073709551615)
+            || ((state.mask & 4) != 0 && state.epoch2 == 18446744073709551615)) {
+            return ir_pass_fail(state, result, 3, 2, true);
+        }
+        if ((state.mask & 1) != 0) {
+            state.epoch0 += 1;
+        }
+        if ((state.mask & 2) != 0) {
+            state.epoch1 += 1;
+        }
+        if ((state.mask & 4) != 0) {
+            state.epoch2 += 1;
+        }
+        state.phase = 7;
+        return ir_pass_output(state, result, 7);
+    }
+    if (reply.failed != 0) {
+        return 1;
+    }
+    if (state.phase == 7) {
+        state.phase = 9;
+        return ir_pass_output(state, result, 9);
+    }
+    if (state.phase == 8) {
+        state.phase = 10;
+        return ir_pass_output(state, result, 10);
+    }
+    return 1;
+}
+
+export(c) fun whale_ir_analysis_current(cache_identity: u64, cache_epoch: u64,
+    state_identity: u64, epoch0: u64, epoch1: u64, epoch2: u64, kind: u64) -> i32 {
+    if (kind > 2) {
+        return 2;
+    }
+    var epoch: u64 = epoch0;
+    if (kind == 1) {
+        epoch = epoch1;
+    } else if (kind == 2) {
+        epoch = epoch2;
+    }
+    if (cache_identity == state_identity && cache_epoch == epoch) {
+        return 1;
+    }
+    return 0;
+}

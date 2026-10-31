@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 rust-version.workspace = true
 
+[features]
+default = []
+rust-reference = ["assembler/rust-reference", "ir/rust-reference"]
+
 [dependencies]
 assembler = { path = "../assembler" }
 backend-api = { path = "../backend-api" }

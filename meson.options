@@ -9,8 +9,24 @@ option('asm-loongarch64', type: 'boolean', value: true,
        description: 'Include the LoongArch64 assembler output module')
 option('socket-cli', type: 'boolean', value: false,
        description: 'Include experimental AST JSON lowering commands')
+option('native-linker', type: 'boolean', value: true,
+       description: 'Include static Linux AMD64 executable linking')
+option('rust-reference', type: 'boolean', value: false,
+       description: 'Explicitly allow Rust reference algorithms for comparison builds')
 option('asmobj-dir', type: 'string', value: '',
        description: 'Absolute directory of the complete prebuilt Wave asmobj module for the executable host')
+option('wave-ir-dir', type: 'string', value: '',
+       description: 'Absolute directory of a prebuilt internal Wave IR module; source builds use the pinned compiler')
+option('wave-assembler-dir', type: 'string', value: '',
+       description: 'Absolute directory of the shared Wave assembler archive for the executable host')
+option('wave-amd64-dir', type: 'string', value: '',
+       description: 'Absolute directory of the Wave AMD64 parser/encoder archive for the executable host')
+option('wave-aarch64-dir', type: 'string', value: '',
+       description: 'Absolute directory of the Wave aarch64 module for the executable host')
+option('wave-riscv64-dir', type: 'string', value: '',
+       description: 'Absolute directory of the Wave riscv64 module for the executable host')
+option('wave-loongarch64-dir', type: 'string', value: '',
+       description: 'Absolute directory of the Wave loongarch64 module for the executable host')
 option('wave-source', type: 'string', value: '',
        description: 'Read-only Wave Git checkout containing the pinned bootstrap revision')
 option('wave-bootstrap-dir', type: 'string', value: '',

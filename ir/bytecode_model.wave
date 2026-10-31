@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: MPL-2.0
+// Portable file fields are encoded individually. These pointers are transport,
+// never file contents or executable pointer authority.
+struct IrBytecodeSite {
+    function: u64;
+    block: u64;
+    instruction: u64;
+    value: u64;
+}
+
+struct IrBytecodeText {
+    first: u64;
+    count: u64;
+}
+
+struct IrBytecodeFile {
+    id: u64;
+    text: u64;
+}
+
+struct IrBytecodeCounts {
+    types: u64;
+    edges: u64;
+    functions: u64;
+    blocks: u64;
+    instructions: u64;
+    operands: u64;
+    value_types: u64;
+    globals: u64;
+    sites: u64;
+    texts: u64;
+    text_bytes: u64;
+    files: u64;
+    originals: u64;
+    mappings: u64;
+    value_ids: u64;
+    constant_globals: u64;
+}
+
+struct IrBytecodeProgram {
+    types: ptr<IrVerifyType>;
+    type_count: u64;
+    edges: ptr<u64>;
+    edge_count: u64;
+    functions: ptr<IrRuntimeFunction>;
+    function_count: u64;
+    blocks: ptr<IrRuntimeBlock>;
+    block_count: u64;
+    instructions: ptr<IrRuntimeInstruction>;
+    instruction_count: u64;
+    operands: ptr<u64>;
+    operand_count: u64;
+    value_types: ptr<u64>;
+    value_type_count: u64;
+    globals: ptr<IrRuntimeGlobal>;
+    global_count: u64;
+    sites: ptr<IrBytecodeSite>;
+    site_count: u64;
+    texts: ptr<IrBytecodeText>;
+    text_count: u64;
+    text_bytes: ptr<u8>;
+    text_byte_count: u64;
+    files: ptr<IrBytecodeFile>;
+    file_count: u64;
+    originals: ptr<IrSourceOriginal>;
+    original_count: u64;
+    mappings: ptr<IrSourceMapping>;
+    mapping_count: u64;
+    value_ids: ptr<u64>;
+    value_id_count: u64;
+    constant_global_ids: ptr<u64>;
+    constant_global_count: u64;
+}
+
+struct IrBytecodeLimits {
+    max_input_bytes: u64;
+    max_decoded_bytes: u64;
+    max_records: u64;
+    max_work: u64;
+    max_type_depth: u64;
+    max_workspace_bytes: u64;
+}
+
+struct IrBytecodeResult {
+    status: u64;
+    code: u64;
+    table: u64;
+    index: u64;
+    work: u64;
+    decoded_bytes: u64;
+    scratch_words: u64;
+    estimated_workspace_bytes: u64;
+    counts: IrBytecodeCounts;
+}
+
+fun ir_bytecode_fail(result: ptr<IrBytecodeResult>, status: u64,
+    code: u64, table: u64, index: u64) -> bool {
+    result.status = status;
+    result.code = code;
+    result.table = table;
+    result.index = index;
+    return false;
+}
+
+fun ir_bytecode_charge(result: ptr<IrBytecodeResult>, limits: ptr<IrBytecodeLimits>,
+    amount: u64) -> bool {
+    if (result.work > limits.max_work || amount > limits.max_work - result.work) {
+        return ir_bytecode_fail(result, 3, 1, result.table, result.index);
+    }
+    result.work += amount;
+    return true;
+}
+
+fun ir_bytecode_result_init(result: ptr<IrBytecodeResult>) {
+    var words: ptr<u64> = result as ptr<u64>;
+    var i: u64 = 0;
+    while (i < 24) {
+        words[i] = 0;
+        i += 1;
+    }
+}
+
+fun ir_bytecode_stride(table: u64) -> u64 {
+    if (table == 1) { return 40; }
+    if (table == 3) { return 88; }
+    if (table == 4 || table == 9) { return 32; }
+    if (table == 5) { return 136; }
+    if (table == 8) { return 64; }
+    if (table == 10 || table == 12) { return 16; }
+    if (table == 11) { return 1; }
+    if (table == 13) { return 56; }
+    if (table == 14) { return 40; }
+    return 8;
+}
+
+fun ir_bytecode_native_stride(table: u64) -> u64 {
+    if (table == 5) { return 168; }
+    if (table == 8) { return 216; }
+    return ir_bytecode_stride(table);
+}
+
+fun ir_bytecode_count(program: ptr<IrBytecodeProgram>, table: u64) -> u64 {
+    var words: ptr<u64> = program as ptr<u64>;
+    return words[(table - 1) * 2 + 1];
+}
+
+fun ir_bytecode_data(program: ptr<IrBytecodeProgram>, table: u64) -> ptr<u8> {
+    var words: ptr<u64> = program as ptr<u64>;
+    return words[(table - 1) * 2] as ptr<u8>;
+}

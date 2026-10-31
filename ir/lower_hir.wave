@@ -1,0 +1,279 @@
+// SPDX-License-Identifier: MPL-2.0
+// Pinned Wave TypedProgram scalar adapter. Resolved numeric facts and stable
+// expression identities cross this boundary explicitly; syntax never infers a
+// type. All checks finish before the caller publishes a frontend Program.
+struct IrHirNode { tag: u64; a: u64; b: u64; c: u64; d: u64; e: u64; f: u64; g: u64; }
+
+struct IrHirOutput { ty: u64; operation: u64; }
+
+struct IrHirBinding { name: u64; ty: u64; }
+
+struct IrHirIdentity { id: u64; occupied: u64; }
+
+struct IrHirResult { status: u64; node: u64; detail: u64; work: u64; }
+
+struct IrHirAdapter {
+    nodes: ptr<IrHirNode>; count: u64; edges: ptr<u64>; edge_count: u64;
+    output: ptr<IrHirOutput>; bindings: ptr<IrHirBinding>; binding_count: u64;
+    identities: ptr<IrHirIdentity>; identity_capacity: u64;
+    max_work: u64; work: u64; max_depth: u64; return_type: u64;
+    result: ptr<IrHirResult>;
+}
+
+fun ir_hir_fail(p: ptr<IrHirAdapter>, status: u64, node: u64, detail: u64) -> bool {
+    p.result.status = status; p.result.node = node; p.result.detail = detail; return false;
+}
+
+fun ir_hir_charge(p: ptr<IrHirAdapter>, amount: u64, node: u64) -> bool {
+    if (amount > p.max_work - p.work) { return ir_hir_fail(p, 1, node, 0); }
+    p.work += amount; return true;
+}
+
+fun ir_hir_node(p: ptr<IrHirAdapter>, index: u64, depth: u64) -> bool {
+    if (depth > p.max_depth) { return ir_hir_fail(p, 2, index, 0); }
+    if (!ir_hir_charge(p, 1, index)) { return false; }
+    if (index >= p.count) { return ir_hir_fail(p, 3, index, 0); }
+    return true;
+}
+
+fun ir_hir_type(p: ptr<IrHirAdapter>, index: u64, value: ptr<u64>) -> bool {
+    if (!ir_hir_node(p, index, 0)) { return false; }
+    var n: ptr<IrHirNode> = &p.nodes[index];
+    if (n.tag != 2) { return ir_hir_fail(p, 3, index, 0); }
+    var ty: u64 = 0;
+    if (n.a == 1) { ty = 1; }
+    else if (n.a == 2) {
+        if (n.c > 1) { return ir_hir_fail(p, 4, index, 0); }
+        if (n.b == 1) { ty = 2; }
+        else if (n.b == 8) { ty = 4; }
+        else if (n.b == 16) { ty = 5; }
+        else if (n.b == 32) { ty = 6; }
+        else if (n.b == 64) { ty = 7; }
+        else if (n.b == 128) { ty = 8; }
+        else { return ir_hir_fail(p, 4, index, 0); }
+        if (n.c == 0) {
+            if (ty == 2) { ty = 3; }
+            else { ty += 5; }
+        }
+    } else if (n.a != 0) { return ir_hir_fail(p, 5, index, n.a); }
+    p.output[index].ty = ty; value[0] = ty; return true;
+}
+
+fun ir_hir_identity(p: ptr<IrHirAdapter>, id: u64, node: u64) -> bool {
+    // A power-of-two open-addressed table bounds identity checking even when
+    // expressions are visited in a different order from their original IDs.
+    var slot: u64 = (id ^ (id >> 32)) & (p.identity_capacity - 1);
+    var visited: u64 = 0;
+    while (visited < p.identity_capacity) {
+        if (!ir_hir_charge(p, 1, node)) { return false; }
+        if (p.identities[slot].occupied == 0) {
+            p.identities[slot].occupied = 1; p.identities[slot].id = id; return true;
+        }
+        if (p.identities[slot].id == id) { return ir_hir_fail(p, 6, node, id); }
+        slot = (slot + 1) & (p.identity_capacity - 1); visited += 1;
+    }
+    return ir_hir_fail(p, 1, node, 0);
+}
+
+fun ir_hir_integer(ty: u64) -> bool { return ty >= 2 && ty <= 13; }
+
+fun ir_hir_signed(ty: u64) -> bool { return ty == 2 || (ty >= 4 && ty <= 8); }
+
+fun ir_hir_width(ty: u64) -> u64 {
+    if (ty == 2 || ty == 3) { return 1; }
+    if (ty > 8) { ty -= 5; }
+    if (ty == 4) { return 8; }
+    if (ty == 5) { return 16; }
+    if (ty == 6) { return 32; }
+    if (ty == 7) { return 64; }
+    if (ty == 8) { return 128; }
+    return 0;
+}
+
+fun ir_hir_find(p: ptr<IrHirAdapter>, name: u64, node: u64, ty: ptr<u64>) -> bool {
+    var index: u64 = p.binding_count;
+    while (index != 0) {
+        if (!ir_hir_charge(p, 1, node)) { return false; }
+        index -= 1;
+        if (p.bindings[index].name == name) { ty[0] = p.bindings[index].ty; return true; }
+    }
+    return ir_hir_fail(p, 7, node, name);
+}
+
+fun ir_hir_bind(p: ptr<IrHirAdapter>, name: u64, ty: u64, node: u64) -> bool {
+    if (p.binding_count >= p.count) { return ir_hir_fail(p, 1, node, 0); }
+    p.bindings[p.binding_count].name = name;
+    p.bindings[p.binding_count].ty = ty;
+    p.binding_count += 1; return true;
+}
+
+fun ir_hir_expression(p: ptr<IrHirAdapter>, index: u64, depth: u64, value: ptr<u64>) -> bool {
+    if (!ir_hir_node(p, index, depth)) { return false; }
+    var n: ptr<IrHirNode> = &p.nodes[index];
+    if (n.tag == 12) { return ir_hir_fail(p, 5, index, n.a); }
+    if (n.tag < 3 || n.tag > 6) { return ir_hir_fail(p, 3, index, 0); }
+    if (!ir_hir_identity(p, n.a, index)) { return false; }
+    var ty: u64 = 0;
+    if (!ir_hir_type(p, n.b, &ty)) { return false; }
+    if (ty == 0) { return ir_hir_fail(p, 4, index, 0); }
+    var actual: u64 = 0;
+    var left: u64 = 0;
+    var right: u64 = 0;
+    if (n.tag == 3) {
+        if (!ir_hir_integer(ty)) { return ir_hir_fail(p, 4, index, 0); }
+        var literal: IrLiteralResult;
+        var category: u64 = 3;
+        if (ir_hir_signed(ty)) { category = 2; }
+        var status: i32 = whale_ir_parse_literal(n.c as ptr<u8>, n.d, category,
+            ir_hir_width(ty), p.max_work - p.work, &literal);
+        if (status == 10) { return ir_hir_fail(p, 1, index, 0); }
+        if (status != 0) { return ir_hir_fail(p, 8, index, literal.status); }
+        if (!ir_hir_charge(p, literal.work, index)) { return false; }
+    } else if (n.tag == 4) {
+        if (ty != 1 || n.c > 1) { return ir_hir_fail(p, 4, index, 0); }
+    } else if (n.tag == 5) {
+        if (!ir_hir_find(p, n.c, index, &actual)) { return false; }
+        if (actual != ty) { return ir_hir_fail(p, 4, index, actual); }
+    } else {
+        if (!ir_hir_expression(p, n.d, depth + 1, &left)
+            || !ir_hir_expression(p, n.e, depth + 1, &right)) { return false; }
+        if (left != right) { return ir_hir_fail(p, 4, index, right); }
+        var operation: u64 = n.c;
+        if (operation >= 12 && operation <= 17) {
+            if (ty != 1 || (!ir_hir_integer(left) && left != 1)
+                || (left == 1 && operation > 13)) { return ir_hir_fail(p, 4, index, left); }
+            operation = operation + 20;
+        } else if (operation == 10 || operation == 11) {
+            if (ty != 1 || left != 1) { return ir_hir_fail(p, 4, index, left); }
+        } else {
+            if (ty != left || !ir_hir_integer(ty) || operation > 9) {
+                return ir_hir_fail(p, 4, index, left);
+            }
+            if (operation == 3) { operation = 6; }
+            else if (operation == 4) { operation = 7; }
+            else if (operation >= 5 && operation <= 7) { operation -= 2; }
+        }
+        p.output[index].operation = operation;
+    }
+    p.output[index].ty = ty; value[0] = ty; return true;
+}
+
+fun ir_hir_statements(p: ptr<IrHirAdapter>, first: u64, count: u64, depth: u64) -> bool {
+    if (first > p.edge_count || count > p.edge_count - first) { return ir_hir_fail(p, 3, first, 0); }
+    var item: u64 = 0;
+    var ty: u64 = 0;
+    var actual: u64 = 0;
+    while (item < count) {
+        var index: u64 = p.edges[first + item];
+        if (!ir_hir_node(p, index, depth)) { return false; }
+        var n: ptr<IrHirNode> = &p.nodes[index];
+        if (n.tag == 7) {
+            if (!ir_hir_type(p, n.b, &ty)) { return false; }
+            if (ty == 0) { return ir_hir_fail(p, 4, index, 0); }
+            if (n.c != 18446744073709551615) {
+                if (!ir_hir_expression(p, n.c, depth + 1, &actual)) { return false; }
+                if (actual != ty) { return ir_hir_fail(p, 4, index, actual); }
+            }
+            if (!ir_hir_bind(p, n.a, ty, index)) { return false; }
+        } else if (n.tag == 8) {
+            if (!ir_hir_find(p, n.a, index, &ty)
+                || !ir_hir_expression(p, n.b, depth + 1, &actual)) { return false; }
+            if (ty != actual) { return ir_hir_fail(p, 4, index, actual); }
+        } else if (n.tag == 9 || n.tag == 10) {
+            if (!ir_hir_expression(p, n.a, depth + 1, &ty)) { return false; }
+            if (ty != 1) { return ir_hir_fail(p, 4, index, ty); }
+            var saved: u64 = p.binding_count;
+            if (!ir_hir_statements(p, n.b, n.c, depth + 1)) { return false; }
+            p.binding_count = saved;
+            if (n.tag == 9) {
+                if (!ir_hir_statements(p, n.d, n.e, depth + 1)) { return false; }
+                p.binding_count = saved;
+            }
+        } else if (n.tag == 11) {
+            actual = 0;
+            if (n.a != 18446744073709551615
+                && !ir_hir_expression(p, n.a, depth + 1, &actual)) { return false; }
+            if (actual != p.return_type) { return ir_hir_fail(p, 4, index, actual); }
+        } else if (n.tag == 13) {
+            if (!ir_hir_expression(p, n.a, depth + 1, &actual)) { return false; }
+        } else if (n.tag == 12) { return ir_hir_fail(p, 5, index, n.a); }
+        else { return ir_hir_fail(p, 3, index, 0); }
+        item += 1;
+    }
+    return true;
+}
+
+export(c) fun whale_ir_adapt_wave_hir(nodes: ptr<IrHirNode>, node_count: u64,
+    edges: ptr<u64>, edge_count: u64, functions: u64, function_count: u64,
+    output: ptr<IrHirOutput>, bindings: ptr<IrHirBinding>,
+    identities: ptr<IrHirIdentity>, identity_capacity: u64,
+    max_depth: u64, max_work: u64, result: ptr<IrHirResult>) -> i32 {
+    if (result == null) { return 3; }
+    result.status = 0; result.node = 0; result.detail = 0; result.work = 0;
+    if (!ir_span_valid(nodes as ptr<u8>, node_count, 64)
+        || !ir_span_valid(edges as ptr<u8>, edge_count, 8)
+        || !ir_span_valid(output as ptr<u8>, node_count, 16)
+        || !ir_span_valid(bindings as ptr<u8>, node_count, 16)
+        || !ir_span_valid(identities as ptr<u8>, identity_capacity, 16)
+        || identity_capacity == 0 || !ir_power_two(identity_capacity)
+        || max_depth > 32 || functions > edge_count
+        || function_count > edge_count - functions) { result.status = 3; return 3; }
+    var p: IrHirAdapter;
+    p.nodes = nodes; p.count = node_count; p.edges = edges; p.edge_count = edge_count;
+    p.output = output; p.bindings = bindings; p.binding_count = 0;
+    p.identities = identities; p.identity_capacity = identity_capacity;
+    p.max_work = max_work; p.work = 0; p.max_depth = max_depth; p.return_type = 0; p.result = result;
+    var i: u64 = 0;
+    while (i < identity_capacity) {
+        if (!ir_hir_charge(&p, 1, 0)) { result.work = p.work; return result.status as i32; }
+        identities[i].occupied = 0; identities[i].id = 0; i += 1;
+    }
+    i = 0;
+    while (i < node_count) {
+        if (!ir_hir_charge(&p, 1, i)) { result.work = p.work; return result.status as i32; }
+        output[i].ty = 0; output[i].operation = 0; i += 1;
+    }
+    i = 0;
+    while (i < function_count) {
+        var index: u64 = edges[functions + i];
+        if (!ir_hir_node(&p, index, 0)) { result.work = p.work; return result.status as i32; }
+        var n: ptr<IrHirNode> = &nodes[index];
+        if (n.tag != 0) { result.status = 3; result.node = index; break; }
+        if (n.g != 0) { result.status = 5; result.node = index; result.detail = 3; break; }
+        if (n.b > edge_count || n.c > edge_count - n.b) { result.status = 3; result.node = index; break; }
+        var previous: u64 = 0;
+        while (previous < i) {
+            if (!ir_hir_charge(&p, 1, index)) { break; }
+            if (nodes[edges[functions + previous]].a == n.a) {
+                ir_hir_fail(&p, 9, index, n.a); break;
+            }
+            previous += 1;
+        }
+        if (result.status != 0) { break; }
+        if (!ir_hir_type(&p, n.d, &p.return_type)) { break; }
+        p.binding_count = 0;
+        var param: u64 = 0;
+        while (param < n.c) {
+            var parameter: u64 = edges[n.b + param];
+            if (!ir_hir_node(&p, parameter, 0)) { break; }
+            if (nodes[parameter].tag != 1) { ir_hir_fail(&p, 3, parameter, 0); break; }
+            var ty: u64 = 0;
+            if (!ir_hir_type(&p, nodes[parameter].b, &ty)) { break; }
+            if (ty == 0) { ir_hir_fail(&p, 4, parameter, 0); break; }
+            previous = 0;
+            while (previous < p.binding_count) {
+                if (!ir_hir_charge(&p, 1, parameter)) { break; }
+                if (bindings[previous].name == nodes[parameter].a) {
+                    ir_hir_fail(&p, 9, parameter, nodes[parameter].a); break;
+                }
+                previous += 1;
+            }
+            if (result.status != 0 || !ir_hir_bind(&p, nodes[parameter].a, ty, parameter)) { break; }
+            param += 1;
+        }
+        if (result.status != 0 || !ir_hir_statements(&p, n.e, n.f, 1)) { break; }
+        i += 1;
+    }
+    result.work = p.work;
+    return result.status as i32;
+}

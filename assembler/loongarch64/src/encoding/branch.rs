@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! LoongArch B16/B21/B26 scaled offsets, split fields and JIRL encoding.
-use assembler::{fixed::displacement, AsmError};
+use assembler::{fixed::reference::displacement, AsmError};
 
 pub(crate) fn direct(link: bool, offset: i64) -> Result<u32, AsmError> {
     let imm = displacement(offset, 26, 4)?;

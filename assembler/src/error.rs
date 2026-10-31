@@ -13,6 +13,8 @@ pub struct SourceSpan {
 
 #[derive(Debug, Clone)]
 pub enum AsmError {
+    /// A native module/transport failure, distinct from invalid assembly input.
+    Backend(&'static str),
     LexerError(String),
     ParserError(String),
     EncodeError(String),
@@ -52,6 +54,7 @@ impl AsmError {
 impl fmt::Display for AsmError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AsmError::Backend(reason) => write!(f, "Assembler backend failure: {reason}"),
             AsmError::LexerError(s) => write!(f, "Lexer error: {}", s),
             AsmError::ParserError(s) => write!(f, "Parser error: {}", s),
             AsmError::EncodeError(s) => write!(f, "Encode error: {}", s),

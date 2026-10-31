@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+// Legacy near-control transfers select PC-relative or Mach-O branch forms.
+fun asmobj_amd64_control(target: ptr<AsmobjTarget>, undefined: u64,
+    kind: ptr<u64>, code: ptr<u64>) -> i32 {
+    if (target.format == 2) {
+        kind[0] = 8;
+        code[0] = 2;
+    } else if (undefined == 0) {
+        kind[0] = 3;
+    }
+    return 0;
+}

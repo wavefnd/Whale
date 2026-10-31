@@ -1,0 +1,399 @@
+// SPDX-License-Identifier: MPL-2.0
+// Defined fixed-width scalar arithmetic and conversion over shared two-word math.
+struct IrIntegerResult {
+    status: u64;
+    low: u64;
+    high: u64;
+    flag: u64;
+}
+
+fun ir_integer_width(kind: u64) -> u64 {
+    if (kind == 1 || kind == 2 || kind == 3) {
+        return 1;
+    }
+    if (kind == 4 || kind == 9) {
+        return 8;
+    }
+    if (kind == 5 || kind == 10) {
+        return 16;
+    }
+    if (kind == 6 || kind == 11) {
+        return 32;
+    }
+    if (kind == 7 || kind == 12) {
+        return 64;
+    }
+    if (kind == 8 || kind == 13) {
+        return 128;
+    }
+    return 0;
+}
+
+fun ir_integer_signed(kind: u64) -> bool {
+    return kind == 2 || (kind >= 4 && kind <= 8);
+}
+
+fun ir_integer_negative(value: ptr<IrWide>, width: u64) -> bool {
+    return ir_wide_bit(value, width - 1) != 0;
+}
+
+fun ir_integer_extend(value: ptr<IrWide>, width: u64, output: ptr<IrWide>) {
+    var raw: IrWide;
+    ir_wide_trim(value, width, &raw);
+    if (ir_integer_negative(&raw, width)) {
+        var mask: IrWide;
+        ir_wide_mask(width, &mask);
+        raw.low = raw.low | ~mask.low;
+        raw.high = raw.high | ~mask.high;
+    }
+    output[0] = raw;
+}
+
+fun ir_integer_finish(value: ptr<IrWide>, kind: u64, result: ptr<IrIntegerResult>) {
+    var packed: IrWide;
+    if (ir_integer_signed(kind)) {
+        ir_integer_extend(value, ir_integer_width(kind), &packed);
+    } else {
+        ir_wide_trim(value, ir_integer_width(kind), &packed);
+    }
+    result.low = packed.low;
+    result.high = packed.high;
+}
+
+fun ir_integer_error(status: u64, result: ptr<IrIntegerResult>) -> i32 {
+    result.status = status;
+    result.low = 0;
+    result.high = 0;
+    result.flag = 0;
+    return status as i32;
+}
+
+fun ir_integer_magnitude(value: ptr<IrWide>, width: u64, negative: bool, output: ptr<IrWide>) {
+    if (negative) {
+        ir_wide_neg(value, output);
+        ir_wide_trim(output, width, output);
+    } else {
+        ir_wide_trim(value, width, output);
+    }
+}
+
+export(c) fun whale_ir_integer_bits(low: u64, high: u64, width: u64,
+    is_signed: u64, result: ptr<IrIntegerResult>) -> i32 {
+    if (result == null) {
+        return 4;
+    }
+    result.status = 0;
+    result.low = 0;
+    result.high = 0;
+    result.flag = 0;
+    if (width == 0 || width > 128 || is_signed > 1) {
+        return ir_integer_error(4, result);
+    }
+    var value: IrWide;
+    var packed: IrWide;
+    ir_wide_from(low, high, &value);
+    if (is_signed == 1) {
+        ir_integer_extend(&value, width, &packed);
+    } else {
+        ir_wide_trim(&value, width, &packed);
+    }
+    result.low = packed.low;
+    result.high = packed.high;
+    return 0;
+}
+// Modes: binary, checked, cast, comparison, checked cast, normalize, unary.
+// Binary codes match the complete IR BinOp inventory, including float holes.
+
+export(c) fun whale_ir_integer(mode: u64, op: u64, source_kind: u64,
+    destination_kind: u64, a_low: u64, a_high: u64, b_low: u64, b_high: u64,
+    result: ptr<IrIntegerResult>) -> i32 {
+    if (result == null) {
+        return 4;
+    }
+    result.status = 0;
+    result.low = 0;
+    result.high = 0;
+    result.flag = 0;
+    var width: u64 = ir_integer_width(source_kind);
+    var destination_width: u64 = ir_integer_width(destination_kind);
+    if (width == 0 || destination_width == 0 || mode > 6) {
+        return ir_integer_error(4, result);
+    }
+    var source: IrWide;
+    var a: IrWide;
+    var b: IrWide;
+    var value: IrWide;
+    ir_wide_from(a_low, a_high, &source);
+    ir_wide_trim(&source, width, &a);
+    ir_wide_from(b_low, b_high, &source);
+    ir_wide_trim(&source, width, &b);
+    ir_wide_zero(&value);
+    if (mode == 0) {
+        if (source_kind == 1 || destination_kind != source_kind
+            || !((op <= 6) || (op >= 12 && op <= 17))) {
+            return ir_integer_error(4, result);
+        }
+        if (op == 0) {
+            ir_wide_add(&a, &b, &value);
+        } else if (op == 1) {
+            ir_wide_sub(&a, &b, &value);
+        } else if (op == 2) {
+            ir_wide_mul(&a, &b, &value);
+        } else if (op >= 3 && op <= 6) {
+            if (b.low == 0 && b.high == 0) {
+                if (op == 3 || op == 4) {
+                    return ir_integer_error(1, result);
+                }
+                return ir_integer_error(2, result);
+            }
+            var quotient: IrWide;
+            var remainder: IrWide;
+            if (op == 3 || op == 5) {
+                ir_wide_divmod(&a, &b, &quotient, &remainder);
+            } else {
+                var an: bool = ir_integer_negative(&a, width);
+                var bn: bool = ir_integer_negative(&b, width);
+                var am: IrWide;
+                var bm: IrWide;
+                ir_integer_magnitude(&a, width, an, &am);
+                ir_integer_magnitude(&b, width, bn, &bm);
+                ir_wide_divmod(&am, &bm, &quotient, &remainder);
+                if ((an && !bn) || (!an && bn)) {
+                    ir_wide_neg(&quotient, &quotient);
+                }
+                if (an) {
+                    ir_wide_neg(&remainder, &remainder);
+                }
+            }
+            if (op == 3 || op == 4) {
+                value = quotient;
+            } else {
+                value = remainder;
+            }
+        } else if (op == 12) {
+            value.low = a.low & b.low;
+            value.high = a.high & b.high;
+        } else if (op == 13) {
+            value.low = a.low | b.low;
+            value.high = a.high | b.high;
+        } else if (op == 14) {
+            value.low = a.low ^ b.low;
+            value.high = a.high ^ b.high;
+        } else {
+            // Every supported width is a power of two: the full N-bit pattern
+            // modulo width is exactly its low log2(width) bits, even for u128.
+            var count: u64 = b.low & (width - 1);
+            if (op == 15) {
+                ir_wide_shl(&a, count, &value);
+            } else if (op == 16) {
+                ir_wide_shr(&a, count, &value);
+            } else {
+                var extended: IrWide;
+                ir_integer_extend(&a, width, &extended);
+                ir_wide_ashr(&extended, count, &value);
+            }
+        }
+    } else if (mode == 1) {
+        if (source_kind == 1 || destination_kind != source_kind || op > 5) {
+            return ir_integer_error(4, result);
+        }
+        var overflow: bool = false;
+        if (op == 0) {
+            var carry: u64 = ir_wide_add(&a, &b, &value);
+            var mask: IrWide;
+            ir_wide_mask(width, &mask);
+            overflow = carry != 0 || ir_wide_cmp(&value, &mask) > 0;
+        } else if (op == 1) {
+            overflow = ir_wide_cmp(&a, &b) < 0;
+            ir_wide_sub(&a, &b, &value);
+        } else if (op == 2) {
+            overflow = ir_wide_mul(&a, &b, &value);
+            var mask: IrWide;
+            ir_wide_mask(width, &mask);
+            overflow = overflow || ir_wide_cmp(&value, &mask) > 0;
+        } else if (op == 3 || op == 4) {
+            var an: bool = ir_integer_negative(&a, width);
+            var bn: bool = ir_integer_negative(&b, width);
+            if (op == 3) {
+                ir_wide_add(&a, &b, &value);
+            } else {
+                ir_wide_sub(&a, &b, &value);
+            }
+            var rn: bool = ir_integer_negative(&value, width);
+            var same: bool = (an && bn) || (!an && !bn);
+            var changed: bool = (an && !rn) || (!an && rn);
+            overflow = (op == 3 && same && changed) || (op == 4 && !same && changed);
+        } else {
+            var an: bool = ir_integer_negative(&a, width);
+            var bn: bool = ir_integer_negative(&b, width);
+            var am: IrWide;
+            var bm: IrWide;
+            var product: IrWide;
+            var maximum: IrWide;
+            var one: IrWide;
+            ir_integer_magnitude(&a, width, an, &am);
+            ir_integer_magnitude(&b, width, bn, &bm);
+            overflow = ir_wide_mul(&am, &bm, &product);
+            ir_wide_from(1, 0, &one);
+            ir_wide_shl(&one, width - 1, &maximum);
+            if ((an && bn) || (!an && !bn)) {
+                ir_wide_sub(&maximum, &one, &maximum);
+            }
+            overflow = overflow || ir_wide_cmp(&product, &maximum) > 0;
+            ir_wide_mul(&a, &b, &value);
+        }
+        result.flag = overflow as u64;
+    } else if (mode == 2) {
+        if (destination_kind == 1 || op > 3) {
+            return ir_integer_error(4, result);
+        }
+        var valid: bool = false;
+        if (op == 0) {
+            valid = (source_kind == 1 && destination_kind != 2) || (source_kind != 1
+                && width < destination_width);
+        } else if (op == 1) {
+            valid = source_kind != 1 && width < destination_width;
+        } else if (op == 2) {
+            valid = source_kind != 1 && width > destination_width;
+        } else {
+            valid = source_kind != 1 && width == destination_width;
+        }
+        if (!valid) {
+            return ir_integer_error(4, result);
+        }
+        if (op == 1) {
+            ir_integer_extend(&a, width, &value);
+        } else {
+            value = a;
+        }
+    } else if (mode == 3) {
+        if (op > 9 || destination_kind != 1 || (source_kind == 1 && op > 1)) {
+            return ir_integer_error(4, result);
+        }
+        var comparison: i32 = ir_wide_cmp(&a, &b);
+        if (op >= 6) {
+            var an: bool = ir_integer_negative(&a, width);
+            var bn: bool = ir_integer_negative(&b, width);
+            if (an && !bn) {
+                comparison = -1;
+            } else if (!an && bn) {
+                comparison = 1;
+            }
+        }
+        var answer: bool = false;
+        if (op == 0) {
+            answer = comparison == 0;
+        } else if (op == 1) {
+            answer = comparison != 0;
+        } else if (op == 2 || op == 6) {
+            answer = comparison < 0;
+        } else if (op == 3 || op == 7) {
+            answer = comparison <= 0;
+        } else if (op == 4 || op == 8) {
+            answer = comparison > 0;
+        } else {
+            answer = comparison >= 0;
+        }
+        value.low = answer as u64;
+        value.high = 0;
+    } else if (mode == 4) {
+        if (op != 0 || source_kind == 1 || destination_kind == 1) {
+            return ir_integer_error(4, result);
+        }
+        var negative: bool = ir_integer_signed(source_kind) && ir_integer_negative(&a, width);
+        var magnitude: IrWide;
+        var maximum: IrWide;
+        var one: IrWide;
+        ir_integer_magnitude(&a, width, negative, &magnitude);
+        if (ir_integer_signed(destination_kind)) {
+            ir_wide_from(1, 0, &one);
+            ir_wide_shl(&one, destination_width - 1, &maximum);
+            if (!negative) {
+                ir_wide_sub(&maximum, &one, &maximum);
+            }
+        } else {
+            ir_wide_mask(destination_width, &maximum);
+        }
+        if ((negative && !ir_integer_signed(destination_kind)) || ir_wide_cmp(&magnitude,
+            &maximum) > 0) {
+            return ir_integer_error(3, result);
+        }
+        if (negative) {
+            ir_wide_neg(&magnitude, &value);
+        } else {
+            value = magnitude;
+        }
+    } else if (mode == 5) {
+        if (op != 0 || source_kind != destination_kind) {
+            return ir_integer_error(4, result);
+        }
+        value = a;
+    } else {
+        if (op > 1 || source_kind == 1 || destination_kind != source_kind) {
+            return ir_integer_error(4, result);
+        }
+        if (op == 0) {
+            ir_wide_neg(&a, &value);
+        } else {
+            value.low = ~a.low;
+            value.high = ~a.high;
+        }
+    }
+    ir_integer_finish(&value, destination_kind, result);
+    return 0;
+}
+// Direct primitive boundary for independent mathematical conformance.
+
+export(c) fun whale_ir_wide(op: u64, low: u64, high: u64, other_low: u64,
+    other_high: u64, count: u64, result: ptr<IrIntegerResult>) -> i32 {
+    if (result == null) {
+        return 4;
+    }
+    result.status = 0;
+    result.low = 0;
+    result.high = 0;
+    result.flag = 0;
+    var a: IrWide;
+    var b: IrWide;
+    var value: IrWide;
+    ir_wide_from(low, high, &a);
+    ir_wide_from(other_low, other_high, &b);
+    ir_wide_zero(&value);
+    if (op == 0) {
+        result.flag = ir_wide_add(&a, &b, &value);
+    } else if (op == 1) {
+        result.flag = ir_wide_sub(&a, &b, &value);
+    } else if (op == 2) {
+        result.flag = ir_wide_mul(&a, &b, &value) as u64;
+    } else if (op == 3 || op == 4) {
+        var quotient: IrWide;
+        var remainder: IrWide;
+        if (!ir_wide_divmod(&a, &b, &quotient, &remainder)) {
+            return ir_integer_error(1, result);
+        }
+        if (op == 3) {
+            value = quotient;
+        } else {
+            value = remainder;
+        }
+    } else if (op == 5) {
+        ir_wide_shl(&a, count, &value);
+    } else if (op == 6) {
+        ir_wide_shr(&a, count, &value);
+    } else if (op == 7) {
+        value.low = (ir_wide_cmp(&a, &b) + 1) as u64;
+    } else if (op == 8) {
+        value.low = ir_wide_clz(&a);
+    } else if (op == 9) {
+        ir_wide_jam(&a, count, &value);
+    } else if (op == 10) {
+        ir_wide_round(&a, count, &value);
+    } else if (op == 11) {
+        ir_wide_neg(&a, &value);
+    } else {
+        return ir_integer_error(4, result);
+    }
+    result.low = value.low;
+    result.high = value.high;
+    return 0;
+}

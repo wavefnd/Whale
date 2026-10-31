@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MPL-2.0
 """Compare the compiled asmobj source module with an independent Python oracle.
 
-Build the five explicit Wave sources with the pinned helper, link its object as
+Build the explicit Wave role sources with the pinned helper, link its object as
 a shared library, then pass --library. No Rust asmobj implementation is involved.
 """
 from __future__ import annotations

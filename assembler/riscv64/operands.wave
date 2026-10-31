@@ -1,0 +1,90 @@
+// SPDX-License-Identifier: MPL-2.0
+// Register, offset(base), and FENCE operands. Numeric policy is shared source.
+fun rv_reg(text: FixedText, output: ptr<u64>, result: ptr<FixedResult>) -> bool {
+    if (!asm_fixed_charge(result, text.count)) {
+        return false;
+    }
+    var trimmed: FixedText = asm_fixed_trim(text);
+    if (!rv_register(trimmed.data, trimmed.count, output)) {
+        asm_fixed_fail(result, 2000, trimmed, 0);
+        result.display = 1;
+        return false;
+    }
+    return true;
+}
+
+fun rv_memory(text: FixedText, base: ptr<u64>, immediate: ptr<u64>,
+    result: ptr<FixedResult>) -> bool {
+    var opening: u64 = 0;
+    while (opening < text.count && text.data[opening] != 40) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        opening += 1;
+    }
+    if (opening == text.count) {
+        return asm_fixed_fail(result, 2001, text, 0);
+    }
+    if (text.count < opening + 2 || text.data[text.count - 1] != 41) {
+        return asm_fixed_fail(result, 2002, text, 0);
+    }
+    var at: u64 = opening + 1;
+    while (at + 1 < text.count) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        if (text.data[at] == 40 || text.data[at] == 41) {
+            return asm_fixed_fail(result, 2002, text, 0);
+        }
+        at += 1;
+    }
+    var register: FixedText;
+    register.data = &text.data[opening + 1];
+    register.count = text.count - opening - 2;
+    if (!rv_reg(register, base, result)) {
+        return false;
+    }
+    var offset: FixedText;
+    offset.data = text.data;
+    offset.count = opening;
+    offset = asm_fixed_trim(offset);
+    if (offset.count == 0) {
+        immediate[0] = 0;
+        return true;
+    }
+    return asm_fixed_signed(offset, 12, immediate, result);
+}
+
+fun rv_fence(text: FixedText, output: ptr<u64>, result: ptr<FixedResult>) -> bool {
+    output[0] = 0;
+    if (rv_name(text.data, text.count, 48, 1, false)) {
+        return true;
+    }
+    var at: u64 = 0;
+    var flag: u64 = 0;
+    var mask: u64 = 0;
+    while (at < text.count) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        flag = 0;
+        if (text.data[at] == 105) {
+            flag = 8;
+        } else if (text.data[at] == 111) {
+            flag = 4;
+        } else if (text.data[at] == 114) {
+            flag = 2;
+        } else if (text.data[at] == 119) {
+            flag = 1;
+        } else {
+            return asm_fixed_fail(result, 2003, text, 0);
+        }
+        if ((mask & flag) != 0) {
+            return asm_fixed_fail(result, 2004, text, 0);
+        }
+        mask = mask | flag;
+        at += 1;
+    }
+    output[0] = mask;
+    return true;
+}

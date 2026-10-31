@@ -189,9 +189,13 @@ fn elf_identity_symbol_relocations_and_sparse_bss_are_preserved() {
             .unwrap();
         assert_eq!(ext[4] >> 4, 1);
         assert_eq!(u16_at(ext, 6), 0);
-        let mut linker = linker::Linker::new(linker::core::linker::OutputFormat::ELF64Executable);
-        linker.add_object(object);
-        assert!(linker.link().unwrap_err().contains("unsupported object target"));
+        #[cfg(feature = "native-linker")]
+        {
+            let mut linker =
+                linker::Linker::new(linker::core::linker::OutputFormat::ELF64Executable);
+            linker.add_object(object);
+            assert!(linker.link().unwrap_err().contains("unsupported object target"));
+        }
     }
 }
 

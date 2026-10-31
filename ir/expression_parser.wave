@@ -1,0 +1,292 @@
+// SPDX-License-Identifier: MPL-2.0
+// Preserved constant-expression grammar, separate from numeric evaluation.
+struct IrParsedExpression {
+    kind: u64;
+    op: u64;
+    type_first: u64;
+    type_count: u64;
+    low: u64;
+    high: u64;
+}
+
+struct IrExpressionResult {
+    status: u64; // 1 syntax, 2 constant depth, 3 nodes, 4 work, 5 capacity,
+                 // 6 transport, 7 nested type error, 8 literal error
+    reason: u64;
+    at: u64;
+    expected: u64;
+    detail: u64;
+    next: u64;
+    expressions: u64;
+    types: u64;
+    spent: u64;
+    work: u64;
+}
+
+struct IrExpressionMeta { first: u64; count: u64; }
+
+struct IrExpressionParser {
+    tokens: ptr<IrTextToken>;
+    token_count: u64;
+    at: u64;
+    format: u64;
+    max_depth: u64;
+    max_type_depth: u64;
+    max_nodes: u64;
+    max_work: u64;
+    work: u64;
+    spent: u64;
+    expressions: u64;
+    types: u64;
+    mode: u64;
+    type_scratch: ptr<IrParsedType>;
+    type_capacity: u64;
+    expression_scratch: ptr<IrParsedExpression>;
+    expression_capacity: u64;
+    result: ptr<IrExpressionResult>;
+}
+
+fun ir_expression_word(token: ptr<IrTextToken>, code: u64) -> bool {
+    var first: u64 = 0;
+    var second: u64 = 0;
+    var length: u64 = 0;
+    if (code == 0) { first = 32773617136986466; second = 0; length = 7; } // bit_not
+    else if (code == 1) { first = 6776174; second = 0; length = 3; } // neg
+    else if (code == 2) { first = 6579297; second = 0; length = 3; } // add
+    else if (code == 3) { first = 6452595; second = 0; length = 3; } // sub
+    else if (code == 4) { first = 7107949; second = 0; length = 3; } // mul
+    else if (code == 5) { first = 28268862163413346; second = 0; length = 7; } // bit_and
+    else if (code == 6) { first = 125822668400994; second = 0; length = 6; } // bit_or
+    else if (code == 7) { first = 32210710133238114; second = 0; length = 7; } // bit_xor
+    else if (code == 8) { first = 7760228; second = 0; length = 3; } // div
+    else if (code == 9) { first = 7169394; second = 0; length = 3; } // rem
+    else if (code == 10) { first = 7308321248854501491; second = 29798; length = 10; } // shift_left
+    else if (code == 11) { first = 7598240474866477171; second = 7628903; length = 11; } // shift_right
+    else if (code == 12) { first = 6875977810685947756; second = 6581857; length = 11; } // logical_and
+    else if (code == 13) { first = 6875977810685947756; second = 29295; length = 10; } // logical_or
+    else if (code == 14) { first = 29029; second = 0; length = 2; } // eq
+    else if (code == 15) { first = 25966; second = 0; length = 2; } // ne
+    else if (code == 16) { first = 29804; second = 0; length = 2; } // lt
+    else if (code == 17) { first = 25964; second = 0; length = 2; } // le
+    else if (code == 18) { first = 29799; second = 0; length = 2; } // gt
+    else if (code == 19) { first = 25959; second = 0; length = 2; } // ge
+    else if (code == 20) { first = 40; second = 0; length = 1; } // (
+    else if (code == 21) { first = 41; second = 0; length = 1; } // )
+    else if (code == 22) { first = 44; second = 0; length = 1; } // ,
+    else { return false; }
+    if (token.kind == 1 || token.kind == 3 || token.length != length) { return false; }
+    var i: u64 = 0;
+    var packed: u64 = 0;
+    while (i < length) {
+        packed = first;
+        if (i >= 8) { packed = second; }
+        if (token.data[i] as u64 != ((packed >> ((i & 7) * 8)) & 255)) { return false; }
+        i += 1;
+    }
+    return true;
+}
+
+fun ir_expression_fail(p: ptr<IrExpressionParser>, status: u64, reason: u64,
+    at: u64, expected: u64, detail: u64) -> bool {
+    p.result.status = status; p.result.reason = reason; p.result.at = at;
+    p.result.expected = expected; p.result.detail = detail;
+    return false;
+}
+
+fun ir_expression_charge(p: ptr<IrExpressionParser>, amount: u64) -> bool {
+    if (amount > p.max_work - p.work) { return ir_expression_fail(p, 4, 0, p.at, 0, 0); }
+    p.work += amount; return true;
+}
+
+fun ir_expression_read(p: ptr<IrExpressionParser>) -> bool {
+    if (!ir_expression_charge(p, 1)) { return false; }
+    if (p.at >= p.token_count) { return ir_expression_fail(p, 6, 0, p.at, 0, 0); }
+    var token: ptr<IrTextToken> = &p.tokens[p.at];
+    if (token.kind > 3 || !ir_span_valid(token.data, token.length, 1)) {
+        return ir_expression_fail(p, 6, 0, p.at, 0, 0);
+    }
+    return true;
+}
+
+fun ir_expression_expect(p: ptr<IrExpressionParser>, code: u64) -> bool {
+    if (!ir_expression_read(p)) { return false; }
+    if (!ir_expression_word(&p.tokens[p.at], code)) {
+        return ir_expression_fail(p, 1, 1, p.at, code, 0);
+    }
+    p.at += 1; return true;
+}
+
+fun ir_expression_emit(p: ptr<IrExpressionParser>, kind: u64, op: u64,
+    meta: ptr<IrExpressionMeta>, low: u64, high: u64) -> bool {
+    // Include the compatibility model's type materialization before allocation.
+    if (!ir_expression_charge(p, 2 + meta.count)) { return false; }
+    if (p.mode == 1) {
+        if (p.expressions >= p.expression_capacity) { return ir_expression_fail(p, 5, 0, p.at, 0, 0); }
+        p.expression_scratch[p.expressions].kind = kind;
+        p.expression_scratch[p.expressions].op = op;
+        p.expression_scratch[p.expressions].type_first = meta.first;
+        p.expression_scratch[p.expressions].type_count = meta.count;
+        p.expression_scratch[p.expressions].low = low;
+        p.expression_scratch[p.expressions].high = high;
+    }
+    p.expressions += 1; return true;
+}
+
+fun ir_expression_id(p: ptr<IrExpressionParser>, output: ptr<u64>) -> bool {
+    var token: ptr<IrTextToken> = &p.tokens[p.at];
+    if (token.length == 2) { return ir_expression_fail(p, 1, 4, p.at, 0, 0); }
+    var index: u64 = 2;
+    var value: u64 = 0;
+    var octet: u64 = 0;
+    var digit: u64 = 0;
+    var overflow: bool = false;
+    while (index < token.length) {
+        if (!ir_expression_charge(p, 1)) { return false; }
+        octet = token.data[index] as u64;
+        if (octet < 48 || octet > 57) { return ir_expression_fail(p, 1, 4, p.at, 0, 0); }
+        digit = octet - 48;
+        if (value > (4294967295 - digit) / 10) { overflow = true; }
+        if (!overflow) { value = value * 10 + digit; }
+        index += 1;
+    }
+    if (overflow) { return ir_expression_fail(p, 1, 5, p.at, 0, 0); }
+    output[0] = value; p.at += 1; return true;
+}
+
+fun ir_expression_node(p: ptr<IrExpressionParser>, depth: u64, meta: ptr<IrExpressionMeta>) -> bool {
+    if (depth > p.max_depth) { return ir_expression_fail(p, 2, 0, p.at, 0, 0); }
+    if (p.spent >= p.max_nodes) { return ir_expression_fail(p, 3, 0, p.at, 0, 0); }
+    p.spent += 1;
+    if (!ir_expression_read(p)) { return false; }
+    var token: ptr<IrTextToken> = &p.tokens[p.at];
+    var code: u64 = 0;
+    while (code < 20 && !ir_expression_word(token, code)) { code += 1; }
+    if (code < 20) {
+        if ((code == 0 || (code >= 5 && code <= 13)) && p.format < 5) {
+            return ir_expression_fail(p, 1, 2, p.at, 0, 0);
+        }
+        if (code == 1 && p.format < 8) { return ir_expression_fail(p, 1, 3, p.at, 0, 0); }
+        p.at += 1;
+        if (!ir_expression_expect(p, 20)) { return false; }
+        var left: IrExpressionMeta = IrExpressionMeta { first: 0, count: 0 };
+        var right: IrExpressionMeta = IrExpressionMeta { first: 0, count: 0 };
+        if (!ir_expression_node(p, depth + 1, &left)) { return false; }
+        if (code >= 2) {
+            if (!ir_expression_expect(p, 22) || !ir_expression_node(p, depth + 1, &right)) { return false; }
+        }
+        if (!ir_expression_expect(p, 21)) { return false; }
+        meta.first = left.first; meta.count = left.count;
+        if (code < 2) { return ir_expression_emit(p, 3 + code, 0, meta, 0, 0); }
+        if (code >= 14) {
+            if (!ir_expression_charge(p, 2)) { return false; }
+            if (p.mode == 1) {
+                if (p.types >= p.type_capacity) { return ir_expression_fail(p, 5, 0, p.at, 0, 0); }
+                p.type_scratch[p.types].kind = 1; p.type_scratch[p.types].value = 0; p.type_scratch[p.types].count = 0;
+            }
+            meta.first = p.types; meta.count = 1; p.types += 1;
+            return ir_expression_emit(p, 6, code - 14, meta, 0, 0);
+        }
+        return ir_expression_emit(p, 5, code - 2, meta, 0, 0);
+    }
+    var type_start: u64 = p.at;
+    var parsed: IrTypeParseResult = IrTypeParseResult { status: 0, reason: 0, at: 0,
+        expected: 0, next: 0, nodes: 0, work: 0 };
+    var type_pointer: ptr<IrParsedType> = null;
+    var capacity: u64 = 0;
+    if (p.mode == 1) {
+        if (p.types > p.type_capacity) { return ir_expression_fail(p, 5, 0, p.at, 0, 0); }
+        type_pointer = &p.type_scratch[p.types]; capacity = p.type_capacity - p.types;
+    }
+    var status: i32 = whale_ir_parse_type(p.tokens, p.token_count, p.at, 0,
+        p.max_type_depth, p.max_nodes - p.spent, p.max_work - p.work, p.mode,
+        type_pointer, capacity, type_pointer, capacity, &parsed);
+    p.work += parsed.work;
+    if (status != 0) {
+        return ir_expression_fail(p, 7, parsed.status, parsed.at, parsed.reason, parsed.expected);
+    }
+    if (!ir_expression_charge(p, parsed.nodes)) { return false; }
+    meta.first = p.types; meta.count = parsed.nodes;
+    p.types += parsed.nodes; p.spent += parsed.nodes; p.at = parsed.next;
+    if (!ir_expression_read(p)) { return false; }
+    token = &p.tokens[p.at];
+    var reference: u64 = 0;
+    var reference_kind: u64 = 0;
+    if (token.kind != 1 && token.kind != 3 && token.length >= 2) {
+        if (token.data[0] == 64 && token.data[1] == 103) { reference_kind = 1; }
+        else if (token.data[0] == 37 && token.data[1] == 118) { reference_kind = 2; }
+    }
+    if (reference_kind != 0) {
+        if (!ir_expression_id(p, &reference)) { return false; }
+        return ir_expression_emit(p, reference_kind, reference, meta, 0, 0);
+    }
+    var root_kind: u64 = 0;
+    while (root_kind < 22 && !ir_type_word(&p.tokens[type_start], root_kind)) { root_kind += 1; }
+    var category: u64 = 0;
+    var width: u64 = 0;
+    if (root_kind == 1) { category = 1; width = 1; }
+    else if (root_kind == 2 || (root_kind >= 4 && root_kind <= 8)) { category = 2; }
+    else if (root_kind == 3 || (root_kind >= 9 && root_kind <= 13)) { category = 3; }
+    else if (root_kind >= 14 && root_kind <= 16) { category = 4; }
+    if (root_kind == 2 || root_kind == 3) { width = 1; }
+    else if (root_kind == 4 || root_kind == 9) { width = 8; }
+    else if (root_kind == 5 || root_kind == 10 || root_kind == 14) { width = 16; }
+    else if (root_kind == 6 || root_kind == 11 || root_kind == 15) { width = 32; }
+    else if (root_kind == 7 || root_kind == 12 || root_kind == 16) { width = 64; }
+    else if (root_kind == 8 || root_kind == 13) { width = 128; }
+    var literal: IrLiteralResult = IrLiteralResult { status: 0, low: 0, high: 0, work: 0 };
+    // Strings and EOF have the same diagnostic spelling used by the grammar
+    // transport; neither spelling is a valid literal in any scalar category.
+    if (token.kind == 1 || token.kind == 3) {
+        if (category == 0) { return ir_expression_fail(p, 8, 8, p.at, width, 0); }
+        if (category == 1) { return ir_expression_fail(p, 8, 1, p.at, width, 0); }
+        if (category == 2) { return ir_expression_fail(p, 8, 2, p.at, width, 0); }
+        if (category == 3) { return ir_expression_fail(p, 8, 4, p.at, width, 0); }
+        return ir_expression_fail(p, 8, 6, p.at, width, 0);
+    }
+    status = whale_ir_parse_literal(token.data, token.length, category, width,
+        p.max_work - p.work, &literal);
+    p.work += literal.work;
+    if (status != 0) { return ir_expression_fail(p, 8, literal.status, p.at, width, 0); }
+    p.at += 1;
+    return ir_expression_emit(p, 0, 0, meta, literal.low, literal.high);
+}
+
+export(c) fun whale_ir_parse_expression(tokens: ptr<IrTextToken>, token_count: u64,
+    start: u64, depth: u64, format: u64, max_depth: u64, max_type_depth: u64,
+    max_nodes: u64, max_work: u64, mode: u64,
+    type_scratch: ptr<IrParsedType>, type_capacity: u64,
+    expression_scratch: ptr<IrParsedExpression>, expression_capacity: u64,
+    output_types: ptr<IrParsedType>, output_type_capacity: u64,
+    output_expressions: ptr<IrParsedExpression>, output_expression_capacity: u64,
+    result: ptr<IrExpressionResult>) -> i32 {
+    if (result == null) { return 6; }
+    result.status = 0; result.reason = 0; result.at = start; result.expected = 0;
+    result.detail = 0; result.next = 0; result.expressions = 0; result.types = 0;
+    result.spent = 0; result.work = 0;
+    if (mode > 1 || max_depth > 256 || max_type_depth > 256 || start >= token_count
+        || !ir_span_valid(tokens as ptr<u8>, token_count, 24)
+        || (mode == 1 && (!ir_span_valid(type_scratch as ptr<u8>, type_capacity, 24)
+            || !ir_span_valid(expression_scratch as ptr<u8>, expression_capacity, 48)
+            || !ir_span_valid(output_types as ptr<u8>, output_type_capacity, 24)
+            || !ir_span_valid(output_expressions as ptr<u8>, output_expression_capacity, 48)))) {
+        result.status = 6; return 6;
+    }
+    var p: IrExpressionParser = IrExpressionParser { tokens: tokens, token_count: token_count,
+        at: start, format: format, max_depth: max_depth, max_type_depth: max_type_depth,
+        max_nodes: max_nodes, max_work: max_work, work: 0, spent: 0, expressions: 0,
+        types: 0, mode: mode, type_scratch: type_scratch, type_capacity: type_capacity,
+        expression_scratch: expression_scratch, expression_capacity: expression_capacity, result: result };
+    var meta: IrExpressionMeta = IrExpressionMeta { first: 0, count: 0 };
+    if (!ir_expression_node(&p, depth, &meta)) { result.work = p.work; return result.status as i32; }
+    if (mode == 1 && (p.types > output_type_capacity || p.expressions > output_expression_capacity)) {
+        result.status = 5; result.work = p.work; return 5;
+    }
+    var index: u64 = 0;
+    if (mode == 1) {
+        while (index < p.types) { output_types[index] = type_scratch[index]; index += 1; }
+        index = 0;
+        while (index < p.expressions) { output_expressions[index] = expression_scratch[index]; index += 1; }
+    }
+    result.next = p.at; result.expressions = p.expressions; result.types = p.types;
+    result.spent = p.spent; result.work = p.work; return 0;
+}

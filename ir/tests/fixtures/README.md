@@ -11,8 +11,8 @@ fixtures remain here; the old Wave source examples have been removed.
 They exercise control flow, scoped IDs, calls and numeric conversions.
 
 `text_parser.rs` verifies these outputs and requires canonical print-parse-print
-equality, upgrading the header to format 8. These tests run the Rust IR module
-and do not require a Wave compiler.
+equality, upgrading the header to format 8. Reference Cargo tests do not require a Wave compiler. Set `WHALE_WAVE_IR_DIR`
+to a matching pinned archive to execute the Wave parser, printer and verifier.
 
 Legacy AST JSON formats 2/3/4 remain readable; canonical AST JSON is format 5.
 Canonical typed text IR is format 8 (the reader also accepts 3/4/5/6/7). Readers reject
@@ -30,9 +30,8 @@ updated loop-carried phis; `@f7` with `u32 3` returns `i32 22` in 32 steps.
 The interpreter regression suite supplies independent expected boundary values
 for all twelve integer types (signed/unsigned widths 1, 8, 16, 32, 64, 128).
 It checks wrapping add/sub/mul against both the runtime and the separate
-ConstExpr evaluator. ConstExpr currently exposes only add/sub/mul and
-comparisons; division/remainder/shifts remain runtime instructions, with
-explicit edge vectors ready for any future constant-evaluation extension.
+ConstExpr evaluator. ConstExpr also covers bitwise, division/remainder, shifts and lazy logical
+operators, preserving the shared width and trap rules.
 The preserved Wave fixtures use memory and are parser/verifier fixtures;
 `wave-control-v3.wir` @f0 now executes through tracked integer memory; its main
 function still rejects calls, and the cast fixture still rejects float execution.

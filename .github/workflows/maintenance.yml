@@ -58,6 +58,12 @@ jobs:
     timeout-minutes: 25
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+      WHALE_WAVE_IR_DIR: ${{ github.workspace }}/.ci-wave/ir
+      WHALE_WAVE_ASSEMBLER_DIR: ${{ github.workspace }}/.ci-wave/common
+      WHALE_WAVE_AMD64_DIR: ${{ github.workspace }}/.ci-wave/amd64
+      WHALE_WAVE_AARCH64_DIR: ${{ github.workspace }}/.ci-wave/aarch64
+      WHALE_WAVE_RISCV64_DIR: ${{ github.workspace }}/.ci-wave/riscv64
+      WHALE_WAVE_LOONGARCH64_DIR: ${{ github.workspace }}/.ci-wave/loongarch64
       RUSTUP_TOOLCHAIN: beta
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -68,6 +74,11 @@ jobs:
         with:
           name: ${{ needs.asmobj.outputs.artifact_name }}
           path: .ci-asmobj
+      - name: Download selected Linux AMD64 Wave modules
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'

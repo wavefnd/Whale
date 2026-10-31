@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A64 branch ranges, scaled immediates and split ADR immediate fields.
-use assembler::{fixed::displacement, AsmError};
+use assembler::{fixed::reference::displacement, AsmError};
 
 pub(crate) fn direct(link: bool, offset: i64) -> Result<u32, AsmError> {
     Ok(if link { 0x94000000 } else { 0x14000000 } | displacement(offset, 26, 4)?)

@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MPL-2.0
+// Status: 1 invalid graph/type, 2 depth, 3 overflow, 4 capacity,
+// 5 invalid transport/target, 6 work budget. Only result is written on error.
+export(c) fun whale_ir_layout(storage: ptr<IrStorage>, nodes: ptr<IrTypeNode>, node_count: u64,
+    edges: ptr<u64>, edge_count: u64, root: u64, max_depth: u64, max_work: u64,
+    scratch: ptr<IrTypeLayout>, scratch_count: u64, scratch_offsets: ptr<u64>,
+    scratch_offset_count: u64, output: ptr<IrTypeLayout>, output_count: u64,
+    output_offsets: ptr<u64>, output_offset_count: u64,
+    result: ptr<IrLayoutResult>) -> i32 {
+    if (result == null) { return 5; }
+    result.status = 0;
+    result.index = 0;
+    if (!ir_storage_valid(storage) || root >= node_count
+        || !ir_span_valid(nodes as ptr<u8>, node_count, 32)
+        || !ir_span_valid(edges as ptr<u8>, edge_count, 8)) {
+        result.status = 5; return 5;
+    }
+    if (node_count > scratch_count || edge_count > scratch_offset_count
+        || node_count > output_count || edge_count > output_offset_count) {
+        result.status = 4; return 4;
+    }
+    if (!ir_span_valid(scratch as ptr<u8>, node_count, 40)
+        || !ir_span_valid(output as ptr<u8>, node_count, 40)
+        || !ir_span_valid(scratch_offsets as ptr<u8>, edge_count, 8)
+        || !ir_span_valid(output_offsets as ptr<u8>, edge_count, 8)) {
+        result.status = 5; return 5;
+    }
+    if (node_count > max_work || edge_count > max_work - node_count) {
+        result.status = 6; return 6;
+    }
+    // Reserve the final copy before preflight so a successful analysis cannot
+    // fail after it starts publishing output. Repeated edge visits are charged
+    // individually below, rather than assuming disjoint input ranges.
+    var output_work: u64 = node_count + edge_count;
+    var work: u64 = max_work - output_work;
+    var depth: u64 = max_depth;
+    if (depth > 256) { depth = 256; }
+    var index: u64 = 0;
+    while (index < node_count) {
+        if (work == 0) { result.status = 6; return 6; }
+        work -= 1;
+        scratch[index].size = 0; scratch[index].align = 0; scratch[index].stride = 0;
+        scratch[index].allocation_align = 0; scratch[index].depth = 0;
+        index += 1;
+    }
+    index = 0;
+    while (index < edge_count) {
+        if (work == 0) { result.status = 6; return 6; }
+        work -= 1;
+        scratch_offsets[index] = 0;
+        index += 1;
+    }
+    result.index = root;
+    var status: i32 = ir_layout_node(root, nodes, node_count, edges, edge_count,
+        storage, depth, scratch, scratch_offsets, &work);
+    if (status != 0) { result.status = status as u64; return status; }
+    index = 0;
+    while (index < node_count) { output[index] = scratch[index]; index += 1; }
+    index = 0;
+    while (index < edge_count) { output_offsets[index] = scratch_offsets[index]; index += 1; }
+    result.index = root;
+    return 0;
+}
+
+// Distinct compiled identity used by product composition checks.
+export(c) fun whale_ir_module_identity() -> u64 {
+    return 6289348675458650625;
+}

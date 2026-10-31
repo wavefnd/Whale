@@ -1,0 +1,107 @@
+// SPDX-License-Identifier: MPL-2.0
+// AMD64 ModRM/SIB addressing, shared with the public low-level address API.
+fun amd_address(p: ptr<AmdEncodeInput>, mem: ptr<AmdOperand>, mode: u64,
+    symbols: bool, output: ptr<AmdAddress>, result: ptr<AmdEncodeResult>) -> bool {
+    output.mode = 0;
+    output.rm = 0;
+    output.sib = 18446744073709551615;
+    output.displacement = mem.disp as u64;
+    output.width = 0;
+    output.rex_b = 0;
+    output.rex_x = 0;
+    var address_mode: u64 = mem.mode;
+    var displacement: i64 = mem.disp;
+    if (mem.symbol != 18446744073709551615) {
+        if (!symbols) {
+            return amd_fail(result, 9);
+        }
+        if (mem.base != 18446744073709551615 || mem.index != 18446744073709551615) {
+            return amd_fail(result, 10);
+        }
+        displacement = 0;
+        output.displacement = 0;
+        if (address_mode == 0) {
+            address_mode = 1;
+        }
+    }
+    if (address_mode != 0) {
+        if (address_mode > 2 || mode != 64 || mem.base != 18446744073709551615
+            || mem.index != 18446744073709551615 || mem.scale != 1) {
+            return amd_fail(result, 11);
+        }
+        if (displacement < -2147483648 || displacement > 2147483647) {
+            return amd_fail(result, 12);
+        }
+        output.rm = 5;
+        output.width = 4;
+        if (address_mode == 2) {
+            output.rm = 4;
+            output.sib = 37;
+        }
+        return true;
+    }
+    var base: AmdOperand;
+    var index: AmdOperand;
+    base.code = 18446744073709551615;
+    index.code = 18446744073709551615;
+    if (mem.base != 18446744073709551615
+        && (!amd_register(p, mem.base, &base) || base.width != mode)) {
+        return amd_fail(result, 13);
+    }
+    if (mem.index != 18446744073709551615
+        && (!amd_register(p, mem.index, &index) || index.width != mode)) {
+        return amd_fail(result, 14);
+    }
+    if (base.code == 18446744073709551615 && index.code == 18446744073709551615) {
+        return amd_fail(result, 15);
+    }
+    var scale: u64 = 0;
+    if (mem.scale == 2) {
+        scale = 1;
+    } else if (mem.scale == 4) {
+        scale = 2;
+    } else if (mem.scale == 8) {
+        scale = 3;
+    } else if (mem.scale != 1) {
+        return amd_fail(result, 16);
+    }
+    if (index.code == 4) {
+        return amd_fail(result, 17);
+    }
+    if (displacement < -2147483648 || displacement > 2147483647) {
+        return amd_fail(result, 18);
+    }
+    if (displacement != 0) {
+        output.mode = 2;
+        output.width = 4;
+        if (displacement >= -128 && displacement <= 127) {
+            output.mode = 1;
+            output.width = 1;
+        }
+    }
+    if (base.code != 18446744073709551615) {
+        output.rm = base.code & 7;
+        output.rex_b = (base.code >= 8) as u64;
+        if (output.rm == 5 && displacement == 0) {
+            output.mode = 1;
+            output.width = 1;
+        }
+    }
+    if (index.code != 18446744073709551615 || base.code == 18446744073709551615
+        || output.rm == 4) {
+        output.rm = 4;
+        var index_low: u64 = 4;
+        if (index.code != 18446744073709551615) {
+            index_low = index.code & 7;
+            output.rex_x = (index.code >= 8) as u64;
+        }
+        var base_low: u64 = base.code & 7;
+        if (base.code == 18446744073709551615) {
+            base_low = 5;
+            output.mode = 0;
+            output.width = 4;
+        }
+        output.sib = (scale << 6) | (index_low << 3) | base_low;
+    }
+    return true;
+}

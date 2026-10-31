@@ -3,7 +3,8 @@
 use crate::parser::{no_sp, reg};
 
 use assembler::{
-    fixed::{count, error, Instruction},
+    fixed::reference::{count, error},
+    fixed::Instruction,
     AsmError,
 };
 

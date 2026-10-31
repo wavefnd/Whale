@@ -1,0 +1,293 @@
+// SPDX-License-Identifier: MPL-2.0
+// Complete instruction/terminator bodies. Typed atoms and UTF-8 bytes are
+// validated before a single model field is published. Linked block records
+// retain insertion order and entry-hoisted allocations independently of Rust.
+struct IrBodyAtom { kind: u64; a: u64; b: u64; c: u64; }
+
+struct IrBodyRecord { op: u64; block: u64; first: u64; count: u64; byte_first: u64; byte_count: u64; next: u64; }
+
+struct IrBodyBlock { head: u64; tail: u64; count: u64; terminator: u64; prefix_tail: u64; prefix_count: u64; }
+
+struct IrBodyState { atoms: u64; bytes: u64; records: u64; globals: u64; work: u64; }
+
+struct IrBodyGlobal { id: u64; first: u64; count: u64; byte_first: u64; byte_count: u64; }
+
+struct IrBodyResult { status: u64; detail: u64; ordinal: u64; work: u64; }
+
+struct IrBodyReader { atoms: ptr<IrBodyAtom>; count: u64; at: u64; bytes: ptr<u8>; byte_count: u64; byte_at: u64; depth: u64; const_depth: u64; work: u64; max_work: u64; result: ptr<IrBodyResult>; }
+
+fun ir_body_fail(r: ptr<IrBodyReader>, status: u64) -> bool { r.result.status = status; r.result.detail = r.at; return false; }
+
+fun ir_body_charge(r: ptr<IrBodyReader>, n: u64) -> bool {
+    if (n > r.max_work - r.work) { return ir_body_fail(r, 4); }
+    r.work += n; return true;
+}
+
+fun ir_body_atom(r: ptr<IrBodyReader>, kind: u64) -> bool {
+    if (!ir_body_charge(r, 1)) { return false; }
+    if (r.at >= r.count || r.atoms[r.at].kind != kind) { return ir_body_fail(r, 1); }
+    r.at += 1; return true;
+}
+
+fun ir_body_uint(r: ptr<IrBodyReader>, maximum: u64) -> bool {
+    if (!ir_body_atom(r, 0)) { return false; }
+    var atom: ptr<IrBodyAtom> = &r.atoms[r.at - 1];
+    return (atom.a <= maximum && atom.b == 0 && atom.c == 0) || ir_body_fail(r, 1);
+}
+
+fun ir_body_constant(r: ptr<IrBodyReader>) -> bool {
+    if (!ir_body_atom(r, 1)) { return false; }
+    var atom: ptr<IrBodyAtom> = &r.atoms[r.at - 1];
+    if (atom.a > 5 || (atom.a == 0 && (atom.b > 1 || atom.c != 0))
+        || (atom.a == 3 && (atom.b > 65535 || atom.c != 0))
+        || (atom.a == 4 && (atom.b > 4294967295 || atom.c != 0))
+        || (atom.a == 5 && atom.c != 0)) { return ir_body_fail(r, 1); }
+    return true;
+}
+
+fun ir_body_string(r: ptr<IrBodyReader>) -> bool {
+    if (!ir_body_atom(r, 2)) { return false; }
+    var atom: ptr<IrBodyAtom> = &r.atoms[r.at - 1];
+    if (atom.c != 0 || atom.a != r.byte_at || atom.a > r.byte_count || atom.b > r.byte_count - atom.a) { return ir_body_fail(r, 1); }
+    var end: u64 = atom.a + atom.b; var width: u64 = 0; var cp: u64 = 0;
+    while (r.byte_at < end) {
+        if (!ir_lex_utf8(r.bytes, end, r.byte_at, &width, &cp)) { return ir_body_fail(r, 1); }
+        if (!ir_body_charge(r, width)) { return false; }
+        r.byte_at += width;
+    }
+    return true;
+}
+
+fun ir_body_type(r: ptr<IrBodyReader>, depth: u64) -> bool {
+    if (depth > r.depth) { return ir_body_fail(r, 2); }
+    if (!ir_body_atom(r, 3)) { return false; }
+    var atom: IrBodyAtom = r.atoms[r.at - 1];
+    if (atom.a > 21 || (atom.a <= 16 && (atom.b != 0 || atom.c != 0))
+        || ((atom.a == 17 || atom.a == 19) && atom.b != 1)
+        || (atom.a == 17 && atom.c != 0)
+        || (atom.a == 18 && (atom.b == 0 || atom.c > 3))
+        || ((atom.a == 20 || atom.a == 21) && atom.c != 0)
+        || atom.b > r.count - r.at) { return ir_body_fail(r, 1); }
+    var i: u64 = 0;
+    while (i < atom.b) { if (!ir_body_type(r, depth + 1)) { return false; } i += 1; }
+    return true;
+}
+
+fun ir_body_expression(r: ptr<IrBodyReader>, depth: u64) -> bool {
+    if (depth > r.const_depth) { return ir_body_fail(r, 2); }
+    if (!ir_body_atom(r, 4)) { return false; }
+    var atom: IrBodyAtom = r.atoms[r.at - 1];
+    if (atom.a > 6 || (atom.a <= 2 && (atom.b != 0 || atom.c != 0))
+        || ((atom.a == 3 || atom.a == 4) && (atom.b != 0 || atom.c != 1))
+        || (atom.a == 5 && (atom.b > 11 || atom.c != 2))
+        || (atom.a == 6 && (atom.b > 5 || atom.c != 2))) { return ir_body_fail(r, 1); }
+    if (!ir_body_type(r, 0)) { return false; }
+    if (atom.a == 0 && !ir_body_constant(r)) { return false; }
+    if ((atom.a == 1 || atom.a == 2) && !ir_body_uint(r, 4294967295)) { return false; }
+    var i: u64 = 0;
+    while (i < atom.c) { if (!ir_body_expression(r, depth + 1)) { return false; } i += 1; }
+    return true;
+}
+
+fun ir_body_list(r: ptr<IrBodyReader>, kind: u64) -> bool {
+    if (!ir_body_atom(r, 5)) { return false; }
+    var atom: IrBodyAtom = r.atoms[r.at - 1];
+    if (atom.a != kind || atom.c != 0 || atom.b > r.count - r.at) { return ir_body_fail(r, 1); }
+    var i: u64 = 0;
+    while (i < atom.b) {
+        if (kind == 2) { if (!ir_body_constant(r)) { return false; } }
+        else { if (!ir_body_uint(r, 4294967295)) { return false; } }
+        if (kind != 0 && !ir_body_uint(r, 4294967295)) { return false; }
+        i += 1;
+    }
+    return true;
+}
+
+fun ir_body_optional(r: ptr<IrBodyReader>) -> bool {
+    if (!ir_body_uint(r, 1)) { return false; }
+    if (r.atoms[r.at - 1].a != 0) { return ir_body_uint(r, 4294967295); }
+    return true;
+}
+
+fun ir_body_schema(r: ptr<IrBodyReader>, op: u64) -> bool {
+    if (op == 0) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_type(r, 0); }
+    else if (op == 1) { return ir_body_uint(r, 4294967295); }
+    else if (op == 2) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 3) { return ir_body_uint(r, 4294967295) && ir_body_string(r) && ir_body_expression(r, 0) && ir_body_constant(r); }
+    else if (op == 4) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_constant(r); }
+    else if (op == 5) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0); }
+    else if (op == 6) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295); }
+    else if (op == 7) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 17) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 8) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295); }
+    else if (op == 9) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295); }
+    else if (op == 10) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 15) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 11) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 9) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 12) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 13) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 13) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 14) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 12) && ir_body_type(r, 0) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295); }
+    else if (op == 15) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_list(r, 1); }
+    else if (op == 16) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 17) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 5) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 18) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295); }
+    else if (op == 19) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 20) { return ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 21) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 22) { return ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 23) { return ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 24) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_list(r, 0); }
+    else if (op == 25) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 26) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 27) { return ir_body_uint(r, 4294967295) && ir_body_type(r, 0); }
+    else if (op == 28) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_type(r, 0); }
+    else if (op == 29) { return ir_body_optional(r) && ir_body_type(r, 0) && ir_body_uint(r, 1) && ir_body_uint(r, 1) && ir_body_uint(r, 4294967295) && ir_body_list(r, 0); }
+    else if (op == 30) { return ir_body_uint(r, 4294967295) && ir_body_string(r); }
+    else if (op == 31) { return ir_body_uint(r, 4294967295); }
+    else if (op == 32) { return ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295); }
+    else if (op == 33) { return ir_body_type(r, 0) && ir_body_uint(r, 4294967295) && ir_body_uint(r, 4294967295) && ir_body_list(r, 2); }
+    else if (op == 34) { return ir_body_type(r, 0) && ir_body_optional(r); }
+    else if (op == 35) { return ir_body_string(r); }
+    return ir_body_fail(r, 1);
+}
+
+// mode0 validates/probes; mode1 publishes. hoist1 inserts an alloca at the end
+// of the existing alloca prefix, even when entry already has a terminator.
+export(c) fun whale_ir_builder_body(state: ptr<IrBodyState>, blocks: ptr<IrBodyBlock>, block_count: u64,
+    block: u64, op: u64, hoist: u64, atoms: ptr<IrBodyAtom>, atom_count: u64,
+    bytes: ptr<u8>, byte_count: u64, depth: u64, const_depth: u64,
+    node_limit: u64, byte_limit: u64, work_limit: u64, mode: u64,
+    output_atoms: ptr<IrBodyAtom>, atom_capacity: u64, output_bytes: ptr<u8>, byte_capacity: u64,
+    records: ptr<IrBodyRecord>, record_capacity: u64, result: ptr<IrBodyResult>) -> i32 {
+    if (result == null) { return 1; }
+    result.status = 0; result.detail = 0; result.ordinal = 0; result.work = 0;
+    if (state == null || op > 35 || hoist > 1 || mode > 1 || block >= block_count
+        || depth > 257 || const_depth > 256 || (hoist != 0 && op != 18)
+        || !ir_span_valid(blocks as ptr<u8>, block_count, 48)
+        || !ir_span_valid(atoms as ptr<u8>, atom_count, 32)
+        || !ir_span_valid(bytes, byte_count, 1)
+        || !ir_span_valid(records as ptr<u8>, state.records, 56)) { result.status = 1; return 1; }
+    if (state.atoms > node_limit || atom_count > node_limit - state.atoms
+        || state.records >= node_limit) { result.status = 3; return 3; }
+    if (state.bytes > byte_limit || byte_count > byte_limit - state.bytes) { result.status = 10; return 10; }
+    if (state.work > work_limit) { result.status = 4; return 4; }
+    var model: ptr<IrBodyBlock> = &blocks[block];
+    if (model.count > state.records || (model.count == 0 && (model.head != 18446744073709551615 || model.tail != 18446744073709551615))
+        || (model.count != 0 && (model.head >= state.records || model.tail >= state.records))
+        || (model.terminator != 18446744073709551615 && model.terminator >= state.records)
+        || model.prefix_count > model.count
+        || (model.prefix_count == 0 && model.prefix_tail != 18446744073709551615)
+        || (model.prefix_count != 0 && model.prefix_tail >= state.records)) { result.status = 1; return 1; }
+    if (model.prefix_count != 0 && (records[model.prefix_tail].block != block
+        || records[model.prefix_tail].op != 18)) { result.status = 1; return 1; }
+    if (model.terminator != 18446744073709551615 && hoist == 0) { result.status = 7; return 7; }
+    var reader: IrBodyReader;
+    reader.atoms = atoms; reader.count = atom_count; reader.at = 0;
+    reader.bytes = bytes; reader.byte_count = byte_count; reader.byte_at = 0;
+    reader.depth = depth; reader.const_depth = const_depth; reader.work = 0;
+    reader.max_work = work_limit - state.work; reader.result = result;
+    if (!ir_body_schema(&reader, op)) { result.work = reader.work; return result.status as i32; }
+    if (reader.at != atom_count || reader.byte_at != byte_count) { result.status = 1; return 1; }
+    var previous: u64 = model.tail; var next: u64 = 18446744073709551615;
+    var ordinal: u64 = model.count;
+    if (hoist != 0) {
+        // Prefix ownership is part of the Wave block model. Hoisting performs
+        // one indexed splice regardless of how many allocas already precede it.
+        previous = model.prefix_tail; ordinal = model.prefix_count;
+        next = model.head;
+        if (previous != 18446744073709551615) { next = records[previous].next; }
+        if (next != 18446744073709551615 && (next >= state.records
+            || records[next].block != block || records[next].op == 18)) { result.status = 1; return 1; }
+    } else {
+        if (previous != 18446744073709551615 && (records[previous].block != block
+            || records[previous].next != 18446744073709551615)) { result.status = 1; return 1; }
+    }
+    if (!ir_body_charge(&reader, atom_count) || !ir_body_charge(&reader, byte_count)
+        || !ir_body_charge(&reader, 1)) { return result.status as i32; }
+    result.ordinal = ordinal; result.work = reader.work;
+    if (mode == 0) { return 0; }
+    if (state.atoms > atom_capacity || atom_count > atom_capacity - state.atoms
+        || state.bytes > byte_capacity || byte_count > byte_capacity - state.bytes
+        || state.records >= record_capacity
+        || !ir_span_valid(output_atoms as ptr<u8>, atom_capacity, 32)
+        || !ir_span_valid(output_bytes, byte_capacity, 1)
+        || !ir_span_valid(records as ptr<u8>, record_capacity, 56)) { result.status = 1; return 1; }
+    var i: u64 = 0;
+    while (i < atom_count) {
+        output_atoms[state.atoms + i] = atoms[i];
+        if (atoms[i].kind == 2) { output_atoms[state.atoms + i].a += state.bytes; }
+        i += 1;
+    }
+    i = 0;
+    while (i < byte_count) { output_bytes[state.bytes + i] = bytes[i]; i += 1; }
+    var index: u64 = state.records;
+    records[index].op = op; records[index].block = block;
+    records[index].first = state.atoms; records[index].count = atom_count;
+    records[index].byte_first = state.bytes; records[index].byte_count = byte_count;
+    records[index].next = next;
+    if (op >= 31) { model.terminator = index; }
+    else {
+        if (previous == 18446744073709551615) { model.head = index; }
+        else { records[previous].next = index; }
+        if (next == 18446744073709551615) { model.tail = index; }
+        if (op == 18 && (hoist != 0 || model.prefix_count == model.count)) {
+            model.prefix_tail = index; model.prefix_count += 1;
+        }
+        model.count += 1;
+    }
+    state.atoms += atom_count; state.bytes += byte_count; state.records += 1; state.work += reader.work;
+    return 0;
+}
+
+// Global constants have an independent module record/schema, sharing only the
+// typed atom arena and its cumulative byte/node/work budget with function bodies.
+export(c) fun whale_ir_builder_global(state: ptr<IrBodyState>, id: u64,
+    globals: ptr<IrBodyGlobal>, global_capacity: u64,
+    atoms: ptr<IrBodyAtom>, atom_count: u64, bytes: ptr<u8>, byte_count: u64,
+    depth: u64, const_depth: u64, node_limit: u64, byte_limit: u64,
+    work_limit: u64, mode: u64, output_atoms: ptr<IrBodyAtom>, atom_capacity: u64,
+    output_bytes: ptr<u8>, byte_capacity: u64, result: ptr<IrBodyResult>) -> i32 {
+    if (result == null) { return 1; }
+    result.status = 0; result.detail = 0; result.ordinal = 0; result.work = 0;
+    if (state == null || id > 4294967295 || mode > 1 || depth > 257 || const_depth > 256
+        || state.globals > global_capacity
+        || !ir_span_valid(globals as ptr<u8>, global_capacity, 40)
+        || !ir_span_valid(atoms as ptr<u8>, atom_count, 32)
+        || !ir_span_valid(bytes, byte_count, 1)) { result.status = 1; return 1; }
+    if (state.globals != 0 && globals[state.globals - 1].id >= id) { result.status = 1; return 1; }
+    if (state.atoms > node_limit || atom_count > node_limit - state.atoms
+        || state.globals >= node_limit) { result.status = 3; return 3; }
+    if (state.bytes > byte_limit || byte_count > byte_limit - state.bytes) { result.status = 10; return 10; }
+    if (state.work > work_limit) { result.status = 4; return 4; }
+    var reader: IrBodyReader;
+    reader.atoms = atoms; reader.count = atom_count; reader.at = 0;
+    reader.bytes = bytes; reader.byte_count = byte_count; reader.byte_at = 0;
+    reader.depth = depth; reader.const_depth = const_depth; reader.work = 0;
+    reader.max_work = work_limit - state.work; reader.result = result;
+    if (!ir_body_string(&reader) || !ir_body_expression(&reader, 0)
+        || !ir_body_constant(&reader) || !ir_body_uint(&reader, 4294967295)) {
+        result.work = reader.work; return result.status as i32;
+    }
+    if (reader.at != atom_count || reader.byte_at != byte_count) { result.status = 1; return 1; }
+    if (!ir_body_charge(&reader, atom_count) || !ir_body_charge(&reader, byte_count)
+        || !ir_body_charge(&reader, 1)) { result.work = reader.work; return result.status as i32; }
+    result.ordinal = state.globals; result.work = reader.work;
+    if (mode == 0) { return 0; }
+    if (state.globals >= global_capacity
+        || state.atoms > atom_capacity || atom_count > atom_capacity - state.atoms
+        || state.bytes > byte_capacity || byte_count > byte_capacity - state.bytes
+        || !ir_span_valid(output_atoms as ptr<u8>, atom_capacity, 32)
+        || !ir_span_valid(output_bytes, byte_capacity, 1)) { result.status = 1; return 1; }
+    var i: u64 = 0;
+    while (i < atom_count) {
+        output_atoms[state.atoms + i] = atoms[i];
+        if (atoms[i].kind == 2) { output_atoms[state.atoms + i].a += state.bytes; }
+        i += 1;
+    }
+    i = 0;
+    while (i < byte_count) { output_bytes[state.bytes + i] = bytes[i]; i += 1; }
+    var record: ptr<IrBodyGlobal> = &globals[state.globals];
+    record.id = id; record.first = state.atoms; record.count = atom_count;
+    record.byte_first = state.bytes; record.byte_count = byte_count;
+    state.atoms += atom_count; state.bytes += byte_count;
+    state.globals += 1; state.work += reader.work;
+    return 0;
+}

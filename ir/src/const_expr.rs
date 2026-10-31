@@ -65,6 +65,7 @@ pub enum ConstEvalError {
     DuplicateDefinition(ConstRef),
     CyclicReference,
     ResultMismatch,
+    Backend(&'static str),
 }
 
 impl ConstExpr {
@@ -112,6 +113,22 @@ impl ConstExpr {
         resolve: &impl Fn(ConstRef) -> Option<(Type, ConstValue)>,
         limits: crate::IrLimits,
     ) -> Result<ConstValue, (ConstEvalError, &ConstExpr)> {
+        #[cfg(whale_wave_ir)]
+        {
+            crate::constant_wave::evaluate(self, resolve, limits)
+        }
+        #[cfg(not(whale_wave_ir))]
+        {
+            self.evaluate_with_error_site_reference(resolve, limits)
+        }
+    }
+
+    #[cfg(any(not(whale_wave_ir), test))]
+    pub(crate) fn evaluate_with_error_site_reference(
+        &self,
+        resolve: &impl Fn(ConstRef) -> Option<(Type, ConstValue)>,
+        limits: crate::IrLimits,
+    ) -> Result<ConstValue, (ConstEvalError, &ConstExpr)> {
         let mut budget = crate::limits::Budget::new(limits)
             .map_err(|error| (ConstEvalError::ResourceLimit(error), self))?;
         budget.expression(self).map_err(|error| (ConstEvalError::ResourceLimit(error), self))?;
@@ -122,7 +139,7 @@ impl ConstExpr {
         while let Some(expr) = inspect.pop() {
             match &expr.kind {
                 ConstExprKind::Literal(v) => {
-                    if !crate::constant::valid_constant(&expr.ty, v) {
+                    if !crate::constant::valid_constant_reference(&expr.ty, v) {
                         return Err((ConstEvalError::InvalidLiteral, expr));
                     }
                 },
@@ -136,7 +153,7 @@ impl ConstExpr {
                     if ty != expr.ty {
                         return Err((ConstEvalError::TypeMismatch, expr));
                     }
-                    if !crate::constant::valid_constant(&ty, &value) {
+                    if !crate::constant::valid_constant_reference(&ty, &value) {
                         return Err((ConstEvalError::InvalidLiteral, expr));
                     }
                     resolved.insert(expr as *const ConstExpr, value);
@@ -145,7 +162,7 @@ impl ConstExpr {
                     if expr.ty != value.ty {
                         return Err((ConstEvalError::TypeMismatch, expr));
                     }
-                    if crate::interpreter::integer::shape(&expr.ty).is_none()
+                    if crate::interpreter::integer::reference::shape(&expr.ty).is_none()
                         && !matches!(expr.ty, Type::F16 | Type::F32 | Type::F64)
                     {
                         return Err((ConstEvalError::UnsupportedOperation, expr));
@@ -218,12 +235,14 @@ impl ConstExpr {
                     continue;
                 },
                 ConstExprKind::Neg(_) => match values.pop().expect("neg operand") {
-                    ConstValue::F(value) => ConstValue::F(crate::float::arithmetic::negate(value)),
-                    value => crate::interpreter::integer::pack(
+                    ConstValue::F(value) => {
+                        ConstValue::F(crate::float::arithmetic::reference::negate(value))
+                    },
+                    value => crate::interpreter::integer::reference::pack(
                         &expr.ty,
-                        0u128.wrapping_sub(crate::interpreter::integer::raw(
+                        0u128.wrapping_sub(crate::interpreter::integer::reference::raw(
                             &value,
-                            crate::interpreter::integer::shape(&expr.ty).unwrap().0,
+                            crate::interpreter::integer::reference::shape(&expr.ty).unwrap().0,
                         )),
                     ),
                 },
@@ -276,7 +295,7 @@ impl ConstExpr {
                     )
                 },
             };
-            if !crate::constant::valid_constant(&expr.ty, &value) {
+            if !crate::constant::valid_constant_reference(&expr.ty, &value) {
                 return Err((ConstEvalError::InvalidLiteral, expr));
             }
             values.push(value);
@@ -285,6 +304,7 @@ impl ConstExpr {
     }
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 pub(crate) fn same_value(left: &ConstValue, right: &ConstValue) -> bool {
     match (left, right) {
         // Compare the stored payload, including signed zero and NaN bits.
@@ -294,6 +314,7 @@ pub(crate) fn same_value(left: &ConstValue, right: &ConstValue) -> bool {
 }
 
 // Preserve the existing scalar constant evaluation rules.
+#[cfg(any(not(whale_wave_ir), test))]
 fn ty_int_bits(ty: &Type) -> Option<u32> {
     Some(match ty {
         Type::I1 | Type::U1 => 1,
@@ -306,10 +327,12 @@ fn ty_int_bits(ty: &Type) -> Option<u32> {
     })
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn is_signed_int(ty: &Type) -> bool {
     matches!(ty, Type::I1 | Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::I128)
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn wrap_u(v: u128, ty: &Type) -> u128 {
     let bits = ty_int_bits(ty).unwrap_or(128);
     if bits >= 128 {
@@ -319,6 +342,7 @@ fn wrap_u(v: u128, ty: &Type) -> u128 {
     v & mask
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn wrap_i(v: i128, ty: &Type) -> i128 {
     let bits = ty_int_bits(ty).unwrap_or(128);
     if bits >= 128 {
@@ -335,11 +359,13 @@ fn wrap_i(v: i128, ty: &Type) -> i128 {
     }
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn shift_count(ty: &Type, raw: u128) -> u32 {
     let bits = ty_int_bits(ty).expect("integer expression validated");
     (wrap_u(raw, ty) % u128::from(bits)) as u32
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn const_not(ty: &Type, value: &ConstValue) -> Result<ConstValue, ConstEvalError> {
     match value {
         ConstValue::I(v) if is_signed_int(ty) => Ok(ConstValue::I(wrap_i(!v, ty))),
@@ -348,6 +374,7 @@ fn const_not(ty: &Type, value: &ConstValue) -> Result<ConstValue, ConstEvalError
     }
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn const_bin(
     op: ConstBinaryOp,
     ty: &Type,
@@ -367,7 +394,7 @@ fn const_bin(
             ConstBinaryOp::Rem => crate::BinOp::FRem,
             _ => return Err(ConstEvalError::UnsupportedOperation),
         };
-        let value = crate::float::arithmetic::arithmetic(&op, *a, *b).unwrap();
+        let value = crate::float::arithmetic::reference::arithmetic(&op, *a, *b).unwrap();
         return Ok(ConstValue::F(value));
     }
 
@@ -419,6 +446,7 @@ fn const_bin(
     Err(ConstEvalError::UnsupportedOperation)
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn const_cmp(
     op: ConstCompareOp,
     ty: &Type,
@@ -439,7 +467,7 @@ fn const_cmp(
             ConstCompareOp::Ge => crate::CmpOp::FGe,
         };
         return a
-            .compare(*b, &generic.float_predicate().unwrap())
+            .compare_reference(*b, &generic.float_predicate().unwrap())
             .ok_or(ConstEvalError::TypeMismatch);
     }
 
@@ -485,4 +513,176 @@ fn const_cmp(
     }
 
     Err(ConstEvalError::UnsupportedOperation)
+}
+
+#[cfg(all(test, whale_wave_ir))]
+mod wave_tests {
+    use super::*;
+
+    use std::cell::RefCell;
+
+    fn next(seed: &mut u64) -> u64 {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    }
+
+    fn literal(ty: &Type, seed: &mut u64) -> ConstExpr {
+        let bits = u128::from(next(seed)) | (u128::from(next(seed)) << 64);
+        let value = match ty {
+            Type::Bool => ConstValue::Bool(bits & 1 != 0),
+            Type::F16 => ConstValue::F(crate::FloatBits::F16(bits as u16)),
+            Type::F32 => ConstValue::F(crate::FloatBits::F32(bits as u32)),
+            Type::F64 => ConstValue::F(crate::FloatBits::F64(bits as u64)),
+            _ => crate::interpreter::integer::reference::pack(ty, bits),
+        };
+        ConstExpr::literal(ty.clone(), value)
+    }
+
+    fn tree(ty: &Type, seed: &mut u64, depth: usize) -> ConstExpr {
+        if depth == 0 || next(seed) % 4 == 0 {
+            return literal(ty, seed);
+        }
+        if next(seed) % 10 == 0 {
+            return ConstExpr {
+                ty: ty.clone(),
+                kind: ConstExprKind::Reference(ConstRef::Global(GlobalId((next(seed) % 5) as u32))),
+            };
+        }
+        let kind = if *ty == Type::Bool {
+            ConstExprKind::Binary {
+                op: if next(seed) & 1 == 0 {
+                    ConstBinaryOp::LogicalAnd
+                } else {
+                    ConstBinaryOp::LogicalOr
+                },
+                left: Box::new(tree(ty, seed, depth - 1)),
+                right: Box::new(tree(ty, seed, depth - 1)),
+            }
+        } else if next(seed) % 5 == 0 {
+            if next(seed) & 1 == 0 {
+                ConstExprKind::Neg(Box::new(tree(ty, seed, depth - 1)))
+            } else {
+                ConstExprKind::Not(Box::new(tree(ty, seed, depth - 1)))
+            }
+        } else {
+            let op = match next(seed) % 10 {
+                0 => ConstBinaryOp::Add,
+                1 => ConstBinaryOp::Sub,
+                2 => ConstBinaryOp::Mul,
+                3 => ConstBinaryOp::BitAnd,
+                4 => ConstBinaryOp::BitOr,
+                5 => ConstBinaryOp::BitXor,
+                6 => ConstBinaryOp::Div,
+                7 => ConstBinaryOp::Rem,
+                8 => ConstBinaryOp::ShiftLeft,
+                _ => ConstBinaryOp::ShiftRight,
+            };
+            ConstExprKind::Binary {
+                op,
+                left: Box::new(tree(ty, seed, depth - 1)),
+                right: Box::new(tree(ty, seed, depth - 1)),
+            }
+        };
+        ConstExpr { ty: ty.clone(), kind }
+    }
+
+    fn compare(expression: &ConstExpr) {
+        let seen = RefCell::new(Vec::new());
+        let resolve = |reference| {
+            seen.borrow_mut().push(reference);
+            match reference {
+                ConstRef::Global(GlobalId(0)) => Some((Type::I32, ConstValue::I(7))),
+                ConstRef::Global(GlobalId(1)) => Some((Type::I32, ConstValue::I(0))),
+                ConstRef::Global(GlobalId(2)) => Some((Type::U128, ConstValue::U(u128::MAX))),
+                ConstRef::Global(GlobalId(3)) => Some((Type::Bool, ConstValue::Bool(true))),
+                _ => None,
+            }
+        };
+        let expected =
+            expression.evaluate_with_error_site_reference(&resolve, crate::IrLimits::default());
+        let expected_calls = seen.replace(Vec::new());
+        let actual = expression.evaluate_with_error_site(&resolve, crate::IrLimits::default());
+        assert_eq!(*seen.borrow(), expected_calls, "reference order {expression:?}");
+        match (actual, expected) {
+            (Ok(actual), Ok(expected)) => assert_eq!(actual, expected, "{expression:?}"),
+            (Err((actual, site)), Err((expected, expected_site))) => {
+                assert_eq!(actual, expected, "{expression:?}");
+                assert!(std::ptr::eq(site, expected_site), "error site {expression:?}");
+            },
+            (actual, expected) => {
+                panic!("constant divergence {expression:?}: {actual:?} / {expected:?}")
+            },
+        }
+    }
+
+    #[test]
+    fn wave_constants_match_independent_reference_values_errors_sites_and_resolver_order() {
+        let types = [
+            Type::Bool,
+            Type::I1,
+            Type::U1,
+            Type::I8,
+            Type::U8,
+            Type::I16,
+            Type::U16,
+            Type::I32,
+            Type::U32,
+            Type::I64,
+            Type::U64,
+            Type::I128,
+            Type::U128,
+            Type::F16,
+            Type::F32,
+            Type::F64,
+        ];
+        let mut seed = 0x0003_5235_3558_u64;
+        for _ in 0..4000 {
+            let ty = &types[next(&mut seed) as usize % types.len()];
+            let mut expression = tree(ty, &mut seed, 5);
+            if next(&mut seed) % 3 == 0 {
+                let op = match next(&mut seed) % 6 {
+                    0 => ConstCompareOp::Eq,
+                    1 => ConstCompareOp::Ne,
+                    2 => ConstCompareOp::Lt,
+                    3 => ConstCompareOp::Le,
+                    4 => ConstCompareOp::Gt,
+                    _ => ConstCompareOp::Ge,
+                };
+                expression = ConstExpr {
+                    ty: Type::Bool,
+                    kind: ConstExprKind::Compare {
+                        op,
+                        left: Box::new(expression),
+                        right: Box::new(tree(ty, &mut seed, 3)),
+                    },
+                };
+            }
+            compare(&expression);
+        }
+        for expression in [
+            ConstExpr::literal(Type::I1, ConstValue::I(1)),
+            ConstExpr::literal(Type::U8, ConstValue::U(256)),
+            ConstExpr::literal(Type::Bool, ConstValue::U(1)),
+            ConstExpr::literal(Type::F32, ConstValue::F(crate::FloatBits::F64(0))),
+        ] {
+            compare(&expression);
+        }
+    }
+
+    #[test]
+    fn constant_work_is_bounded_even_when_validation_would_skip_a_branch() {
+        let expression = ConstExpr::literal(Type::I32, ConstValue::I(7));
+        assert!(matches!(
+            expression.evaluate_with_limits(
+                &|_| None,
+                crate::IrLimits { max_analysis_work: 0, ..Default::default() }
+            ),
+            Err(ConstEvalError::ResourceLimit(crate::LimitError {
+                resource: crate::Resource::AnalysisWork,
+                ..
+            }))
+        ));
+    }
 }

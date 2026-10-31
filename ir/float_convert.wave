@@ -1,0 +1,274 @@
+// SPDX-License-Identifier: MPL-2.0
+// Numeric conversions share the single packer's rounding; stored NaNs stay separate.
+fun ir_float_integer_mask(width: u64, output: ptr<IrWide>) {
+    var one: u64 = 1;
+    output.low = 18446744073709551615;
+    output.high = 18446744073709551615;
+    if (width < 64) {
+        output.low = (one << width) - 1;
+        output.high = 0;
+    } else if (width == 64) {
+        output.high = 0;
+    } else if (width < 128) {
+        output.high = (one << (width - 64)) - 1;
+    }
+}
+
+fun ir_float_integer_negative(kind: u64, value: ptr<IrWide>) -> bool {
+    if (!ir_verify_signed(kind)) {
+        return false;
+    }
+    var width: u64 = ir_verify_width(kind);
+    var one: u64 = 1;
+    if (width <= 64) {
+        return (value.low & (one << (width - 1))) != 0;
+    }
+    return (value.high & (one << (width - 65))) != 0;
+}
+
+fun ir_float_integer_pack(kind: u64, source_value: ptr<IrWide>, output: ptr<IrWide>) {
+    var mask: IrWide;
+    ir_float_integer_mask(ir_verify_width(kind), &mask);
+    output.low = source_value.low & mask.low;
+    output.high = source_value.high & mask.high;
+    if (ir_float_integer_negative(kind, output)) {
+        output.low = output.low | ~mask.low;
+        output.high = output.high | ~mask.high;
+    }
+}
+
+fun ir_float_conversion(
+    operation: u64,
+    source: u64,
+    destination: u64,
+    low: u64,
+    high: u64,
+    output: ptr<IrWide>
+) -> bool {
+    var src: IrFloatFormat;
+    var dst: IrFloatFormat;
+    var source_float: bool = ir_float_format(source, &src);
+    var destination_float: bool = ir_float_format(destination, &dst);
+    var valid: bool = false;
+    if (operation == 0) {
+        valid = source_float && destination_float && src.width < dst.width;
+    } else if (operation == 1) {
+        valid = source_float && destination_float && src.width > dst.width;
+    } else if (operation == 2) {
+        valid = ir_verify_signed(source) && destination_float;
+    } else if (operation == 3) {
+        valid = ir_verify_unsigned(source) && destination_float;
+    } else if (operation == 4) {
+        valid = source_float && ir_verify_signed(destination);
+    } else if (operation == 5) {
+        valid = source_float && ir_verify_unsigned(destination);
+    }
+    if (!valid) {
+        return false;
+    }
+    output.high = 0;
+    var parts: IrFloatParts;
+    if (operation <= 1) {
+        ir_float_unpack(&src, low, &parts);
+        if (parts.nan) {
+            output.low = ir_float_nan(&dst);
+        } else if (parts.infinity) {
+            output.low = ir_float_special(&dst, parts.negative, true);
+        } else {
+            output.low = ir_float_pack(&dst, parts.negative, &parts.significand, parts.exponent);
+        }
+    } else if (operation <= 3) {
+        var raw: IrWide;
+        var mask: IrWide;
+        ir_float_integer_mask(ir_verify_width(source), &mask);
+        ir_wide_from(low & mask.low, high & mask.high, &raw);
+        var negative: bool = ir_float_integer_negative(source, &raw);
+        if (negative) {
+            ir_wide_neg(&raw, &raw);
+            raw.low = raw.low & mask.low;
+            raw.high = raw.high & mask.high;
+        }
+        output.low = ir_float_pack(&dst, negative, &raw, 0);
+    } else {
+        ir_float_unpack(&src, low, &parts);
+        if (parts.nan || parts.infinity) {
+            return false;
+        }
+        var magnitude: IrWide;
+        if (ir_float_wide_zero(&parts.significand)) {
+            ir_wide_zero(&magnitude);
+        } else if (parts.exponent >= 0) {
+            var shift: u64 = parts.exponent as u64;
+            if (shift >= 128 || shift > ir_wide_clz(&parts.significand)) {
+                return false;
+            }
+            ir_wide_shl(&parts.significand, shift, &magnitude);
+        } else {
+            ir_wide_shr(&parts.significand, (-parts.exponent) as u64, &magnitude);
+        }
+        var width: u64 = ir_verify_width(destination);
+        var signed: bool = ir_verify_signed(destination);
+        var maximum: IrWide;
+        ir_float_integer_mask(width, &maximum);
+        if (signed) {
+            var one: IrWide;
+            ir_wide_from(1, 0, &one);
+            ir_wide_shl(&one, width - 1, &maximum);
+            if (!parts.negative) {
+                ir_wide_sub(&maximum, &one, &maximum);
+            }
+        }
+        if ((parts.negative && !signed && !ir_float_wide_zero(&magnitude)) ||
+            ir_wide_cmp(&magnitude, &maximum) > 0) {
+            return false;
+        }
+        if (parts.negative) {
+            ir_wide_neg(&magnitude, &magnitude);
+        }
+        ir_float_integer_pack(destination, &magnitude, output);
+    }
+    return true;
+}
+
+// Host convenience conversions transport bits through Wave. Binary16 -> binary64
+// preserves signaling/payload bits; binary32 widening matches numeric quieting.
+fun ir_float_to_binary64(kind: u64, source_value: u64, output: ptr<u64>) -> bool {
+    var format: IrFloatFormat;
+    if (!ir_float_format(kind, &format)) {
+        return false;
+    }
+    if (kind == 16) {
+        output[0] = source_value;
+        return true;
+    }
+    var parts: IrFloatParts;
+    ir_float_unpack(&format, source_value, &parts);
+    var dst: IrFloatFormat;
+    ir_float_format(16, &dst);
+    if (parts.nan) {
+        var fraction: u64 = source_value & ((ir_float_sign(&format) >> (format.width - 1 -
+            format.fraction)) - 1);
+        // The fraction is widened without arithmetic or host floating exceptions.
+        var shift: u64 = 52 - format.fraction;
+        var sign: u64 = 0;
+        if (parts.negative) {
+            sign = ir_float_sign(&dst);
+        }
+        output[0] = sign | ir_float_infinity(&dst) | (fraction << shift);
+        if (kind == 15) {
+            var one: u64 = 1;
+            output[0] = output[0] | (one << 51);
+        }
+    } else if (parts.infinity) {
+        output[0] = ir_float_special(&dst, parts.negative, true);
+    } else {
+        output[0] = ir_float_pack(&dst, parts.negative, &parts.significand, parts.exponent);
+    }
+    return true;
+}
+
+fun ir_float_from_binary64(kind: u64, source_value: u64, output: ptr<u64>) -> bool {
+    var format: IrFloatFormat;
+    if (!ir_float_format(kind, &format)) {
+        return false;
+    }
+    if (kind == 16) {
+        output[0] = source_value;
+        return true;
+    }
+    var src: IrFloatFormat;
+    ir_float_format(16, &src);
+    var parts: IrFloatParts;
+    ir_float_unpack(&src, source_value, &parts);
+    if (parts.nan) {
+        var sign: u64 = 0;
+        if (parts.negative) {
+            sign = ir_float_sign(&format);
+        }
+        if (kind == 14) {
+            output[0] = sign | ir_float_nan(&format);
+        } else {
+            var one: u64 = 1;
+            output[0] = sign | ir_float_infinity(&format) | ((source_value & 4503599627370495) >>
+                29) | (one << 22);
+        }
+    } else if (parts.infinity) {
+        output[0] = ir_float_special(&format, parts.negative, true);
+    } else {
+        output[0] = ir_float_pack(&format, parts.negative, &parts.significand, parts.exponent);
+    }
+    return true;
+}
+
+fun ir_float_input_valid(kind: u64, literal: u64, low: u64, high: u64) -> bool {
+    if (!ir_verify_literal(kind, literal, low, high)) {
+        return false;
+    }
+    if (kind == 14) {
+        return high == 0 && low <= 65535;
+    }
+    if (kind == 15) {
+        return high == 0 && low <= 4294967295;
+    }
+    if (kind == 16) {
+        return high == 0;
+    }
+    if (kind == 1) {
+        return high == 0 && low <= 1;
+    }
+    return true;
+}
+
+export(c) fun whale_ir_float(request: ptr<IrFloatRequest>, result: ptr<IrFloatResult>) -> i32 {
+    if (!ir_span_valid(result as ptr<u8>, 1, 32)) {
+        return 9;
+    }
+    result.status = 9;
+    result.low = 0;
+    result.high = 0;
+    result.flag = 0;
+    if (!ir_span_valid(request as ptr<u8>, 1, 80) || request.mode > 5) {
+        return 9;
+    }
+    var q: IrFloatRequest = request[0];
+    result.status = 1;
+    if (!ir_float_input_valid(q.source, q.left_kind, q.left_low, q.left_high)) {
+        return 1;
+    }
+    var low: u64 = 0;
+    var flag: u64 = 0;
+    var output: IrWide;
+    ir_wide_zero(&output);
+    var valid: bool = false;
+    var format: IrFloatFormat;
+    if (q.mode == 0) {
+        valid = q.source == q.destination && ir_float_input_valid(q.destination, q.right_kind,
+            q.right_low, q.right_high) && ir_float_arithmetic(q.operation, q.source, q.left_low,
+            q.right_low, &low);
+    } else if (q.mode == 1) {
+        valid = ir_float_format(q.source, &format);
+        if (valid) {
+            low = q.left_low ^ ir_float_sign(&format);
+        }
+    } else if (q.mode == 2) {
+        valid = q.source == q.destination && ir_float_input_valid(q.destination, q.right_kind,
+            q.right_low, q.right_high) && ir_float_format(q.source, &format) &&
+            ir_float_predicate(&format, q.left_low, q.right_low, q.operation, &flag);
+    } else if (q.mode == 3) {
+        valid = ir_float_conversion(q.operation, q.source, q.destination, q.left_low, q.left_high,
+            &output);
+        low = output.low;
+    } else if (q.mode == 4) {
+        valid = ir_float_to_binary64(q.source, q.left_low, &low);
+    } else {
+        valid = q.source == 16 && ir_float_from_binary64(q.destination, q.left_low, &low);
+    }
+    if (!valid) {
+        return 1;
+    }
+    result.status = 0;
+    result.low = low;
+    result.high = output.high;
+    result.flag = flag;
+    return 0;
+}

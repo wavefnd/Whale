@@ -40,6 +40,7 @@ pub enum AstLimitError {
     Nodes,
     Strings,
     Output,
+    Backend,
 }
 
 impl std::fmt::Display for AstLimitError {
@@ -52,12 +53,14 @@ impl std::fmt::Display for AstLimitError {
             Self::Nodes => "AST node limit exceeded",
             Self::Strings => "AST string byte limit exceeded",
             Self::Output => "AST JSON exceeds output byte limit",
+            Self::Backend => "invalid Wave AST inspection result",
         })
     }
 }
 
 impl std::error::Error for AstLimitError {}
 
+#[cfg(any(not(whale_wave_ir), test))]
 enum Node<'a> {
     Expr(&'a Expr),
     Stmt(&'a Stmt),
@@ -65,6 +68,7 @@ enum Node<'a> {
     Signature(&'a SignatureRef),
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 struct Inspect<'a> {
     limits: AstLimits,
     nodes: usize,
@@ -75,6 +79,7 @@ struct Inspect<'a> {
     wire_numbers: bool,
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 impl<'a> Inspect<'a> {
     fn source(&mut self, annotation: &crate::SourceAnnotation) -> Result<(), AstLimitError> {
         if !self.source_ids.insert(annotation.id) {
@@ -146,7 +151,31 @@ pub(crate) fn inspect_program_wire(program: &Program, limits: AstLimits) -> Resu
     Ok(extended)
 }
 
+/// Source identity admission work, shared with emitted source-map construction.
+#[cfg(whale_wave_ir)]
+pub(crate) fn inspect_program_source_work(
+    program: &Program,
+    limits: AstLimits,
+) -> Result<usize, AstLimitError> {
+    super::wave_limits::inspect_with_usage(program, limits).map(|(_, _, work)| work)
+}
+
 fn inspect_program_details(
+    program: &Program,
+    limits: AstLimits,
+) -> Result<(u8, bool), AstLimitError> {
+    #[cfg(whale_wave_ir)]
+    {
+        super::wave_limits::inspect(program, limits)
+    }
+    #[cfg(not(whale_wave_ir))]
+    {
+        inspect_program_reference(program, limits)
+    }
+}
+
+#[cfg(any(not(whale_wave_ir), test))]
+fn inspect_program_reference(
     program: &Program,
     limits: AstLimits,
 ) -> Result<(u8, bool), AstLimitError> {
@@ -520,6 +549,143 @@ fn discard(root: Owned, pending: &mut Vec<Disposal>) {
     }
 }
 
+#[cfg(any(not(whale_wave_ir), test))]
 fn valid_int_width(bits: u16) -> bool {
     matches!(bits, 1 | 8 | 16 | 32 | 64 | 128)
+}
+
+#[cfg(all(test, whale_wave_ir))]
+mod wave_tests {
+    use super::*;
+
+    fn program(expr: Expr) -> Program {
+        Program {
+            declarations: vec![],
+            globals: vec![],
+            functions: vec![Function {
+                convention: crate::CallingConvention::Whale,
+                linkage: crate::Linkage::Internal,
+                link_name: None,
+                name: "main".into(),
+                parameters: vec![],
+                return_type: TypeRef::Void,
+                body: vec![Stmt::ExprStmt(expr), Stmt::Return(None)],
+            }],
+        }
+    }
+
+    fn compare(program: &Program) {
+        for limit in 0..48 {
+            for limits in [
+                AstLimits { max_nodes: limit, ..Default::default() },
+                AstLimits { max_string_bytes: limit, ..Default::default() },
+                AstLimits { max_depth: limit, ..Default::default() },
+            ] {
+                assert_eq!(
+                    inspect_program_details(program, limits),
+                    inspect_program_reference(program, limits),
+                    "limits {limits:?}, program {program:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn wave_inspection_preserves_counts_feature_gates_and_numeric_schema() {
+        for bits in [0, 1, 8, 16, 32, 64, 128, 256, u16::MAX] {
+            for value in [
+                "",
+                "-",
+                "-0",
+                "+1",
+                "12",
+                "-12",
+                "000",
+                "0x1",
+                "١",
+                "340282366920938463463374607431768211456",
+            ] {
+                compare(&program(Expr::Lit(Lit::Int { bits, signed: true, value: value.into() })));
+            }
+            for value in
+                ["", "0x0000", "0x80000000", "0X8000", "0x7ff8000000000000", "0xABCD", "0x12z4"]
+            {
+                compare(&program(Expr::Lit(Lit::Float { bits, value: value.into() })));
+            }
+        }
+        let lit = || Expr::Lit(Lit::Bool(true));
+        for op in [
+            BinOpRef::Add,
+            BinOpRef::Sub,
+            BinOpRef::Mul,
+            BinOpRef::BitAnd,
+            BinOpRef::BitOr,
+            BinOpRef::BitXor,
+            BinOpRef::Div,
+            BinOpRef::Rem,
+            BinOpRef::ShiftLeft,
+            BinOpRef::ShiftRight,
+            BinOpRef::LogicalAnd,
+            BinOpRef::LogicalOr,
+        ] {
+            compare(&program(Expr::Binary { left: Box::new(lit()), op, right: Box::new(lit()) }));
+        }
+        compare(&program(Expr::Struct {
+            ty: TypeRef::Struct {
+                fields: vec![StructField { name: "field".into(), ty: TypeRef::Bool }],
+            },
+            fields: vec![FieldInit { name: "field".into(), value: lit() }],
+        }));
+        for defect in 0..8 {
+            let mut annotation = crate::SourceAnnotation {
+                id: u64::MAX,
+                source: Some(crate::FrontendSource {
+                    file: "경로/test.wave".into(),
+                    line: 3,
+                    column: 4,
+                    end_line: 4,
+                    end_column: 2,
+                }),
+            };
+            match defect {
+                1 => annotation.source.as_mut().unwrap().file.clear(),
+                2 => annotation.source.as_mut().unwrap().file.push('\0'),
+                3 => annotation.source.as_mut().unwrap().line = 0,
+                4 => annotation.source.as_mut().unwrap().end_line = 2,
+                5 => {
+                    let s = annotation.source.as_mut().unwrap();
+                    s.end_line = 3;
+                    s.end_column = 3;
+                },
+                6 => annotation.source = None,
+                _ => {},
+            }
+            let expression =
+                Expr::Located { annotation: annotation.clone(), expression: Box::new(lit()) };
+            let mut p = program(expression.clone());
+            if defect == 7 {
+                p.functions[0].body.push(Stmt::ExprStmt(expression));
+            }
+            compare(&p);
+        }
+    }
+
+    #[test]
+    fn source_admission_has_a_separate_shared_work_ceiling() {
+        let p = program(Expr::Located {
+            annotation: crate::SourceAnnotation { id: 1, source: None },
+            expression: Box::new(Expr::Lit(Lit::Bool(true))),
+        });
+        assert_eq!(
+            inspect_program(&p, AstLimits { max_source_work: 0, ..Default::default() }),
+            Err(AstLimitError::SourceWork)
+        );
+        assert_eq!(
+            inspect_program(
+                &program(Expr::Lit(Lit::Bool(true))),
+                AstLimits { max_source_work: 0, ..Default::default() }
+            ),
+            Ok(())
+        );
+    }
 }

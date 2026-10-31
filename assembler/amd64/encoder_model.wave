@@ -1,0 +1,744 @@
+// SPDX-License-Identifier: MPL-2.0
+// Callback-free, caller-owned encoder transport. Missing indexes use u64::MAX.
+struct AmdSection {
+    name: u64;
+    kind: u64;
+    align: u64;
+    first: u64;
+    size: u64;
+    zero_fill: u64;
+}
+
+struct AmdSymbol {
+    prefix: u64;
+    name: u64;
+    flags: u64;
+    label_site: u64;
+    extern_site: u64;
+    global_site: u64;
+    constant_site: u64;
+    metadata_site: u64;
+    section: u64;
+    offset: u64;
+    previous_section: u64;
+    previous_offset: u64;
+    low: u64;
+    high: u64;
+    dependency: u64;
+    add_low: u64;
+    add_high: u64;
+    symbol_kind: u64;
+    size: u64;
+    visibility: u64;
+    order: u64;
+    users: u64;
+    next: u64;
+}
+
+struct AmdNode {
+    scope: u64;
+    symbol: u64;
+    section: u64;
+    offset: u64;
+    length: u64;
+    previous_offset: u64;
+    previous_length: u64;
+    force_near: u64;
+}
+
+struct AmdRelocation {
+    section: u64;
+    offset: u64;
+    symbol: u64;
+    kind: u64;
+    addend: u64;
+    node: u64;
+}
+
+struct AmdEncodeInput {
+    names: ptr<AsmName>;
+    name_count: u64;
+    items: ptr<AsmItem>;
+    item_count: u64;
+    operands: ptr<AsmOperand>;
+    operand_count: u64;
+    values: ptr<AsmDirectiveValue>;
+    value_count: u64;
+    sections: ptr<AmdSection>;
+    section_capacity: u64;
+    symbols: ptr<AmdSymbol>;
+    symbol_capacity: u64;
+    table: ptr<u64>;
+    table_capacity: u64;
+    nodes: ptr<AmdNode>;
+    queue: ptr<u64>;
+    relocations: ptr<AmdRelocation>;
+    relocation_capacity: u64;
+    bytes: ptr<u8>;
+    byte_capacity: u64;
+    max_output: u64;
+    max_iterations: u64;
+    max_work: u64;
+}
+
+struct AmdEncodeResult {
+    status: u64;
+    error: u64;
+    node: u64;
+    previous: u64;
+    argument: u64;
+    section_count: u64;
+    symbol_count: u64;
+    output_symbols: u64;
+    relocation_count: u64;
+    bytes: u64;
+    iterations: u64;
+    work: u64;
+}
+
+struct AmdWriter {
+    p: ptr<AmdEncodeInput>;
+    result: ptr<AmdEncodeResult>;
+    section: u64;
+    count: u64;
+    materialized: u64;
+    measuring: u64;
+}
+
+struct AmdOperand {
+    kind: u64;
+    code: u64;
+    width: u64;
+    flags: u64;
+    low: u64;
+    high: u64;
+    mode: u64;
+    memwidth: u64;
+    base: u64;
+    index: u64;
+    scale: u64;
+    disp: i64;
+    symbol: u64;
+}
+
+struct AmdAddress {
+    mode: u64;
+    rm: u64;
+    sib: u64;
+    displacement: u64;
+    width: u64;
+    rex_b: u64;
+    rex_x: u64;
+}
+
+fun amd_fail(result: ptr<AmdEncodeResult>, error: u64) -> bool {
+    result.status = 1;
+    result.error = error;
+    return false;
+}
+
+fun amd_charge(p: ptr<AmdEncodeInput>, result: ptr<AmdEncodeResult>) -> bool {
+    if (result.work >= p.max_work) {
+        return amd_fail(result, 1);
+    }
+    result.work += 1;
+    return true;
+}
+
+fun amd_word(names: ptr<AsmName>, count: u64, name: u64, word: u64, length: u64) -> bool {
+    if (name >= count || names[name].count != length) {
+        return false;
+    }
+    var at: u64 = 0;
+    while (at < length) {
+        if (names[name].bytes[at] != ((word >> (at * 8)) & 255) as u8) {
+            return false;
+        }
+        at += 1;
+    }
+    return true;
+}
+
+fun amd_fits(low: u64, high: u64, width: u64, signed_only: bool) -> bool {
+    if (width == 64) {
+        if (high == 18446744073709551615) {
+            return (low as i64) < 0;
+        }
+        return high == 0 && (!signed_only || low <= 9223372036854775807);
+    }
+    if (width != 8 && width != 16 && width != 32) {
+        return false;
+    }
+    var sign: u64 = (1 as u64) << (width - 1);
+    if (high == 18446744073709551615) {
+        return (low as i64) >= -(sign as i64) && (low as i64) < 0;
+    }
+    var maximum: u64 = (sign << 1) - 1;
+    if (signed_only) {
+        maximum = sign - 1;
+    }
+    return high == 0 && low <= maximum;
+}
+
+fun amd_signed64(low: u64, high: u64) -> bool {
+    return (high == 0 && low <= 9223372036854775807)
+        || (high == 18446744073709551615 && low >= 9223372036854775808);
+}
+
+fun amd_register(p: ptr<AmdEncodeInput>, name: u64, output: ptr<AmdOperand>) -> bool {
+    if (name >= p.name_count) {
+        return false;
+    }
+    var register: Amd64Register;
+    if (!amd64_register(&p.names[name], 0, &register)) {
+        return false;
+    }
+    output.code = register.code;
+    output.width = register.width;
+    output.flags = register.high8 | (register.rex8 << 1) | (register.kind << 2);
+    return true;
+}
+
+fun amd_mnemonic(p: ptr<AmdEncodeInput>, name: u64) -> u64 {
+    // mov
+    if (amd_word(p.names, p.name_count, name, 7761773, 3)) {
+        return 0;
+    }
+    // add
+    if (amd_word(p.names, p.name_count, name, 6579297, 3)) {
+        return 1;
+    }
+    // sub
+    if (amd_word(p.names, p.name_count, name, 6452595, 3)) {
+        return 2;
+    }
+    // and
+    if (amd_word(p.names, p.name_count, name, 6581857, 3)) {
+        return 3;
+    }
+    // or
+    if (amd_word(p.names, p.name_count, name, 29295, 2)) {
+        return 4;
+    }
+    // xor
+    if (amd_word(p.names, p.name_count, name, 7499640, 3)) {
+        return 5;
+    }
+    // cmp
+    if (amd_word(p.names, p.name_count, name, 7368035, 3)) {
+        return 6;
+    }
+    // imul
+    if (amd_word(p.names, p.name_count, name, 1819635049, 4)) {
+        return 7;
+    }
+    // push
+    if (amd_word(p.names, p.name_count, name, 1752397168, 4)) {
+        return 8;
+    }
+    // pop
+    if (amd_word(p.names, p.name_count, name, 7368560, 3)) {
+        return 9;
+    }
+    // jmp
+    if (amd_word(p.names, p.name_count, name, 7368042, 3)) {
+        return 10;
+    }
+    // call
+    if (amd_word(p.names, p.name_count, name, 1819042147, 4)) {
+        return 11;
+    }
+    // loop
+    if (amd_word(p.names, p.name_count, name, 1886351212, 4)) {
+        return 12;
+    }
+    // ret
+    if (amd_word(p.names, p.name_count, name, 7628146, 3)) {
+        return 13;
+    }
+    // nop
+    if (amd_word(p.names, p.name_count, name, 7368558, 3)) {
+        return 14;
+    }
+    // syscall
+    if (amd_word(p.names, p.name_count, name, 30518463020890483, 7)) {
+        return 15;
+    }
+    // int3
+    if (amd_word(p.names, p.name_count, name, 863268457, 4)) {
+        return 16;
+    }
+    // lea
+    if (amd_word(p.names, p.name_count, name, 6382956, 3)) {
+        return 17;
+    }
+    // test
+    if (amd_word(p.names, p.name_count, name, 1953719668, 4)) {
+        return 18;
+    }
+    // not
+    if (amd_word(p.names, p.name_count, name, 7630702, 3)) {
+        return 19;
+    }
+    // neg
+    if (amd_word(p.names, p.name_count, name, 6776174, 3)) {
+        return 20;
+    }
+    // div
+    if (amd_word(p.names, p.name_count, name, 7760228, 3)) {
+        return 21;
+    }
+    // idiv
+    if (amd_word(p.names, p.name_count, name, 1986618473, 4)) {
+        return 22;
+    }
+    // shl
+    if (amd_word(p.names, p.name_count, name, 7104627, 3)) {
+        return 23;
+    }
+    // shr
+    if (amd_word(p.names, p.name_count, name, 7497843, 3)) {
+        return 24;
+    }
+    // sar
+    if (amd_word(p.names, p.name_count, name, 7496051, 3)) {
+        return 25;
+    }
+    // cwd
+    if (amd_word(p.names, p.name_count, name, 6584163, 3)) {
+        return 26;
+    }
+    // cdq
+    if (amd_word(p.names, p.name_count, name, 7431267, 3)) {
+        return 27;
+    }
+    // cqo
+    if (amd_word(p.names, p.name_count, name, 7303523, 3)) {
+        return 28;
+    }
+    // movzx
+    if (amd_word(p.names, p.name_count, name, 517450657645, 5)) {
+        return 29;
+    }
+    // movsx
+    if (amd_word(p.names, p.name_count, name, 517333217133, 5)) {
+        return 30;
+    }
+    // movsxd
+    if (amd_word(p.names, p.name_count, name, 110468495994733, 6)) {
+        return 31;
+    }
+    // adc
+    if (amd_word(p.names, p.name_count, name, 6513761, 3)) {
+        return 32;
+    }
+    // sbb
+    if (amd_word(p.names, p.name_count, name, 6447731, 3)) {
+        return 33;
+    }
+    // movss
+    if (amd_word(p.names, p.name_count, name, 495858380653, 5)) {
+        return 34;
+    }
+    // movsd
+    if (amd_word(p.names, p.name_count, name, 431433871213, 5)) {
+        return 35;
+    }
+    // addss
+    if (amd_word(p.names, p.name_count, name, 495857198177, 5)) {
+        return 36;
+    }
+    // addsd
+    if (amd_word(p.names, p.name_count, name, 431432688737, 5)) {
+        return 37;
+    }
+    // subss
+    if (amd_word(p.names, p.name_count, name, 495857071475, 5)) {
+        return 38;
+    }
+    // subsd
+    if (amd_word(p.names, p.name_count, name, 431432562035, 5)) {
+        return 39;
+    }
+    // mulss
+    if (amd_word(p.names, p.name_count, name, 495857726829, 5)) {
+        return 40;
+    }
+    // mulsd
+    if (amd_word(p.names, p.name_count, name, 431433217389, 5)) {
+        return 41;
+    }
+    // divss
+    if (amd_word(p.names, p.name_count, name, 495858379108, 5)) {
+        return 42;
+    }
+    // divsd
+    if (amd_word(p.names, p.name_count, name, 431433869668, 5)) {
+        return 43;
+    }
+    // sal
+    if (amd_word(p.names, p.name_count, name, 7102835, 3)) {
+        return 23;
+    }
+    // jo
+    if (amd_word(p.names, p.name_count, name, 28522, 2)) {
+        return 64;
+    }
+    // seto
+    if (amd_word(p.names, p.name_count, name, 1869899123, 4)) {
+        return 80;
+    }
+    // cmovo
+    if (amd_word(p.names, p.name_count, name, 478728383843, 5)) {
+        return 96;
+    }
+    // jno
+    if (amd_word(p.names, p.name_count, name, 7302762, 3)) {
+        return 65;
+    }
+    // setno
+    if (amd_word(p.names, p.name_count, name, 478594491763, 5)) {
+        return 81;
+    }
+    // cmovno
+    if (amd_word(p.names, p.name_count, name, 122520224099683, 6)) {
+        return 97;
+    }
+    // jb
+    if (amd_word(p.names, p.name_count, name, 25194, 2)) {
+        return 66;
+    }
+    // setb
+    if (amd_word(p.names, p.name_count, name, 1651795315, 4)) {
+        return 82;
+    }
+    // cmovb
+    if (amd_word(p.names, p.name_count, name, 422893808995, 5)) {
+        return 98;
+    }
+    // jc
+    if (amd_word(p.names, p.name_count, name, 25450, 2)) {
+        return 66;
+    }
+    // setc
+    if (amd_word(p.names, p.name_count, name, 1668572531, 4)) {
+        return 82;
+    }
+    // cmovc
+    if (amd_word(p.names, p.name_count, name, 427188776291, 5)) {
+        return 98;
+    }
+    // jnae
+    if (amd_word(p.names, p.name_count, name, 1700884074, 4)) {
+        return 66;
+    }
+    // setnae
+    if (amd_word(p.names, p.name_count, name, 111469139354995, 6)) {
+        return 82;
+    }
+    // cmovnae
+    if (amd_word(p.names, p.name_count, name, 28536099709087075, 7)) {
+        return 98;
+    }
+    // jae
+    if (amd_word(p.names, p.name_count, name, 6644074, 3)) {
+        return 67;
+    }
+    // setae
+    if (amd_word(p.names, p.name_count, name, 435426714995, 5)) {
+        return 83;
+    }
+    // cmovae
+    if (amd_word(p.names, p.name_count, name, 111469273247075, 6)) {
+        return 99;
+    }
+    // jnb
+    if (amd_word(p.names, p.name_count, name, 6450794, 3)) {
+        return 67;
+    }
+    // setnb
+    if (amd_word(p.names, p.name_count, name, 422759916915, 5)) {
+        return 83;
+    }
+    // cmovnb
+    if (amd_word(p.names, p.name_count, name, 108226572938595, 6)) {
+        return 99;
+    }
+    // jnc
+    if (amd_word(p.names, p.name_count, name, 6516330, 3)) {
+        return 67;
+    }
+    // setnc
+    if (amd_word(p.names, p.name_count, name, 427054884211, 5)) {
+        return 83;
+    }
+    // cmovnc
+    if (amd_word(p.names, p.name_count, name, 109326084566371, 6)) {
+        return 99;
+    }
+    // je
+    if (amd_word(p.names, p.name_count, name, 25962, 2)) {
+        return 68;
+    }
+    // sete
+    if (amd_word(p.names, p.name_count, name, 1702126963, 4)) {
+        return 84;
+    }
+    // cmove
+    if (amd_word(p.names, p.name_count, name, 435778710883, 5)) {
+        return 100;
+    }
+    // jz
+    if (amd_word(p.names, p.name_count, name, 31338, 2)) {
+        return 68;
+    }
+    // setz
+    if (amd_word(p.names, p.name_count, name, 2054448499, 4)) {
+        return 84;
+    }
+    // cmovz
+    if (amd_word(p.names, p.name_count, name, 525973024099, 5)) {
+        return 100;
+    }
+    // jne
+    if (amd_word(p.names, p.name_count, name, 6647402, 3)) {
+        return 69;
+    }
+    // setne
+    if (amd_word(p.names, p.name_count, name, 435644818803, 5)) {
+        return 85;
+    }
+    // cmovne
+    if (amd_word(p.names, p.name_count, name, 111525107821923, 6)) {
+        return 101;
+    }
+    // jnz
+    if (amd_word(p.names, p.name_count, name, 8023658, 3)) {
+        return 69;
+    }
+    // setnz
+    if (amd_word(p.names, p.name_count, name, 525839132019, 5)) {
+        return 85;
+    }
+    // cmovnz
+    if (amd_word(p.names, p.name_count, name, 134614852005219, 6)) {
+        return 101;
+    }
+    // jbe
+    if (amd_word(p.names, p.name_count, name, 6644330, 3)) {
+        return 70;
+    }
+    // setbe
+    if (amd_word(p.names, p.name_count, name, 435443492211, 5)) {
+        return 86;
+    }
+    // cmovbe
+    if (amd_word(p.names, p.name_count, name, 111473568214371, 6)) {
+        return 102;
+    }
+    // jna
+    if (amd_word(p.names, p.name_count, name, 6385258, 3)) {
+        return 70;
+    }
+    // setna
+    if (amd_word(p.names, p.name_count, name, 418464949619, 5)) {
+        return 86;
+    }
+    // cmovna
+    if (amd_word(p.names, p.name_count, name, 107127061310819, 6)) {
+        return 102;
+    }
+    // ja
+    if (amd_word(p.names, p.name_count, name, 24938, 2)) {
+        return 71;
+    }
+    // seta
+    if (amd_word(p.names, p.name_count, name, 1635018099, 4)) {
+        return 87;
+    }
+    // cmova
+    if (amd_word(p.names, p.name_count, name, 418598841699, 5)) {
+        return 103;
+    }
+    // jnbe
+    if (amd_word(p.names, p.name_count, name, 1700949610, 4)) {
+        return 71;
+    }
+    // setnbe
+    if (amd_word(p.names, p.name_count, name, 111473434322291, 6)) {
+        return 87;
+    }
+    // cmovnbe
+    if (amd_word(p.names, p.name_count, name, 28537199220714851, 7)) {
+        return 103;
+    }
+    // js
+    if (amd_word(p.names, p.name_count, name, 29546, 2)) {
+        return 72;
+    }
+    // sets
+    if (amd_word(p.names, p.name_count, name, 1937007987, 4)) {
+        return 88;
+    }
+    // cmovs
+    if (amd_word(p.names, p.name_count, name, 495908253027, 5)) {
+        return 104;
+    }
+    // jns
+    if (amd_word(p.names, p.name_count, name, 7564906, 3)) {
+        return 73;
+    }
+    // setns
+    if (amd_word(p.names, p.name_count, name, 495774360947, 5)) {
+        return 89;
+    }
+    // cmovns
+    if (amd_word(p.names, p.name_count, name, 126918270610787, 6)) {
+        return 105;
+    }
+    // jp
+    if (amd_word(p.names, p.name_count, name, 28778, 2)) {
+        return 74;
+    }
+    // setp
+    if (amd_word(p.names, p.name_count, name, 1886676339, 4)) {
+        return 90;
+    }
+    // cmovp
+    if (amd_word(p.names, p.name_count, name, 483023351139, 5)) {
+        return 106;
+    }
+    // jpe
+    if (amd_word(p.names, p.name_count, name, 6647914, 3)) {
+        return 74;
+    }
+    // setpe
+    if (amd_word(p.names, p.name_count, name, 435678373235, 5)) {
+        return 90;
+    }
+    // cmovpe
+    if (amd_word(p.names, p.name_count, name, 111533697756515, 6)) {
+        return 106;
+    }
+    // jnp
+    if (amd_word(p.names, p.name_count, name, 7368298, 3)) {
+        return 75;
+    }
+    // setnp
+    if (amd_word(p.names, p.name_count, name, 482889459059, 5)) {
+        return 91;
+    }
+    // cmovnp
+    if (amd_word(p.names, p.name_count, name, 123619735727459, 6)) {
+        return 107;
+    }
+    // jpo
+    if (amd_word(p.names, p.name_count, name, 7303274, 3)) {
+        return 75;
+    }
+    // setpo
+    if (amd_word(p.names, p.name_count, name, 478628046195, 5)) {
+        return 91;
+    }
+    // cmovpo
+    if (amd_word(p.names, p.name_count, name, 122528814034275, 6)) {
+        return 107;
+    }
+    // jl
+    if (amd_word(p.names, p.name_count, name, 27754, 2)) {
+        return 76;
+    }
+    // setl
+    if (amd_word(p.names, p.name_count, name, 1819567475, 4)) {
+        return 92;
+    }
+    // cmovl
+    if (amd_word(p.names, p.name_count, name, 465843481955, 5)) {
+        return 108;
+    }
+    // jnge
+    if (amd_word(p.names, p.name_count, name, 1701277290, 4)) {
+        return 76;
+    }
+    // setnge
+    if (amd_word(p.names, p.name_count, name, 111494909158771, 6)) {
+        return 92;
+    }
+    // cmovnge
+    if (amd_word(p.names, p.name_count, name, 28542696778853731, 7)) {
+        return 108;
+    }
+    // jge
+    if (amd_word(p.names, p.name_count, name, 6645610, 3)) {
+        return 77;
+    }
+    // setge
+    if (amd_word(p.names, p.name_count, name, 435527378291, 5)) {
+        return 93;
+    }
+    // cmovge
+    if (amd_word(p.names, p.name_count, name, 111495043050851, 6)) {
+        return 109;
+    }
+    // jnl
+    if (amd_word(p.names, p.name_count, name, 7106154, 3)) {
+        return 77;
+    }
+    // setnl
+    if (amd_word(p.names, p.name_count, name, 465709589875, 5)) {
+        return 93;
+    }
+    // cmovnl
+    if (amd_word(p.names, p.name_count, name, 119221689216355, 6)) {
+        return 109;
+    }
+    // jle
+    if (amd_word(p.names, p.name_count, name, 6646890, 3)) {
+        return 78;
+    }
+    // setle
+    if (amd_word(p.names, p.name_count, name, 435611264371, 5)) {
+        return 94;
+    }
+    // cmovle
+    if (amd_word(p.names, p.name_count, name, 111516517887331, 6)) {
+        return 110;
+    }
+    // jng
+    if (amd_word(p.names, p.name_count, name, 6778474, 3)) {
+        return 78;
+    }
+    // setng
+    if (amd_word(p.names, p.name_count, name, 444234753395, 5)) {
+        return 94;
+    }
+    // cmovng
+    if (amd_word(p.names, p.name_count, name, 113724131077475, 6)) {
+        return 110;
+    }
+    // jg
+    if (amd_word(p.names, p.name_count, name, 26474, 2)) {
+        return 79;
+    }
+    // setg
+    if (amd_word(p.names, p.name_count, name, 1735681395, 4)) {
+        return 95;
+    }
+    // cmovg
+    if (amd_word(p.names, p.name_count, name, 444368645475, 5)) {
+        return 111;
+    }
+    // jnle
+    if (amd_word(p.names, p.name_count, name, 1701604970, 4)) {
+        return 79;
+    }
+    // setnle
+    if (amd_word(p.names, p.name_count, name, 111516383995251, 6)) {
+        return 95;
+    }
+    // cmovnle
+    if (amd_word(p.names, p.name_count, name, 28548194336992611, 7)) {
+        return 111;
+    }
+    return 255;
+}

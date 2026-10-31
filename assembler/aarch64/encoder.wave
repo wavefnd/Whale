@@ -1,0 +1,416 @@
+// SPDX-License-Identifier: MPL-2.0
+// A64 instruction selection; all operand decisions and bit encodings are native.
+fun a64_condition(instruction: ptr<FixedInstruction>, output: ptr<u64>) -> bool {
+    var name: FixedText = instruction.mnemonic;
+    name.data = &name.data[2];
+    name.count -= 2;
+    if (asm_fixed_word(name, 29029, 2, instruction.fold)) { // eq
+        output[0] = 0;
+    } else if (asm_fixed_word(name, 25966, 2, instruction.fold)) { // ne
+        output[0] = 1;
+    } else if (asm_fixed_word(name, 29539, 2, instruction.fold)
+        || asm_fixed_word(name, 29544, 2, instruction.fold)) { // cs/hs
+        output[0] = 2;
+    } else if (asm_fixed_word(name, 25443, 2, instruction.fold)
+        || asm_fixed_word(name, 28524, 2, instruction.fold)) { // cc/lo
+        output[0] = 3;
+    } else if (asm_fixed_word(name, 26989, 2, instruction.fold)) { // mi
+        output[0] = 4;
+    } else if (asm_fixed_word(name, 27760, 2, instruction.fold)) { // pl
+        output[0] = 5;
+    } else if (asm_fixed_word(name, 29558, 2, instruction.fold)) { // vs
+        output[0] = 6;
+    } else if (asm_fixed_word(name, 25462, 2, instruction.fold)) { // vc
+        output[0] = 7;
+    } else if (asm_fixed_word(name, 26984, 2, instruction.fold)) { // hi
+        output[0] = 8;
+    } else if (asm_fixed_word(name, 29548, 2, instruction.fold)) { // ls
+        output[0] = 9;
+    } else if (asm_fixed_word(name, 25959, 2, instruction.fold)) { // ge
+        output[0] = 10;
+    } else if (asm_fixed_word(name, 29804, 2, instruction.fold)) { // lt
+        output[0] = 11;
+    } else if (asm_fixed_word(name, 29799, 2, instruction.fold)) { // gt
+        output[0] = 12;
+    } else if (asm_fixed_word(name, 25964, 2, instruction.fold)) { // le
+        output[0] = 13;
+    } else if (asm_fixed_word(name, 27745, 2, instruction.fold)) { // al
+        output[0] = 14;
+    } else if (asm_fixed_word(name, 30318, 2, instruction.fold)) { // nv
+        output[0] = 15;
+    } else {
+        return false;
+    }
+    return true;
+}
+
+fun a64_opcode(instruction: ptr<FixedInstruction>) -> u64 {
+    if (a64_mnemonic(instruction, 7368558, 3)) { // nop
+        return 0;
+    }
+    if (a64_mnemonic(instruction, 7628146, 3)) { // ret
+        return 1;
+    }
+    if (a64_mnemonic(instruction, 29282, 2)) { // br
+        return 2;
+    }
+    if (a64_mnemonic(instruction, 7498850, 3)) { // blr
+        return 3;
+    }
+    if (a64_mnemonic(instruction, 6518387, 3)) { // svc
+        return 4;
+    }
+    if (a64_mnemonic(instruction, 7041634, 3)) { // brk
+        return 5;
+    }
+    if (a64_mnemonic(instruction, 7761773, 3)) { // mov
+        return 6;
+    }
+    if (a64_mnemonic(instruction, 2054582125, 4)) { // movz
+        return 7;
+    }
+    if (a64_mnemonic(instruction, 1853255533, 4)) { // movn
+        return 8;
+    }
+    if (a64_mnemonic(instruction, 1802923885, 4)) { // movk
+        return 9;
+    }
+    if (a64_mnemonic(instruction, 6579297, 3)) { // add
+        return 10;
+    }
+    if (a64_mnemonic(instruction, 1935959137, 4)) { // adds
+        return 11;
+    }
+    if (a64_mnemonic(instruction, 6452595, 3)) { // sub
+        return 12;
+    }
+    if (a64_mnemonic(instruction, 1935832435, 4)) { // subs
+        return 13;
+    }
+    if (a64_mnemonic(instruction, 7368035, 3)) { // cmp
+        return 14;
+    }
+    if (a64_mnemonic(instruction, 7236963, 3)) { // cmn
+        return 15;
+    }
+    if (a64_mnemonic(instruction, 6581857, 3)) { // and
+        return 16;
+    }
+    if (a64_mnemonic(instruction, 1935961697, 4)) { // ands
+        return 17;
+    }
+    if (a64_mnemonic(instruction, 7500399, 3)) { // orr
+        return 18;
+    }
+    if (a64_mnemonic(instruction, 7499621, 3)) { // eor
+        return 19;
+    }
+    if (a64_mnemonic(instruction, 7107436, 3)) { // lsl
+        return 20;
+    }
+    if (a64_mnemonic(instruction, 7500652, 3)) { // lsr
+        return 21;
+    }
+    if (a64_mnemonic(instruction, 7500641, 3)) { // asr
+        return 22;
+    }
+    if (a64_mnemonic(instruction, 7496812, 3)) { // ldr
+        return 23;
+    }
+    if (a64_mnemonic(instruction, 7500915, 3)) { // str
+        return 24;
+    }
+    if (a64_mnemonic(instruction, 1651663980, 4)) { // ldrb
+        return 25;
+    }
+    if (a64_mnemonic(instruction, 1651668083, 4)) { // strb
+        return 26;
+    }
+    if (a64_mnemonic(instruction, 1752327276, 4)) { // ldrh
+        return 27;
+    }
+    if (a64_mnemonic(instruction, 1752331379, 4)) { // strh
+        return 28;
+    }
+    if (a64_mnemonic(instruction, 513037984876, 5)) { // ldrsw
+        return 29;
+    }
+    if (a64_mnemonic(instruction, 1920296044, 4)) { // ldur
+        return 30;
+    }
+    if (a64_mnemonic(instruction, 1920300147, 4)) { // stur
+        return 31;
+    }
+    if (a64_mnemonic(instruction, 98, 1)) { // b
+        return 32;
+    }
+    if (a64_mnemonic(instruction, 27746, 2)) { // bl
+        return 33;
+    }
+    if (a64_mnemonic(instruction, 8020579, 3)) { // cbz
+        return 34;
+    }
+    if (a64_mnemonic(instruction, 2054054499, 4)) { // cbnz
+        return 35;
+    }
+    if (a64_mnemonic(instruction, 7496801, 3)) { // adr
+        return 36;
+    }
+    var prefix: FixedText = instruction.mnemonic;
+    if (prefix.count >= 2) {
+        prefix.count = 2;
+        if (asm_fixed_word(prefix, 11874, 2, instruction.fold)) { // b.
+            return 37;
+        }
+    }
+    return 18446744073709551615;
+}
+
+fun a64_encode(instruction: ptr<FixedInstruction>, context: ptr<FixedContext>,
+    result: ptr<FixedResult>) -> bool {
+    if (!asm_fixed_charge(result, instruction.mnemonic.count + 1)) {
+        return false;
+    }
+    var operation: u64 = a64_opcode(instruction);
+    if (operation == 0) { // NOP
+        if (!asm_fixed_count(instruction, 0, result)) {
+            return false;
+        }
+        result.word = 3573751839;
+        return true;
+    }
+    if (operation >= 1 && operation <= 3) { // RET/BR/BLR
+        var target: A64Register;
+        target.index = 30;
+        target.width = 64;
+        target.sp = 0;
+        target.zero = 0;
+        if (operation != 1 || instruction.count != 0) {
+            if (!asm_fixed_count(instruction, 1, result)
+                || !a64_register(instruction.operands[0], &target, result)) {
+                return false;
+            }
+        }
+        if (target.width != 64 || target.index == 31) {
+            return a64_fail(result, 1008);
+        }
+        var base: u64 = 3596550144; // RET
+        if (operation == 2) {
+            base = 3592355840; // BR
+        } else if (operation == 3) {
+            base = 3594452992; // BLR
+        }
+        result.word = base | (target.index << 5);
+        return true;
+    }
+    if (operation == 4 || operation == 5) { // SVC/BRK
+        if (!asm_fixed_count(instruction, 1, result)) {
+            return false;
+        }
+        var immediate: u64 = 0;
+        if (!asm_fixed_unsigned(instruction.operands[0], 16, &immediate, result)) {
+            return false;
+        }
+        var base: u64 = 3556769793; // SVC
+        if (operation == 5) {
+            base = 3558866944; // BRK
+        }
+        result.word = base | (immediate << 5);
+        return true;
+    }
+    if (operation == 6) { // MOV
+        if (!asm_fixed_count(instruction, 2, result)) {
+            return false;
+        }
+        var rd: A64Register;
+        if (!a64_register(instruction.operands[0], &rd, result)) {
+            return false;
+        }
+        var value: AsmWide;
+        if (asm_fixed_try_integer(instruction.operands[1], &value, result)) {
+            if (!a64_no_sp(&rd, result)) {
+                return false;
+            }
+            return a64_mov_immediate(&rd, &value, result);
+        }
+        if (result.status != 0) {
+            return false;
+        }
+        var rn: A64Register;
+        if (!a64_register(instruction.operands[1], &rn, result)
+            || !a64_same(&rd, &rn, result)) {
+            return false;
+        }
+        if (rd.sp != 0 || rn.sp != 0) {
+            if (rd.zero != 0 || rn.zero != 0) {
+                return a64_fail(result, 1009);
+            }
+            result.word = 285212672 | a64_sf(&rd) | (rn.index << 5) | rd.index;
+        } else {
+            result.word = 704644064 | a64_sf(&rd) | (rn.index << 16) | rd.index;
+        }
+        return true;
+    }
+    if (operation >= 7 && operation <= 9) { // MOVZ/MOVN/MOVK
+        if (instruction.count < 2 || instruction.count > 3) {
+            return a64_fail(result, 1010);
+        }
+        var rd: A64Register;
+        var immediate: u64 = 0;
+        if (!a64_register(instruction.operands[0], &rd, result) || !a64_no_sp(&rd, result)
+            || !asm_fixed_unsigned(instruction.operands[1], 16, &immediate, result)) {
+            return false;
+        }
+        var lane: u64 = 0;
+        if (instruction.count == 3) {
+            var modifier: A64Shift;
+            if (!a64_shift(instruction.operands[2], 64, &modifier, result)) {
+                return false;
+            }
+            if (modifier.kind != 0 || modifier.amount % 16 != 0 || modifier.amount >= rd.width) {
+                return a64_fail(result, 1011);
+            }
+            lane = modifier.amount / 16;
+        }
+        result.word = a64_wide_word(&rd, operation - 7, lane, immediate);
+        return true;
+    }
+    if (operation >= 10 && operation <= 15) { // ADD/ADDS/SUB/SUBS/CMP/CMN
+        var compare: bool = operation >= 14;
+        var sub: bool = operation == 12 || operation == 13 || operation == 14;
+        var flags: bool = compare || operation == 11 || operation == 13;
+        return a64_arithmetic(instruction, compare, sub, flags, result);
+    }
+    if (operation >= 16 && operation <= 19) { // AND/ANDS/ORR/EOR
+        var code: u64 = 0;
+        if (operation == 17) {
+            code = 3;
+        } else if (operation == 18) {
+            code = 1;
+        } else if (operation == 19) {
+            code = 2;
+        }
+        return a64_logical(instruction, code, result);
+    }
+    if (operation >= 20 && operation <= 22) { // LSL/LSR/ASR
+        return a64_shift_encoding(instruction, operation - 20, result);
+    }
+    if (operation >= 23 && operation <= 31) { // Load/store families.
+        var load: bool = operation == 23 || operation == 25 || operation == 27
+            || operation == 29 || operation == 30;
+        var size: u64 = 2;
+        if (operation == 25 || operation == 26) {
+            size = 0;
+        } else if (operation == 27 || operation == 28) {
+            size = 1;
+        }
+        return a64_memory_encoding(instruction, load, size, operation >= 30,
+            operation == 29, result);
+    }
+    if (operation == 32 || operation == 33) { // B/BL
+        if (!asm_fixed_count(instruction, 1, result)) {
+            return false;
+        }
+        var code: u64 = 282;
+        if (operation == 33) {
+            code = 283;
+        }
+        var offset: i64 = 0;
+        var immediate: u64 = 0;
+        if (!asm_fixed_pc_relative(context, instruction.operands[0], code, &offset, result)
+            || !asm_fixed_displacement(offset, 26, 4, &immediate, result)) {
+            return false;
+        }
+        result.word = a64_direct_word(operation == 33, immediate);
+        return true;
+    }
+    if (operation == 34 || operation == 35) { // CBZ/CBNZ
+        if (!asm_fixed_count(instruction, 2, result)) {
+            return false;
+        }
+        var rt: A64Register;
+        var offset: i64 = 0;
+        var immediate: u64 = 0;
+        if (!a64_register(instruction.operands[0], &rt, result) || !a64_no_sp(&rt, result)
+            || !asm_fixed_pc_relative(context, instruction.operands[1], 280, &offset, result)
+            || !asm_fixed_displacement(offset, 19, 4, &immediate, result)) {
+            return false;
+        }
+        result.word = a64_compare_word(operation == 35, rt.width == 64, rt.index, immediate);
+        return true;
+    }
+    if (operation == 36) { // ADR
+        if (!asm_fixed_count(instruction, 2, result)) {
+            return false;
+        }
+        var rd: A64Register;
+        var offset: i64 = 0;
+        var immediate: u64 = 0;
+        if (!a64_register(instruction.operands[0], &rd, result) || !a64_no_sp(&rd, result)) {
+            return false;
+        }
+        if (rd.width != 64) {
+            return a64_fail(result, 1013);
+        }
+        if (!asm_fixed_pc_relative(context, instruction.operands[1], 274, &offset, result)
+            || !asm_fixed_displacement(offset, 21, 1, &immediate, result)) {
+            return false;
+        }
+        result.word = a64_address_word(rd.index, immediate);
+        return true;
+    }
+    if (operation == 37) { // B.cond
+        var condition: u64 = 0;
+        if (!a64_condition(instruction, &condition)) {
+            return a64_fail(result, 1014);
+        }
+        if (!asm_fixed_count(instruction, 1, result)) {
+            return false;
+        }
+        var offset: i64 = 0;
+        var immediate: u64 = 0;
+        if (!asm_fixed_pc_relative(context, instruction.operands[0], 280, &offset, result)
+            || !asm_fixed_displacement(offset, 19, 4, &immediate, result)) {
+            return false;
+        }
+        result.word = a64_conditional_word(condition, immediate);
+        return true;
+    }
+    asm_fixed_fail(result, 1015, instruction.mnemonic, 0);
+    result.display = instruction.fold;
+    return false;
+}
+
+export(c) fun whale_aarch64_encode(instruction: ptr<FixedInstruction>,
+    context: ptr<FixedContext>, result: ptr<FixedResult>) -> i32 {
+    if (result == null) {
+        return 2;
+    }
+    if (instruction == null || context == null || instruction.fold > 1
+        || !asm_span_valid(instruction.mnemonic.data, instruction.mnemonic.count, 1)
+        || !asm_span_valid(instruction.operands as ptr<u8>, instruction.count, 16)) {
+        result.status = 2;
+        result.word = 0;
+        return 2;
+    }
+    var at: u64 = 0;
+    while (at < instruction.count) {
+        if (!asm_fixed_charge(result, 1)) {
+            return result.status as i32;
+        }
+        if (!asm_span_valid(instruction.operands[at].data, instruction.operands[at].count, 1)) {
+            result.status = 2;
+            result.word = 0;
+            return 2;
+        }
+        at += 1;
+    }
+    if (!a64_encode(instruction, context, result)) {
+        if (result.status == 0) {
+            result.status = 2;
+            result.word = 0;
+        }
+        return result.status as i32;
+    }
+    return 0;
+}

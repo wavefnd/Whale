@@ -1,0 +1,248 @@
+// SPDX-License-Identifier: MPL-2.0
+// Bounded recursive descent for the complete typed IR type grammar. Postorder
+// records preserve exact scalar identity, aggregate order and call convention.
+struct IrParsedType {
+    kind: u64;
+    value: u64;
+    count: u64;
+}
+
+struct IrTypeParseResult {
+    status: u64; // 1 syntax, 2 depth, 3 nodes, 4 work, 5 capacity, 6 transport
+    reason: u64; // 1 expected token, 2 decimal, 3 range, 4 word, 5 type, 6 convention
+    at: u64;
+    expected: u64;
+    next: u64;
+    nodes: u64;
+    work: u64;
+}
+
+struct IrTypeParser {
+    tokens: ptr<IrTextToken>;
+    token_count: u64;
+    at: u64;
+    max_depth: u64;
+    max_nodes: u64;
+    max_work: u64;
+    work: u64;
+    nodes: u64;
+    emitted: u64;
+    mode: u64;
+    scratch: ptr<IrParsedType>;
+    capacity: u64;
+    result: ptr<IrTypeParseResult>;
+}
+
+// Expected bytes are packed constants so independent Wave object modules do
+// not acquire the pinned compiler's globally named string literal symbols.
+fun ir_type_word(token: ptr<IrTextToken>, code: u64) -> bool {
+    var packed: u64 = 0;
+    var length: u64 = 0;
+    if (code == 0) { packed = 1684631414; length = 4; } // void
+    else if (code == 1) { packed = 1819242338; length = 4; } // bool
+    else if (code == 2) { packed = 12649; length = 2; } // i1
+    else if (code == 3) { packed = 12661; length = 2; } // u1
+    else if (code == 4) { packed = 14441; length = 2; } // i8
+    else if (code == 5) { packed = 3551593; length = 3; } // i16
+    else if (code == 6) { packed = 3289961; length = 3; } // i32
+    else if (code == 7) { packed = 3421801; length = 3; } // i64
+    else if (code == 8) { packed = 942813545; length = 4; } // i128
+    else if (code == 9) { packed = 14453; length = 2; } // u8
+    else if (code == 10) { packed = 3551605; length = 3; } // u16
+    else if (code == 11) { packed = 3289973; length = 3; } // u32
+    else if (code == 12) { packed = 3421813; length = 3; } // u64
+    else if (code == 13) { packed = 942813557; length = 4; } // u128
+    else if (code == 14) { packed = 3551590; length = 3; } // f16
+    else if (code == 15) { packed = 3289958; length = 3; } // f32
+    else if (code == 16) { packed = 3421798; length = 3; } // f64
+    else if (code == 17) { packed = 7500912; length = 3; } // ptr
+    else if (code == 18) { packed = 491579797094; length = 5; } // fnptr
+    else if (code == 19) { packed = 521325933153; length = 5; } // array
+    else if (code == 20) { packed = 127970521019507; length = 6; } // struct
+    else if (code == 21) { packed = 435611006324; length = 5; } // tuple
+    else if (code == 22) { packed = 435610019959; length = 5; } // whale
+    else if (code == 23) { packed = 57408520157555; length = 6; } // sysv64
+    else if (code == 24) { packed = 60; length = 1; } // <
+    else if (code == 25) { packed = 62; length = 1; } // >
+    else if (code == 26) { packed = 123; length = 1; } // {
+    else if (code == 27) { packed = 125; length = 1; } // }
+    else if (code == 28) { packed = 40; length = 1; } // (
+    else if (code == 29) { packed = 41; length = 1; } // )
+    else if (code == 30) { packed = 15917; length = 2; } // ->
+    else if (code == 31) { packed = 44; length = 1; } // ,
+    else { return false; }
+    if (token.kind == 1 || token.kind == 3 || token.length != length) { return false; }
+    var i: u64 = 0;
+    while (i < length) {
+        if (token.data[i] as u64 != ((packed >> (i * 8)) & 255)) { return false; }
+        i += 1;
+    }
+    return true;
+}
+
+fun ir_type_fail(parser: ptr<IrTypeParser>, status: u64, reason: u64, at: u64,
+    expected: u64) -> bool {
+    parser.result.status = status; parser.result.reason = reason;
+    parser.result.at = at; parser.result.expected = expected;
+    return false;
+}
+
+fun ir_type_charge(parser: ptr<IrTypeParser>, amount: u64) -> bool {
+    if (amount > parser.max_work - parser.work) {
+        return ir_type_fail(parser, 4, 0, parser.at, 0);
+    }
+    parser.work += amount;
+    return true;
+}
+
+fun ir_type_read(parser: ptr<IrTypeParser>) -> bool {
+    if (!ir_type_charge(parser, 1)) { return false; }
+    if (parser.at >= parser.token_count) {
+        return ir_type_fail(parser, 6, 0, parser.at, 0);
+    }
+    var token: ptr<IrTextToken> = &parser.tokens[parser.at];
+    if (token.kind > 3 || !ir_span_valid(token.data, token.length, 1)) {
+        return ir_type_fail(parser, 6, 0, parser.at, 0);
+    }
+    return true;
+}
+
+fun ir_type_eat(parser: ptr<IrTypeParser>, code: u64) -> bool {
+    if (!ir_type_read(parser)) { return false; }
+    if (!ir_type_word(&parser.tokens[parser.at], code)) { return false; }
+    parser.at += 1;
+    return true;
+}
+
+fun ir_type_expect(parser: ptr<IrTypeParser>, code: u64) -> bool {
+    if (ir_type_eat(parser, code)) { return true; }
+    if (parser.result.status != 0) { return false; }
+    return ir_type_fail(parser, 1, 1, parser.at, code);
+}
+
+fun ir_type_number(parser: ptr<IrTypeParser>, output: ptr<u64>) -> bool {
+    if (!ir_type_read(parser)) { return false; }
+    var token: ptr<IrTextToken> = &parser.tokens[parser.at];
+    if (token.kind != 0 || token.length == 0) {
+        return ir_type_fail(parser, 1, 2, parser.at, 0);
+    }
+    var n: u64 = 0;
+    var i: u64 = 0;
+    var digit: u64 = 0;
+    var octet: u64 = 0;
+    var overflow: bool = false;
+    while (i < token.length) {
+        if (!ir_type_charge(parser, 1)) { return false; }
+        octet = token.data[i] as u64;
+        if (octet < 48 || octet > 57) { return ir_type_fail(parser, 1, 2, parser.at, 0); }
+        digit = octet - 48;
+        if (n > (18446744073709551615 - digit) / 10) { overflow = true; }
+        if (!overflow) { n = n * 10 + digit; }
+        i += 1;
+    }
+    if (overflow) { return ir_type_fail(parser, 1, 3, parser.at, 0); }
+    output[0] = n; parser.at += 1;
+    return true;
+}
+
+fun ir_type_emit(parser: ptr<IrTypeParser>, kind: u64, value: u64, count: u64) -> bool {
+    // Reserve both scratch emission and the final publication in both passes.
+    if (!ir_type_charge(parser, 2)) { return false; }
+    if (parser.mode == 1) {
+        if (parser.emitted >= parser.capacity) {
+            return ir_type_fail(parser, 5, 0, parser.at, 0);
+        }
+        parser.scratch[parser.emitted].kind = kind;
+        parser.scratch[parser.emitted].value = value;
+        parser.scratch[parser.emitted].count = count;
+    }
+    parser.emitted += 1;
+    return true;
+}
+
+fun ir_type_parse_node(parser: ptr<IrTypeParser>, depth: u64) -> bool {
+    if (depth > parser.max_depth) { return ir_type_fail(parser, 2, 0, parser.at, 0); }
+    if (parser.nodes >= parser.max_nodes) { return ir_type_fail(parser, 3, 0, parser.at, 0); }
+    parser.nodes += 1;
+    if (!ir_type_read(parser)) { return false; }
+    var token: ptr<IrTextToken> = &parser.tokens[parser.at];
+    var start: u64 = parser.at;
+    if (token.kind != 0) { return ir_type_fail(parser, 1, 4, start, 0); }
+    parser.at += 1;
+    var kind: u64 = 0;
+    while (kind < 22 && !ir_type_word(token, kind)) { kind += 1; }
+    if (kind == 22) { return ir_type_fail(parser, 1, 5, start, 0); }
+    if (kind < 17) { return ir_type_emit(parser, kind, 0, 0); }
+    var count: u64 = 0;
+    var value: u64 = 0;
+    var end: u64 = 25;
+    if (kind == 20) {
+        if (!ir_type_expect(parser, 26)) { return false; }
+        end = 27;
+    } else if (!ir_type_expect(parser, 24)) { return false; }
+    if (kind == 17) {
+        if (!ir_type_parse_node(parser, depth + 1) || !ir_type_expect(parser, 25)) { return false; }
+        return ir_type_emit(parser, kind, 0, 1);
+    }
+    if (kind == 19) {
+        if (!ir_type_parse_node(parser, depth + 1) || !ir_type_expect(parser, 31)
+            || !ir_type_number(parser, &value) || !ir_type_expect(parser, 25)) { return false; }
+        return ir_type_emit(parser, kind, value, 1);
+    }
+    if (kind == 18) {
+        if (!ir_type_read(parser)) { return false; }
+        if (parser.tokens[parser.at].kind != 0) { return ir_type_fail(parser, 1, 4, parser.at, 0); }
+        if (ir_type_word(&parser.tokens[parser.at], 22)) { value = 0; }
+        else if (ir_type_word(&parser.tokens[parser.at], 23)) { value = 1; }
+        else { return ir_type_fail(parser, 1, 6, parser.at, 0); }
+        parser.at += 1;
+        if (!ir_type_expect(parser, 28)) { return false; }
+        end = 29;
+    }
+    if (!ir_type_eat(parser, end)) {
+        if (parser.result.status != 0) { return false; }
+        while (true) {
+            if (!ir_type_parse_node(parser, depth + 1)) { return false; }
+            count += 1;
+            if (ir_type_eat(parser, end)) { break; }
+            if (parser.result.status != 0 || !ir_type_expect(parser, 31)) { return false; }
+        }
+    }
+    if (kind == 18) {
+        if (!ir_type_expect(parser, 30) || !ir_type_parse_node(parser, depth + 1)
+            || !ir_type_expect(parser, 25)) { return false; }
+    }
+    return ir_type_emit(parser, kind, value, count);
+}
+
+export(c) fun whale_ir_parse_type(tokens: ptr<IrTextToken>, token_count: u64,
+    start: u64, depth: u64, max_depth: u64, max_nodes: u64, max_work: u64,
+    mode: u64, scratch: ptr<IrParsedType>, capacity: u64,
+    output: ptr<IrParsedType>, output_capacity: u64, result: ptr<IrTypeParseResult>) -> i32 {
+    if (result == null) { return 6; }
+    result.status = 0; result.reason = 0; result.at = start; result.expected = 0;
+    result.next = 0; result.nodes = 0; result.work = 0;
+    if (mode > 1 || max_depth > 256 || start >= token_count
+        || !ir_span_valid(tokens as ptr<u8>, token_count, 24)
+        || (mode == 1 && (!ir_span_valid(scratch as ptr<u8>, capacity, 24)
+            || !ir_span_valid(output as ptr<u8>, output_capacity, 24)))) {
+        result.status = 6; return 6;
+    }
+    var parser: IrTypeParser = IrTypeParser { tokens: tokens, token_count: token_count,
+        at: start, max_depth: max_depth, max_nodes: max_nodes, max_work: max_work,
+        work: 0, nodes: 0, emitted: 0, mode: mode, scratch: scratch,
+        capacity: capacity, result: result };
+    if (!ir_type_parse_node(&parser, depth)) {
+        result.work = parser.work;
+        return result.status as i32;
+    }
+    if (parser.nodes != parser.emitted || (mode == 1 && parser.nodes > output_capacity)) {
+        result.status = 5; result.work = parser.work; return 5;
+    }
+    var index: u64 = 0;
+    if (mode == 1) {
+        while (index < parser.nodes) { output[index] = scratch[index]; index += 1; }
+    }
+    result.next = parser.at; result.nodes = parser.nodes; result.work = parser.work;
+    return 0;
+}

@@ -26,7 +26,7 @@ jobs:
 
   native:
     needs: asmobj
-    name: Native ${{ matrix.platform }} / ${{ matrix.features }}
+    name: ${{ matrix.platform == 'linux-x64' && 'Wave native' || 'Rust reference' }} / ${{ matrix.platform }} / ${{ matrix.features }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -62,7 +62,7 @@ jobs:
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/${{ matrix.host }}
       RUSTUP_TOOLCHAIN: stable-${{ matrix.host }}
-      FEATURE_FLAGS: ${{ matrix.features == 'all' && '--all-features' || '' }}
+      FEATURE_FLAGS: ${{ matrix.features == 'all' && '--all-features' || (matrix.platform != 'linux-x64' && '--features rust-reference' || '') }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -72,9 +72,24 @@ jobs:
         with:
           name: ${{ needs.asmobj.outputs.artifact_name }}
           path: .ci-asmobj
+      - name: Download selected Linux AMD64 Wave modules
+        if: matrix.platform == 'linux-x64'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
+      - name: Select the validated Wave native host
+        if: matrix.platform == 'linux-x64'
+        shell: bash
+        run: |
+          for module in IR ASSEMBLER AMD64 AARCH64 RISCV64 LOONGARCH64; do
+            directory="${module,,}"
+            if [ "$module" = ASSEMBLER ]; then directory=common; fi
+            echo "WHALE_WAVE_${module}_DIR=$GITHUB_WORKSPACE/.ci-wave/$directory" >> "$GITHUB_ENV"
+          done
       - name: Install native Rust toolchain
         run: rustup toolchain install stable-${{ matrix.host }} --profile minimal
       - name: Verify native compiler identity
@@ -114,6 +129,12 @@ jobs:
         features: [default, all]
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+      WHALE_WAVE_IR_DIR: ${{ github.workspace }}/.ci-wave/ir
+      WHALE_WAVE_ASSEMBLER_DIR: ${{ github.workspace }}/.ci-wave/common
+      WHALE_WAVE_AMD64_DIR: ${{ github.workspace }}/.ci-wave/amd64
+      WHALE_WAVE_AARCH64_DIR: ${{ github.workspace }}/.ci-wave/aarch64
+      WHALE_WAVE_RISCV64_DIR: ${{ github.workspace }}/.ci-wave/riscv64
+      WHALE_WAVE_LOONGARCH64_DIR: ${{ github.workspace }}/.ci-wave/loongarch64
       RUSTUP_TOOLCHAIN: '1.86.0'
       FEATURE_FLAGS: ${{ matrix.features == 'all' && '--all-features' || '' }}
     steps:
@@ -125,6 +146,11 @@ jobs:
         with:
           name: ${{ needs.asmobj.outputs.artifact_name }}
           path: .ci-asmobj
+      - name: Download selected Linux AMD64 Wave modules
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -153,6 +179,12 @@ jobs:
     timeout-minutes: 25
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+      WHALE_WAVE_IR_DIR: ${{ github.workspace }}/.ci-wave/ir
+      WHALE_WAVE_ASSEMBLER_DIR: ${{ github.workspace }}/.ci-wave/common
+      WHALE_WAVE_AMD64_DIR: ${{ github.workspace }}/.ci-wave/amd64
+      WHALE_WAVE_AARCH64_DIR: ${{ github.workspace }}/.ci-wave/aarch64
+      WHALE_WAVE_RISCV64_DIR: ${{ github.workspace }}/.ci-wave/riscv64
+      WHALE_WAVE_LOONGARCH64_DIR: ${{ github.workspace }}/.ci-wave/loongarch64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -162,6 +194,11 @@ jobs:
         with:
           name: ${{ needs.asmobj.outputs.artifact_name }}
           path: .ci-asmobj
+      - name: Download selected Linux AMD64 Wave modules
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -181,7 +218,7 @@ jobs:
 
   riscv:
     needs: asmobj
-    name: RISC-V Linux host / QEMU smoke
+    name: Rust reference RISC-V host / QEMU smoke
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     env:

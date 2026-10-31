@@ -1,23 +1,31 @@
 use super::VerifyError;
 
-use crate::{BinOp, CmpOp, ConstValue, ICmpPred, Instruction, Type, ValueId};
+use crate::Instruction;
 
+#[cfg(not(whale_wave_ir))]
+use crate::{BinOp, CmpOp, ConstValue, ICmpPred, Type, ValueId};
+
+#[cfg(not(whale_wave_ir))]
 fn is_signed(ty: &Type) -> bool {
     matches!(ty, Type::I1 | Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::I128)
 }
 
+#[cfg(not(whale_wave_ir))]
 fn is_unsigned(ty: &Type) -> bool {
     matches!(ty, Type::U1 | Type::U8 | Type::U16 | Type::U32 | Type::U64 | Type::U128)
 }
 
+#[cfg(not(whale_wave_ir))]
 pub(super) fn is_integer(ty: &Type) -> bool {
     is_signed(ty) || is_unsigned(ty)
 }
 
+#[cfg(not(whale_wave_ir))]
 fn is_float(ty: &Type) -> bool {
     matches!(ty, Type::F16 | Type::F32 | Type::F64)
 }
 
+#[cfg(not(whale_wave_ir))]
 fn integer_width(ty: &Type) -> Option<u32> {
     match ty {
         Type::I1 | Type::U1 => Some(1),
@@ -30,6 +38,7 @@ fn integer_width(ty: &Type) -> Option<u32> {
     }
 }
 
+#[cfg(not(whale_wave_ir))]
 fn float_width(ty: &Type) -> Option<u32> {
     match ty {
         Type::F16 => Some(16),
@@ -39,6 +48,7 @@ fn float_width(ty: &Type) -> Option<u32> {
     }
 }
 
+#[cfg(not(whale_wave_ir))]
 fn valid_cast(op: &crate::CastOp, source: &Type, destination: &Type) -> bool {
     use crate::CastOp::*;
     let integer_pair = integer_width(source).zip(integer_width(destination));
@@ -69,12 +79,14 @@ fn valid_cast(op: &crate::CastOp, source: &Type, destination: &Type) -> bool {
     }
 }
 
+#[cfg(not(whale_wave_ir))]
 fn supports_equality(ty: &Type) -> bool {
     is_integer(ty) || matches!(ty, Type::Bool | Type::Ptr(_))
 }
 
 // A pointer to void may describe an opaque address, but void itself has no
 // stored value. Concrete aggregate layout and dynamic access checks are separate.
+#[cfg(not(whale_wave_ir))]
 pub(super) fn is_storable(ty: &Type) -> bool {
     match ty {
         Type::Void => false,
@@ -84,6 +96,7 @@ pub(super) fn is_storable(ty: &Type) -> bool {
     }
 }
 
+#[cfg(not(whale_wave_ir))]
 pub(super) fn verify_type_category(
     f: &super::IndexedFunction<'_>,
     operation: &'static str,
@@ -97,6 +110,7 @@ pub(super) fn verify_type_category(
     }
 }
 
+#[cfg(not(whale_wave_ir))]
 pub(super) fn verify_operand(
     f: &super::IndexedFunction<'_>,
     value: ValueId,
@@ -116,6 +130,7 @@ pub(super) fn verify_operand(
     Ok(())
 }
 
+#[cfg(not(whale_wave_ir))]
 fn verify_alignment(f: &super::IndexedFunction<'_>, align: u32) -> Result<(), VerifyError> {
     if !align.is_power_of_two() {
         return Err(VerifyError::InvalidMemoryAlignment { func: f.name.clone(), align });
@@ -123,6 +138,7 @@ fn verify_alignment(f: &super::IndexedFunction<'_>, align: u32) -> Result<(), Ve
     Ok(())
 }
 
+#[cfg(not(whale_wave_ir))]
 fn verify_gep(
     f: &super::IndexedFunction<'_>,
     dst: ValueId,
@@ -195,9 +211,20 @@ fn verify_gep(
     Ok(())
 }
 
+#[cfg(whale_wave_ir)]
 pub(super) fn verify_instruction(
     f: &super::IndexedFunction<'_>,
     ins: &Instruction,
+    budget: &super::AnalysisBudget,
+) -> Result<(), VerifyError> {
+    super::wave_semantics::verify_instruction(f, ins, budget)
+}
+
+#[cfg(not(whale_wave_ir))]
+pub(super) fn verify_instruction(
+    f: &super::IndexedFunction<'_>,
+    ins: &Instruction,
+    budget: &super::AnalysisBudget,
 ) -> Result<(), VerifyError> {
     match ins {
         Instruction::Neg { ty, src, .. } => {
@@ -296,7 +323,7 @@ pub(super) fn verify_instruction(
             verify_operand(f, *rhs, ty)?;
         },
         Instruction::Select { ty, cond, on_true, on_false, .. } => {
-            super::verify_condition(f, *cond)?;
+            super::verify_condition(f, *cond, budget)?;
             verify_type_category(f, "select", ty, is_storable(ty))?;
             verify_operand(f, *on_true, ty)?;
             verify_operand(f, *on_false, ty)?;

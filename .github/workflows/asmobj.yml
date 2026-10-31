@@ -1,4 +1,4 @@
-name: Build complete Wave asmobj module
+name: Build complete Wave source modules
 
 on:
   workflow_call:
@@ -12,17 +12,21 @@ on:
       artifact_name:
         description: Exact archive artifact published by this prerequisite job
         value: ${{ jobs.archives.outputs.artifact_name }}
+      wave_artifact_name:
+        description: Linux AMD64 IR and assembler modules from the same source
+        value: ${{ jobs.archives.outputs.wave_artifact_name }}
 
 permissions:
   contents: read
 
 jobs:
   archives:
-    name: Wave asmobj archives and Linux conformance
+    name: Wave modules / native Linux AMD64 and cross-object conformance
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     outputs:
       artifact_name: asmobj-${{ github.run_id }}-${{ github.run_attempt }}
+      wave_artifact_name: wave-modules-${{ github.run_id }}-${{ github.run_attempt }}
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_BUILD_JOBS: '2'
@@ -44,7 +48,7 @@ jobs:
       - name: Install pinned compiler prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y wget software-properties-common ninja-build
+          sudo apt-get install --no-install-recommends -y wget software-properties-common ninja-build nasm
           wget --tries=3 --timeout=30 https://apt.llvm.org/llvm.sh -O "$RUNNER_TEMP/llvm.sh"
           sudo bash "$RUNNER_TEMP/llvm.sh" 21
           sudo apt-get install --no-install-recommends -y llvm-21-dev lld-21
@@ -84,6 +88,149 @@ jobs:
               "$asmobj_python" tools/check_asmobj.py \
               --library "$RUNNER_TEMP/asmobj-o$optimization.so" --cases 10000
           done
+      - name: Run actual Wave IR module at O0 and O2
+        run: |
+          cargo fetch --locked
+          for optimization in 0 2; do
+            python3 tools/build_wave_ir.py --wave-source .asmobj-bootstrap-source \
+              --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
+              --out-dir "$RUNNER_TEMP/wave-ir-o$optimization" --opt-level "$optimization"
+            cc -shared -Wl,--whole-archive "$RUNNER_TEMP/wave-ir-o$optimization/libwhale_wave_ir.a" \
+              -Wl,--no-whole-archive -o "$RUNNER_TEMP/wave-ir-o$optimization.so"
+            ir_python="$(command -v python3)"
+            for component in layout lexer header type literal expression instruction source \
+                builder body printer verifier ssa ast_limits lower_type lowering hir cfg shape \
+                integer float memory runtime passes; do
+              ir_cases=10000
+              if [ "$component" = literal ]; then ir_cases=100000; fi
+              if [ "$component" = builder ]; then ir_cases=30000; fi
+              if [ "$component" = integer ]; then ir_cases=100000; fi
+              if [ "$component" = runtime ] || [ "$component" = passes ]; then ir_cases=2000; fi
+              timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$ir_python" \
+                "tools/check_wave_ir_$component.py" \
+                --library "$RUNNER_TEMP/wave-ir-o$optimization.so" --cases "$ir_cases"
+            done
+            for component in admission writer; do
+              checker=tools/check_wave_bytecode.py
+              bytecode_cases=100000
+              extra_arguments=(--scale 32768)
+              if [ "$component" = writer ]; then
+                checker=tools/check_wave_bytecode_writer.py
+                bytecode_cases=10000
+                extra_arguments=()
+              fi
+              python3 tools/ci.py run --name "bytecode-$component-o$optimization" --timeout 195 -- \
+                timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$ir_python" \
+                "$checker" --library "$RUNNER_TEMP/wave-ir-o$optimization.so" \
+                --cases "$bytecode_cases" "${extra_arguments[@]}" --artifacts ".ci-artifacts/bytecode-$component-o$optimization"
+            done
+            WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o$optimization" \
+              cargo test -p ir --all-features --locked --offline
+          done
+      - name: Run all Wave assemblers at O0 and O2
+        run: |
+          for optimization in 0 2; do
+            for module in common amd64 aarch64 riscv64 loongarch64; do
+              python3 tools/build_wave_assembler.py --module "$module" \
+                --wave-source .asmobj-bootstrap-source \
+                --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
+                --out-dir "$RUNNER_TEMP/assembler-$module-o$optimization" \
+                --opt-level "$optimization"
+            done
+            export WHALE_WAVE_ASSEMBLER_DIR="$RUNNER_TEMP/assembler-common-o$optimization"
+            export WHALE_WAVE_AMD64_DIR="$RUNNER_TEMP/assembler-amd64-o$optimization"
+            export WHALE_WAVE_AARCH64_DIR="$RUNNER_TEMP/assembler-aarch64-o$optimization"
+            export WHALE_WAVE_RISCV64_DIR="$RUNNER_TEMP/assembler-riscv64-o$optimization"
+            export WHALE_WAVE_LOONGARCH64_DIR="$RUNNER_TEMP/assembler-loongarch64-o$optimization"
+            export WHALE_ASMOBJ_DIR="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu"
+            export WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o2"
+            cc -shared -Wl,--whole-archive "$WHALE_WAVE_ASSEMBLER_DIR/libwhale_wave_assembler.a" \
+              -Wl,--no-whole-archive -o "$RUNNER_TEMP/assembler-common-o$optimization.so"
+            assembler_python="$(command -v python3)"
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_assembler.py \
+              --library "$RUNNER_TEMP/assembler-common-o$optimization.so" --cases 10000
+            cc -shared -Wl,--whole-archive "$WHALE_WAVE_AMD64_DIR/libwhale_wave_amd64.a" \
+              "$WHALE_WAVE_ASSEMBLER_DIR/libwhale_wave_assembler.a" \
+              -Wl,--no-whole-archive -o "$RUNNER_TEMP/assembler-amd64-o$optimization.so"
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_amd64_parser.py \
+              --library "$RUNNER_TEMP/assembler-amd64-o$optimization.so" --cases 20000
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_amd64_layout.py \
+              --library "$RUNNER_TEMP/assembler-amd64-o$optimization.so" --cases 2000
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_fixed.py \
+              --library "$RUNNER_TEMP/assembler-common-o$optimization.so" --cases 10000
+            for module in riscv64 loongarch64; do
+              cc -shared -Wl,--whole-archive \
+                "$RUNNER_TEMP/assembler-$module-o$optimization/libwhale_wave_$module.a" \
+                "$WHALE_WAVE_ASSEMBLER_DIR/libwhale_wave_assembler.a" \
+                -Wl,--no-whole-archive -o "$RUNNER_TEMP/assembler-$module-o$optimization.so"
+              timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+                "tools/check_wave_$module.py" \
+                --library "$RUNNER_TEMP/assembler-$module-o$optimization.so" --cases 50000
+            done
+            cargo test -p assembler -p amd64 -p aarch64 -p riscv64 -p loongarch64 --locked --offline
+            cargo test -p whale --all-features --locked --offline
+            cargo build -p whale --all-features --locked --offline
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_amd64_cli.py --binary target/debug/whale \
+              --output-dir ".ci-artifacts/amd64-o$optimization" --cases 2000
+          done
+      - name: Compare Wave bytecode with the explicit Rust IR reference
+        run: |
+          env -u WHALE_WAVE_IR_DIR -u WHALE_WAVE_ASSEMBLER_DIR -u WHALE_WAVE_AMD64_DIR \
+            -u WHALE_WAVE_AARCH64_DIR -u WHALE_WAVE_RISCV64_DIR -u WHALE_WAVE_LOONGARCH64_DIR \
+            WHALE_ASMOBJ_DIR="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu" \
+            cargo build -p whale --locked --offline --features rust-reference,socket-cli \
+              --target-dir "$RUNNER_TEMP/rust-reference-target"
+          for optimization in 0 2; do
+            WHALE_ASMOBJ_DIR="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu" \
+            WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o$optimization" \
+            WHALE_WAVE_ASSEMBLER_DIR="$RUNNER_TEMP/assembler-common-o$optimization" \
+            WHALE_WAVE_AMD64_DIR="$RUNNER_TEMP/assembler-amd64-o$optimization" \
+            WHALE_WAVE_AARCH64_DIR="$RUNNER_TEMP/assembler-aarch64-o$optimization" \
+            WHALE_WAVE_RISCV64_DIR="$RUNNER_TEMP/assembler-riscv64-o$optimization" \
+            WHALE_WAVE_LOONGARCH64_DIR="$RUNNER_TEMP/assembler-loongarch64-o$optimization" \
+              cargo build -p whale --locked --offline --features socket-cli
+            python3 tools/ci.py run --name "bytecode-reference-o$optimization" --timeout 180 -- \
+              python3 tools/check_wave_bytecode_cli.py --binary target/debug/whale \
+              --reference "$RUNNER_TEMP/rust-reference-target/debug/whale" \
+              --artifacts ".ci-artifacts/bytecode-reference-o$optimization"
+          done
+      - name: Stage Linux AMD64 Wave modules under one artifact root
+        run: |
+          mkdir -p .ci-wave/ir
+          cp -R "$RUNNER_TEMP/wave-ir-o2/." .ci-wave/ir/
+          for module in common amd64 aarch64 riscv64 loongarch64; do
+            mkdir -p ".ci-wave/$module"
+            cp -R "$RUNNER_TEMP/assembler-$module-o2/." ".ci-wave/$module/"
+          done
+      - name: Prove selected native implementation identities and allocation ceilings
+        run: |
+          export WHALE_ASMOBJ_DIR="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu"
+          export WHALE_WAVE_IR_DIR="$GITHUB_WORKSPACE/.ci-wave/ir"
+          export WHALE_WAVE_ASSEMBLER_DIR="$GITHUB_WORKSPACE/.ci-wave/common"
+          export WHALE_WAVE_AMD64_DIR="$GITHUB_WORKSPACE/.ci-wave/amd64"
+          export WHALE_WAVE_AARCH64_DIR="$GITHUB_WORKSPACE/.ci-wave/aarch64"
+          export WHALE_WAVE_RISCV64_DIR="$GITHUB_WORKSPACE/.ci-wave/riscv64"
+          export WHALE_WAVE_LOONGARCH64_DIR="$GITHUB_WORKSPACE/.ci-wave/loongarch64"
+          cargo test --workspace --no-default-features --features socket-cli --locked --offline \
+            selected_implementation_has_its_own_compiled_identity
+          cargo test --workspace --all-features --locked --offline \
+            selected_implementation_has_its_own_compiled_identity
+          cargo build -p ir --example bytecode_workspace_probe --all-features --locked --offline
+          timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- \
+            target/debug/examples/bytecode_workspace_probe
+          python3 tools/ci.py run --name wave-selection-guards --timeout 300 -- \
+            python3 tools/check_wave_module_selection.py \
+              --ir-dir "$WHALE_WAVE_IR_DIR" --assembler-dir "$WHALE_WAVE_ASSEMBLER_DIR" \
+              --target-dir "$RUNNER_TEMP/wave-selection-target"
+      - name: Reproduce the pinned typed HIR fixture
+        run: |
+          python3 tools/check_wave_hir_fixture.py --wave-source .asmobj-bootstrap-source \
+            --target-dir "$RUNNER_TEMP/wave-hir-fixture" --rust-toolchain 1.89.0
       - name: Build, test and install the Meson source product
         run: |
           python3 -m pip install --disable-pip-version-check meson==1.8.5
@@ -92,9 +239,76 @@ jobs:
             -Dwave-source="$GITHUB_WORKSPACE/.asmobj-bootstrap-source" \
             -Dwave-bootstrap-dir="$RUNNER_TEMP/asmobj-bootstrap" -Dsocket-cli=true
           meson compile -C "$RUNNER_TEMP/whale-meson"
+          warm_build="$(meson compile -C "$RUNNER_TEMP/whale-meson")"
+          printf '%s\n' "$warm_build"
+          printf '%s\n' "$warm_build" | grep -F 'ninja: no work to do.'
           meson test -C "$RUNNER_TEMP/whale-meson" --print-errorlogs
           DESTDIR="$RUNNER_TEMP/whale-meson-install" meson install -C "$RUNNER_TEMP/whale-meson"
           "$RUNNER_TEMP/whale-meson-install/usr/local/bin/whale" --version
+      - name: Verify isolated minimal and single-ISA Meson products
+        run: |
+          meson setup "$RUNNER_TEMP/whale-minimal" -Dnative-linker=false \
+            -Dasmobj-dir="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu" \
+            -Dwave-ir-dir="$GITHUB_WORKSPACE/.ci-wave/ir" \
+            -Dwave-assembler-dir="$GITHUB_WORKSPACE/.ci-wave/common" \
+            -Dwave-aarch64-dir="$GITHUB_WORKSPACE/.ci-wave/aarch64" \
+            -Dasm-amd64=false -Dasm-aarch64=false -Dasm-riscv64=false -Dasm-loongarch64=false
+          meson compile -C "$RUNNER_TEMP/whale-minimal"
+          meson test -C "$RUNNER_TEMP/whale-minimal" --print-errorlogs
+          meson setup "$RUNNER_TEMP/whale-aarch64-output" \
+            -Dasmobj-dir="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu" \
+            -Dwave-ir-dir="$GITHUB_WORKSPACE/.ci-wave/ir" \
+            -Dwave-assembler-dir="$GITHUB_WORKSPACE/.ci-wave/common" \
+            -Dwave-aarch64-dir="$GITHUB_WORKSPACE/.ci-wave/aarch64" \
+            -Dasm-amd64=false -Dasm-riscv64=false -Dasm-loongarch64=false
+          meson compile -C "$RUNNER_TEMP/whale-aarch64-output"
+          meson test -C "$RUNNER_TEMP/whale-aarch64-output" --print-errorlogs
+      - name: Check cross host test registration without executing foreign code
+        run: |
+          cat > "$RUNNER_TEMP/aarch64-cross.ini" <<'EOF'
+          [host_machine]
+          system = 'linux'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          EOF
+          meson setup "$RUNNER_TEMP/whale-cross" --cross-file "$RUNNER_TEMP/aarch64-cross.ini" \
+            -Dcargo-host-target=aarch64-unknown-linux-gnu \
+            -Dasmobj-dir="$GITHUB_WORKSPACE/.ci-asmobj/aarch64-unknown-linux-gnu" -Drust-reference=true
+          meson introspect --tests "$RUNNER_TEMP/whale-cross" | \
+            python3 -c 'import json,sys; assert {t["name"] for t in json.load(sys.stdin)} == {"build-helper"}'
+          meson setup "$RUNNER_TEMP/whale-cross-runner" --cross-file "$RUNNER_TEMP/aarch64-cross.ini" \
+            -Dcargo-host-target=aarch64-unknown-linux-gnu \
+            -Dasmobj-dir="$GITHUB_WORKSPACE/.ci-asmobj/aarch64-unknown-linux-gnu" -Drust-reference=true \
+            '-Dhost-runner=["/bin/true"]'
+          meson introspect --tests "$RUNNER_TEMP/whale-cross-runner" | \
+            python3 -c 'import json,sys; tests={t["name"]:t for t in json.load(sys.stdin)}; assert set(tests)=={"build-helper","cli-smoke"}; assert "--runner-arg=/bin/true" in tests["cli-smoke"]["cmd"]'
+      - name: Retain native conformance logs, bytecode originals and replay manifests
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wave-conformance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-artifacts/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Retain selected Linux AMD64 modules and provenance
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wave-modules-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-wave/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain independent AMD64 oracle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: amd64-oracles-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-artifacts/amd64-*/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
       - name: Retain target-specific archives and provenance
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

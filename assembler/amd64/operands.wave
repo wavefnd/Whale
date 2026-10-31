@@ -1,0 +1,226 @@
+// SPDX-License-Identifier: MPL-2.0
+// Operand grammar keeps register recognition separate from encoding constraints.
+fun amd64_operand_clear(operand: ptr<AsmOperand>) {
+    operand.kind = 0;
+    operand.name = 18446744073709551615;
+    operand.low = 0;
+    operand.high = 0;
+    operand.mode = 0;
+    operand.width = 18446744073709551615;
+    operand.base = 18446744073709551615;
+    operand.index = 18446744073709551615;
+    operand.scale = 1;
+    operand.disp = 0;
+    operand.symbol = 18446744073709551615;
+}
+
+fun amd64_memory_width(name: ptr<AsmName>) -> u64 {
+    // byte, word, dword, qword
+    if (amd64_name_is(name, 1702132066, 4, 1)) { // byte
+        return 8;
+    }
+    if (amd64_name_is(name, 1685221239, 4, 1)) { // word
+        return 16;
+    }
+    if (amd64_name_is(name, 431416637284, 5, 1)) { // dword
+        return 32;
+    }
+    if (amd64_name_is(name, 431416637297, 5, 1)) { // qword
+        return 64;
+    }
+    return 18446744073709551615;
+}
+
+fun amd64_memory_number(p: ptr<AsmParser>, negative: bool, output: ptr<AsmOperand>) -> bool {
+    var value: AsmWide;
+    var signed_value: AsmWide;
+    var previous: AsmWide;
+    var sum: AsmWide;
+    value.low = p.packet.tokens[p.position].low;
+    value.high = p.packet.tokens[p.position].high;
+    signed_value = value;
+    if (negative && !asm_number_neg_checked(&value, &signed_value)) {
+        return amd64_parse_fail(p, 15, p.position);
+    }
+    if (!asm_number_fits_signed(&signed_value, 64)) {
+        return amd64_parse_fail(p, 15, p.position);
+    }
+    previous.low = output.disp;
+    previous.high = 0;
+    if ((output.disp >> 63) != 0) {
+        previous.high = 18446744073709551615;
+    }
+    if (!asm_number_add_checked(&previous, &signed_value, &sum)
+        || !asm_number_fits_signed(&sum, 64)) {
+        return amd64_parse_fail(p, 15, p.position);
+    }
+    output.disp = sum.low;
+    p.position += 1;
+    return true;
+}
+
+fun amd64_parse_memory(p: ptr<AsmParser>, output: ptr<AsmOperand>) -> bool {
+    amd64_operand_clear(output);
+    output.kind = 4;
+    p.position += 1;
+    var token: ptr<AsmParseToken> = null;
+    if (p.position < p.packet.count) {
+        token = &p.packet.tokens[p.position];
+    }
+    if (token != null && token.kind == 0 && p.position + 1 < p.packet.count) {
+        var next: ptr<AsmParseToken> = &p.packet.tokens[p.position + 1];
+        var separated: bool = next.position > token.end && next.kind != 6 && next.kind != 11;
+        // The unseparated forms [rel], [abs+4] retain their symbol meanings.
+        if (separated && (amd64_name_is(&token.text, 7103858, 3, 1) // rel
+            || amd64_name_is(&token.text, 7561825, 3, 1))) { // abs
+            output.mode = 1;
+            if (amd64_name_is(&token.text, 7561825, 3, 1)) { // abs
+                output.mode = 2;
+            }
+            p.position += 1;
+        }
+    }
+    var negative: bool = false;
+    if (amd64_token_kind(p, p.position) == 7) {
+        p.position += 1;
+    } else if (amd64_token_kind(p, p.position) == 8) {
+        negative = true;
+        p.position += 1;
+    }
+    while (true) {
+        if (!amd64_parse_charge(p, 1)) {
+            return false;
+        }
+        var term: u64 = p.position;
+        var kind: u64 = amd64_token_kind(p, p.position);
+        if (kind == 18446744073709551615 || kind == 11) {
+            return amd64_parse_fail(p, 10, p.position);
+        }
+        if (kind == 0) {
+            if (negative) {
+                return amd64_parse_fail(p, 11, p.position);
+            }
+            var register: Amd64Register;
+            if (amd64_register(&p.packet.tokens[p.position].text, 1, &register)) {
+                var scaled: bool = amd64_token_kind(p, p.position + 1) == 9;
+                if (output.base == 18446744073709551615 && !scaled) {
+                    if (!amd64_parse_name(p, p.position, true, &output.base)) {
+                        return false;
+                    }
+                    p.position += 1;
+                } else if (output.index == 18446744073709551615) {
+                    if (!amd64_parse_name(p, p.position, true, &output.index)) {
+                        return false;
+                    }
+                    p.position += 1;
+                    if (amd64_token_kind(p, p.position) == 9) {
+                        p.position += 1;
+                        if (amd64_token_kind(p, p.position) != 1) {
+                            return amd64_parse_fail(p, 12, p.position);
+                        }
+                        var scale: ptr<AsmParseToken> = &p.packet.tokens[p.position];
+                        if (scale.high != 0 || (scale.low != 1 && scale.low != 2
+                            && scale.low != 4 && scale.low != 8)) {
+                            return amd64_parse_fail(p, 12, p.position);
+                        }
+                        output.scale = scale.low;
+                        p.position += 1;
+                    }
+                } else {
+                    return amd64_parse_fail(p, 13, term);
+                }
+            } else if (output.symbol == 18446744073709551615) {
+                if (!amd64_parse_name(p, p.position, false, &output.symbol)) {
+                    return false;
+                }
+                p.position += 1;
+            } else {
+                return amd64_parse_fail(p, 14, term);
+            }
+        } else if (kind == 1) {
+            if (!amd64_memory_number(p, negative, output)) {
+                return false;
+            }
+        } else {
+            return amd64_parse_fail(p, 16, p.position);
+        }
+        var next: u64 = amd64_token_kind(p, p.position);
+        if (next == 6) {
+            p.position += 1;
+            if (output.mode != 0 && (output.base != 18446744073709551615
+                || output.index != 18446744073709551615)) {
+                return amd64_parse_fail(p, 17, term);
+            }
+            return true;
+        }
+        if (next == 7 || next == 8) {
+            negative = next == 8;
+            p.position += 1;
+        } else if (next == 18446744073709551615 || next == 11) {
+            return amd64_parse_fail(p, 10, p.position);
+        } else {
+            return amd64_parse_fail(p, 18, p.position);
+        }
+    }
+    return false;
+}
+
+fun amd64_parse_operand(p: ptr<AsmParser>, output: ptr<AsmOperand>) -> bool {
+    amd64_operand_clear(output);
+    var kind: u64 = amd64_token_kind(p, p.position);
+    if (kind == 0) {
+        var width: u64 = amd64_memory_width(&p.packet.tokens[p.position].text);
+        if (width != 18446744073709551615) {
+            p.position += 1;
+            if (amd64_token_kind(p, p.position) != 5) {
+                return amd64_parse_fail(p, 9, p.position);
+            }
+            if (!amd64_parse_memory(p, output)) {
+                return false;
+            }
+            output.width = width;
+            return true;
+        }
+    }
+    if (kind == 5) {
+        return amd64_parse_memory(p, output);
+    }
+    if (kind == 0) {
+        var register: Amd64Register;
+        var next: u64 = amd64_token_kind(p, p.position + 1);
+        if (next != 7 && next != 8
+            && amd64_register(&p.packet.tokens[p.position].text, 1, &register)) {
+            if (!amd64_parse_name(p, p.position, true, &output.name)) {
+                return false;
+            }
+            p.position += 1;
+            return true;
+        }
+    }
+    var expression: AsmExpr;
+    if (!amd64_parse_expression(p, 1, &expression)) {
+        return false;
+    }
+    output.low = expression.low;
+    output.high = expression.high;
+    output.kind = 1;
+    if (expression.kind != 0) {
+        output.name = expression.name;
+        output.kind = 3;
+        if (expression.low == 0 && expression.high == 0) {
+            output.kind = 2;
+        }
+    }
+    return true;
+}
+
+fun amd64_emit_operand(p: ptr<AsmParser>, operand: ptr<AsmOperand>) -> bool {
+    if (p.packet.mode != 0) {
+        if (p.result.operands >= p.output.operand_capacity) {
+            return amd64_parse_backend(p);
+        }
+        p.output.operands[p.result.operands] = operand[0];
+    }
+    p.result.operands += 1;
+    return true;
+}

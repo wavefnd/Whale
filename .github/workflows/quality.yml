@@ -59,6 +59,12 @@ jobs:
         features: [default, all]
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+      WHALE_WAVE_IR_DIR: ${{ github.workspace }}/.ci-wave/ir
+      WHALE_WAVE_ASSEMBLER_DIR: ${{ github.workspace }}/.ci-wave/common
+      WHALE_WAVE_AMD64_DIR: ${{ github.workspace }}/.ci-wave/amd64
+      WHALE_WAVE_AARCH64_DIR: ${{ github.workspace }}/.ci-wave/aarch64
+      WHALE_WAVE_RISCV64_DIR: ${{ github.workspace }}/.ci-wave/riscv64
+      WHALE_WAVE_LOONGARCH64_DIR: ${{ github.workspace }}/.ci-wave/loongarch64
       FEATURE_FLAGS: ${{ matrix.features == 'all' && '--all-features' || '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -69,6 +75,11 @@ jobs:
         with:
           name: ${{ needs.asmobj.outputs.artifact_name }}
           path: .ci-asmobj
+      - name: Download selected Linux AMD64 Wave modules
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -95,13 +106,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: none, flags: '' }
-          - { name: amd64, flags: '--features asm-amd64' }
-          - { name: aarch64, flags: '--features asm-aarch64' }
-          - { name: riscv64, flags: '--features asm-riscv64' }
-          - { name: loongarch64, flags: '--features asm-loongarch64' }
+          - { name: none, flags: '', graph_flags: '' }
+          - { name: bytecode-only, flags: '--features socket-cli', graph_flags: '' }
+          - { name: all-isa-no-linker, flags: '--features builtin-assemblers,socket-cli', graph_flags: '--isa amd64 --isa aarch64 --isa riscv64 --isa loongarch64' }
+          - { name: amd64, flags: '--features asm-amd64', graph_flags: '--isa amd64' }
+          - { name: aarch64, flags: '--features asm-aarch64', graph_flags: '--isa aarch64' }
+          - { name: riscv64, flags: '--features asm-riscv64', graph_flags: '--isa riscv64' }
+          - { name: loongarch64, flags: '--features asm-loongarch64', graph_flags: '--isa loongarch64' }
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+      WHALE_WAVE_IR_DIR: ${{ github.workspace }}/.ci-wave/ir
+      WHALE_WAVE_ASSEMBLER_DIR: ${{ github.workspace }}/.ci-wave/common
+      WHALE_WAVE_AMD64_DIR: ${{ github.workspace }}/.ci-wave/amd64
+      WHALE_WAVE_AARCH64_DIR: ${{ github.workspace }}/.ci-wave/aarch64
+      WHALE_WAVE_RISCV64_DIR: ${{ github.workspace }}/.ci-wave/riscv64
+      WHALE_WAVE_LOONGARCH64_DIR: ${{ github.workspace }}/.ci-wave/loongarch64
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -111,9 +130,16 @@ jobs:
         with:
           name: ${{ needs.asmobj.outputs.artifact_name }}
           path: .ci-asmobj
+      - name: Download selected Linux AMD64 Wave modules
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - run: rustup toolchain install stable --profile minimal
       - name: Check selected assembler registration and integration
         run: python tools/ci.py run --name reduced-isa -- cargo test -p whale --no-default-features ${{ matrix.flags }} --locked
+      - name: Check selected production dependency graph
+        run: python tools/ci.py run --name product-graph -- python tools/check_product_graph.py ${{ matrix.graph_flags }}
       - name: Retain command logs and reproduction evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -131,6 +157,12 @@ jobs:
     timeout-minutes: 15
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+      WHALE_WAVE_IR_DIR: ${{ github.workspace }}/.ci-wave/ir
+      WHALE_WAVE_ASSEMBLER_DIR: ${{ github.workspace }}/.ci-wave/common
+      WHALE_WAVE_AMD64_DIR: ${{ github.workspace }}/.ci-wave/amd64
+      WHALE_WAVE_AARCH64_DIR: ${{ github.workspace }}/.ci-wave/aarch64
+      WHALE_WAVE_RISCV64_DIR: ${{ github.workspace }}/.ci-wave/riscv64
+      WHALE_WAVE_LOONGARCH64_DIR: ${{ github.workspace }}/.ci-wave/loongarch64
       RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -141,6 +173,11 @@ jobs:
         with:
           name: ${{ needs.asmobj.outputs.artifact_name }}
           path: .ci-asmobj
+      - name: Download selected Linux AMD64 Wave modules
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -196,6 +233,12 @@ jobs:
     timeout-minutes: 20
     env:
       WHALE_ASMOBJ_DIR: ${{ github.workspace }}/.ci-asmobj/x86_64-unknown-linux-gnu
+      WHALE_WAVE_IR_DIR: ${{ github.workspace }}/.ci-wave/ir
+      WHALE_WAVE_ASSEMBLER_DIR: ${{ github.workspace }}/.ci-wave/common
+      WHALE_WAVE_AMD64_DIR: ${{ github.workspace }}/.ci-wave/amd64
+      WHALE_WAVE_AARCH64_DIR: ${{ github.workspace }}/.ci-wave/aarch64
+      WHALE_WAVE_RISCV64_DIR: ${{ github.workspace }}/.ci-wave/riscv64
+      WHALE_WAVE_LOONGARCH64_DIR: ${{ github.workspace }}/.ci-wave/loongarch64
       WHALE_FUZZ_ARTIFACT_DIR: .ci-artifacts/fuzz
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -206,6 +249,11 @@ jobs:
         with:
           name: ${{ needs.asmobj.outputs.artifact_name }}
           path: .ci-asmobj
+      - name: Download selected Linux AMD64 Wave modules
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.asmobj.outputs.wave_artifact_name }}
+          path: .ci-wave
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
@@ -215,7 +263,7 @@ jobs:
       - name: Build real library boundary targets
         run: python tools/ci.py run --name fuzz-build --timeout 300 -- cargo build --workspace --all-features --examples --locked
       - name: Bounded assembler, object, IR and AST mutation targets
-        run: python tools/ci.py run --name boundary-fuzz --timeout 240 -- python tools/fuzz_smoke.py --binary target/debug/examples/fuzz_boundaries --cases 512 --seed 1464353100 --timeout 45
+        run: python tools/ci.py run --name boundary-fuzz --timeout 300 -- python tools/fuzz_smoke.py --binary target/debug/examples/fuzz_boundaries --cases 512 --seed 1464353100 --timeout 45
       - name: Versioned schema and decoder agreement
         run: python tools/ci.py run --name schema-agreement --timeout 90 -- python tools/schema_agreement.py --binary target/debug/examples/schema_probe
       - name: Independent tracked-memory operation model

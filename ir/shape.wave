@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: MPL-2.0
+// Bounded identity and branch-shape validation before SSA/type analysis.
+struct IrShapeBlock {
+    id: u64;
+    terminated: u64;
+    first_edge: u64;
+    edge_count: u64;
+}
+
+struct IrShapeValue {
+    id: u64;
+    void_parameter: u64;
+}
+
+struct IrShapeResult {
+    status: u64; // 1 duplicate block, 2 entry, 3 duplicate value,
+                 // 4 unterminated, 5 branch target, 6 transport, 7 work,
+                 // 8 void parameter
+    index: u64;
+    detail: u64;
+    work: u64;
+}
+
+fun ir_shape_hash(id: u64, mask: u64) -> u64 {
+    return (id ^ (id >> 16)) & mask;
+}
+
+fun ir_shape_insert(table: ptr<u64>, capacity: u64, id: u64,
+    work: ptr<u64>, limit: u64) -> i32 {
+    var position: u64 = ir_shape_hash(id, capacity - 1);
+    while (true) {
+        if (!ir_cfg_charge(work, limit)) { return 2; }
+        if (table[position] == 18446744073709551615) {
+            table[position] = id; return 0;
+        }
+        if (table[position] == id) { return 1; }
+        position = (position + 1) & (capacity - 1);
+    }
+}
+
+fun ir_shape_contains(table: ptr<u64>, capacity: u64, id: u64,
+    work: ptr<u64>, limit: u64) -> i32 {
+    var position: u64 = ir_shape_hash(id, capacity - 1);
+    while (true) {
+        if (!ir_cfg_charge(work, limit)) { return 2; }
+        if (table[position] == 18446744073709551615) { return 0; }
+        if (table[position] == id) { return 1; }
+        position = (position + 1) & (capacity - 1);
+    }
+}
+
+export(c) fun whale_ir_shape_contains(table: ptr<u64>, capacity: u64, id: u64,
+    max_work: u64, result: ptr<IrShapeResult>) -> i32 {
+    if (result == null) { return 6; }
+    result.status = 0; result.index = 0; result.detail = 0; result.work = 0;
+    if (capacity < 2 || !ir_power_two(capacity)
+        || !ir_span_valid(table as ptr<u8>, capacity, 8)) { result.status = 6; return 6; }
+    var work: u64 = 0;
+    var found: i32 = ir_shape_contains(table, capacity, id, &work, max_work);
+    result.work = work;
+    if (found == 2) { result.status = 7; return 7; }
+    result.detail = found as u64;
+    return 0;
+}
+
+fun ir_shape_error(result: ptr<IrShapeResult>, status: u64, index: u64,
+    detail: u64, work: u64) -> i32 {
+    result.status = status; result.index = index;
+    result.detail = detail; result.work = work;
+    return status as i32;
+}
+
+export(c) fun whale_ir_verify_shape(blocks: ptr<IrShapeBlock>, block_count: u64,
+    entry: u64, values: ptr<IrShapeValue>, value_count: u64,
+    edges: ptr<u64>, edge_count: u64, max_work: u64,
+    block_table: ptr<u64>, block_table_capacity: u64,
+    value_table: ptr<u64>, value_table_capacity: u64,
+    result: ptr<IrShapeResult>) -> i32 {
+    if (result == null) { return 6; }
+    result.status = 0; result.index = 0; result.detail = 0; result.work = 0;
+    if (!ir_span_valid(blocks as ptr<u8>, block_count, 32)
+        || !ir_span_valid(values as ptr<u8>, value_count, 16)
+        || !ir_span_valid(edges as ptr<u8>, edge_count, 8)
+        || !ir_span_valid(block_table as ptr<u8>, block_table_capacity, 8)
+        || !ir_span_valid(value_table as ptr<u8>, value_table_capacity, 8)
+        || block_table_capacity < 2 || value_table_capacity < 2
+        || !ir_power_two(block_table_capacity) || !ir_power_two(value_table_capacity)
+        || block_count > block_table_capacity / 2
+        || value_count > value_table_capacity / 2) {
+        return ir_shape_error(result, 6, 0, 0, 0);
+    }
+    var work: u64 = 0;
+    var index: u64 = 0;
+    while (index < block_table_capacity) {
+        if (!ir_cfg_charge(&work, max_work)) { return ir_shape_error(result, 7, index, 0, work); }
+        block_table[index] = 18446744073709551615;
+        index += 1;
+    }
+    index = 0;
+    while (index < value_table_capacity) {
+        if (!ir_cfg_charge(&work, max_work)) { return ir_shape_error(result, 7, index, 0, work); }
+        value_table[index] = 18446744073709551615;
+        index += 1;
+    }
+    index = 0;
+    while (index < block_count) {
+        var block: ptr<IrShapeBlock> = &blocks[index];
+        if (block.first_edge > edge_count || block.edge_count > edge_count - block.first_edge) {
+            return ir_shape_error(result, 6, index, 0, work);
+        }
+        var status: i32 = ir_shape_insert(block_table, block_table_capacity,
+            block.id, &work, max_work);
+        if (status == 1) { return ir_shape_error(result, 1, index, block.id, work); }
+        if (status == 2) { return ir_shape_error(result, 7, index, 0, work); }
+        index += 1;
+    }
+    var present: i32 = ir_shape_contains(block_table, block_table_capacity,
+        entry, &work, max_work);
+    if (present == 0) { return ir_shape_error(result, 2, 0, entry, work); }
+    if (present == 2) { return ir_shape_error(result, 7, 0, 0, work); }
+    index = 0;
+    while (index < value_count) {
+        if (values[index].void_parameter != 0) {
+            return ir_shape_error(result, 8, index, values[index].id, work);
+        }
+        var status: i32 = ir_shape_insert(value_table, value_table_capacity,
+            values[index].id, &work, max_work);
+        if (status == 1) { return ir_shape_error(result, 3, index, values[index].id, work); }
+        if (status == 2) { return ir_shape_error(result, 7, index, 0, work); }
+        index += 1;
+    }
+    index = 0;
+    while (index < block_count) {
+        var block: ptr<IrShapeBlock> = &blocks[index];
+        if (block.terminated == 0) {
+            return ir_shape_error(result, 4, index, block.id, work);
+        }
+        var edge: u64 = 0;
+        while (edge < block.edge_count) {
+            var target: u64 = edges[block.first_edge + edge];
+            var present: i32 = ir_shape_contains(block_table, block_table_capacity,
+                target, &work, max_work);
+            if (present == 0) { return ir_shape_error(result, 5, index, target, work); }
+            if (present == 2) { return ir_shape_error(result, 7, index, 0, work); }
+            edge += 1;
+        }
+        index += 1;
+    }
+    result.work = work;
+    return 0;
+}

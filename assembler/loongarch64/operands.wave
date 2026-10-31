@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MPL-2.0
+// LoongArch-specific immediate diagnostics preserve source evaluation order.
+fun loong_upper_immediate(text: FixedText, output: ptr<u64>,
+    result: ptr<FixedResult>) -> bool {
+    var number: AsmWide;
+    if (!asm_fixed_integer(text, &number, result)) {
+        return false;
+    }
+    if (!asm_number_fits_signed(&number, 20)) {
+        return asm_fixed_fail(result, 3001, text, 0);
+    }
+    output[0] = number.low & 1048575;
+    return true;
+}
+
+fun loong_jirl_offset(text: FixedText, output: ptr<i64>, result: ptr<FixedResult>) -> bool {
+    var number: AsmWide;
+    if (!asm_fixed_integer(text, &number, result)) {
+        return false;
+    }
+    if (!asm_number_fits_signed(&number, 64)) {
+        return asm_fixed_fail(result, 3002, text, 0);
+    }
+    output[0] = number.low as i64;
+    return true;
+}

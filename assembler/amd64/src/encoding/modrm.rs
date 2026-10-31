@@ -11,6 +11,17 @@ impl ModRM {
     }
 
     pub fn encode(&self) -> u8 {
-        (self.mod_bits << 6) | ((self.reg & 7) << 3) | (self.rm & 7)
+        #[cfg(whale_wave_amd64)]
+        return crate::encoder::wave::bits(
+            0,
+            u64::from(self.mod_bits),
+            u64::from(self.reg),
+            u64::from(self.rm),
+            0,
+        );
+        #[cfg(not(whale_wave_amd64))]
+        {
+            (self.mod_bits << 6) | ((self.reg & 7) << 3) | (self.rm & 7)
+        }
     }
 }

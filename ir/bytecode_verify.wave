@@ -1,0 +1,340 @@
+// SPDX-License-Identifier: MPL-2.0
+// Complete admission precedes runtime effects. The exported query checks native
+// spans and computes bounded initialized scratch before traversing any table.
+fun ir_bytecode_verify_structure(context: ptr<IrBytecodeVerifier>,
+    identities: ptr<IrSourceSlot>, identity_capacity: u64) -> bool {
+    var p: ptr<IrBytecodeProgram> = context.program;
+    var result: ptr<IrBytecodeResult> = context.result;
+    var limits: ptr<IrBytecodeLimits> = context.limits;
+    var i: u64 = 0;
+    if (!ir_bytecode_charge(result, limits, p.value_type_count)) { return false; }
+    while (i < p.value_type_count) {
+        var definition: ptr<IrBytecodeDefinition> = &context.definitions[i];
+        definition.block = 18446744073709551615;
+        definition.position = 0;
+        definition.defined = 0;
+        definition.literal = 0;
+        definition.low = 0;
+        definition.high = 0;
+        i += 1;
+    }
+    var block_cursor: u64 = 0;
+    var value_cursor: u64 = 0;
+    var instruction_cursor: u64 = 0;
+    i = 0;
+    while (i < p.function_count) {
+        result.table = 3;
+        result.index = i;
+        if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+        var function: ptr<IrRuntimeFunction> = &p.functions[i];
+        if (function.id > 4294967295 || function.signature >= p.type_count
+            || p.types[function.signature].kind != 18 || function.has_body > 1 || function.linkage > 1
+            || function.first_block != block_cursor || function.first_value_type != value_cursor
+            || function.block_count > p.block_count - block_cursor
+            || function.value_count > p.value_type_count - value_cursor
+            || function.first_parameter > p.operand_count
+            || function.parameter_count > p.operand_count - function.first_parameter) {
+            return ir_bytecode_fail(result, 1, 80, 3, i);
+        }
+        if (!ir_bytecode_unique(identities, identity_capacity, 1, function.id, 0, 0, context)) { return false; }
+        if (function.has_body == 0) {
+            if (function.block_count != 0 || function.value_count != 0 || function.parameter_count != 0
+                || function.entry != 18446744073709551615 || function.linkage == 0) {
+                return ir_bytecode_fail(result, 1, 80, 3, i);
+            }
+        } else {
+            if (function.block_count == 0 || function.parameter_count >= p.types[function.signature].count
+                || function.parameter_count + 1 != p.types[function.signature].count
+                || !ir_bytecode_target(function, function.entry, context)) {
+                return ir_bytecode_fail(result, 1, 80, 3, i);
+            }
+            var parameter: u64 = 0;
+            while (parameter < function.parameter_count) {
+                if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+                var slot: u64 = p.operands[function.first_parameter + parameter];
+                if (slot >= function.value_count) { return ir_bytecode_fail(result, 1, 40, 3, i); }
+                var index: u64 = value_cursor + slot;
+                if (context.definitions[index].defined != 0) { return ir_bytecode_fail(result, 1, 81, 3, i); }
+                context.definitions[index].defined = 1;
+                if (!ir_bytecode_same(p, p.value_types[index],
+                    p.edges[p.types[function.signature].first + parameter + 1], limits, result)) { return false; }
+                parameter += 1;
+            }
+            var b: u64 = 0;
+            while (b < function.block_count) {
+                result.table = 4;
+                result.index = block_cursor + b;
+                if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+                var block: ptr<IrRuntimeBlock> = &p.blocks[block_cursor + b];
+                if (block.id > 4294967295 || block.function != i || block.first != instruction_cursor
+                    || block.count == 0 || block.count > p.instruction_count - instruction_cursor) {
+                    return ir_bytecode_fail(result, 1, 82, 4, result.index);
+                }
+                if (!ir_bytecode_unique(identities, identity_capacity, 2, i, block.id, 0, context)) { return false; }
+                var position: u64 = 0;
+                while (position < block.count) {
+                    result.table = 5;
+                    result.index = instruction_cursor + position;
+                    if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+                    var inst: ptr<IrRuntimeInstruction> = &p.instructions[result.index];
+                    if (inst.op > 35 || inst.ty >= p.type_count || inst.other >= p.type_count
+                        || (position + 1 == block.count && inst.op < 31)
+                        || (position + 1 != block.count && inst.op >= 31)) {
+                        return ir_bytecode_fail(result, 1, 83, 5, result.index);
+                    }
+                    var has_destination: bool = ir_bytecode_has_destination(inst);
+                    if (has_destination) {
+                        if (inst.dst >= function.value_count) { return ir_bytecode_fail(result, 1, 40, 5, result.index); }
+                        var definition: ptr<IrBytecodeDefinition> = &context.definitions[value_cursor + inst.dst];
+                        if (definition.defined != 0) { return ir_bytecode_fail(result, 1, 81, 5, result.index); }
+                        definition.defined = 1;
+                        definition.block = b;
+                        definition.position = position;
+                        if (inst.op == 3 || inst.op == 4) {
+                            definition.literal = inst.literal;
+                            definition.low = inst.low;
+                            definition.high = inst.high;
+                        }
+                    } else if (inst.dst != 18446744073709551615) {
+                        return ir_bytecode_fail(result, 1, 84, 5, result.index);
+                    }
+                    var site: ptr<IrBytecodeSite> = &p.sites[result.index];
+                    var expected: u64 = 18446744073709551615;
+                    if (has_destination) { expected = p.value_ids[value_cursor + inst.dst]; }
+                    if (site.function != function.id || site.block != block.id
+                        || site.instruction != position || site.value != expected) {
+                        return ir_bytecode_fail(result, 1, 85, 9, result.index);
+                    }
+                    position += 1;
+                }
+                instruction_cursor += block.count;
+                b += 1;
+            }
+        }
+        var value: u64 = 0;
+        while (value < function.value_count) {
+            result.table = 15;
+            result.index = value_cursor + value;
+            if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+            if (context.definitions[value_cursor + value].defined != 1
+                || !ir_bytecode_unique(identities, identity_capacity, 3, i,
+                    p.value_ids[value_cursor + value], 0, context)) {
+                if (result.status == 0) { ir_bytecode_fail(result, 1, 86, 15, result.index); }
+                return false;
+            }
+            value += 1;
+        }
+        block_cursor += function.block_count;
+        value_cursor += function.value_count;
+        i += 1;
+    }
+    if (block_cursor != p.block_count || value_cursor != p.value_type_count
+        || instruction_cursor != p.instruction_count) {
+        return ir_bytecode_fail(result, 1, 87, 0, 0);
+    }
+    i = 0;
+    while (i < p.global_count) {
+        result.table = 8;
+        result.index = i;
+        if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+        var global: ptr<IrRuntimeGlobal> = &p.globals[i];
+        if (global.id > 4294967295 || global.ty >= p.type_count || global.readonly > 1
+            || global.initialized > 1 || global.align > 4294967295 || !ir_power_two(global.align)) {
+            return ir_bytecode_fail(result, 1, 88, 8, i);
+        }
+        if (!ir_bytecode_unique(identities, identity_capacity, 4, global.id, 0, 0, context)) { return false; }
+        if (context.types[global.ty].storable == 0) { return ir_bytecode_fail(result, 1, 48, 8, i); }
+        if (global.initialized == 1) {
+            if (global.value.kind != 1 || global.value.ty != global.ty || global.value.origin != 1
+                || global.value.flag != 0 || global.value.signature != 0 || global.value.target_kind != 0
+                || global.value.target != 0
+                || !ir_verify_literal(p.types[global.ty].kind, global.value.literal,
+                    global.value.low, global.value.high)) {
+                return ir_bytecode_fail(result, 1, 89, 8, i);
+            }
+        } else {
+            var words: ptr<u64> = &global.value as ptr<u64>;
+            var word: u64 = 0;
+            while (word < 20) {
+                if (words[word] != 0) { return ir_bytecode_fail(result, 1, 89, 8, i); }
+                word += 1;
+            }
+        }
+        var pointer_words: ptr<u64> = &global.value.pointer as ptr<u64>;
+        var word: u64 = 0;
+        while (word < 10) {
+            if (pointer_words[word] != 0) { return ir_bytecode_fail(result, 1, 89, 8, i); }
+            word += 1;
+        }
+        i += 1;
+    }
+    i = 0;
+    while (i < p.constant_global_count) {
+        result.table = 16;
+        result.index = i;
+        if (p.constant_global_ids[i] > 4294967295
+            || !ir_bytecode_unique(identities, identity_capacity, 4,
+                p.constant_global_ids[i], 0, 0, context)) {
+            if (result.status == 0) { ir_bytecode_fail(result, 1, 90, 16, i); }
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fun ir_bytecode_verify_sources(context: ptr<IrBytecodeVerifier>) -> bool {
+    var p: ptr<IrBytecodeProgram> = context.program;
+    var result: ptr<IrBytecodeResult> = context.result;
+    var scratch: ptr<IrBytecodeScratch> = context.scratch;
+    var files: ptr<IrSourceFile> = ir_bytecode_take(scratch, p.file_count * 3, result) as ptr<IrSourceFile>;
+    var blocks: ptr<IrSourceBlock> = ir_bytecode_take(scratch, p.block_count * 4, result) as ptr<IrSourceBlock>;
+    var global_count: u64 = p.global_count + p.constant_global_count;
+    var globals: ptr<u64> = ir_bytecode_take(scratch, global_count, result);
+    var total: u64 = p.file_count + p.original_count + p.block_count + global_count + p.mapping_count;
+    var capacity: u64 = 2;
+    while (capacity / 2 < total) { capacity *= 2; }
+    var table: ptr<IrSourceSlot> = ir_bytecode_take(scratch, capacity * 6, result) as ptr<IrSourceSlot>;
+    if (result.status != 0) { return false; }
+    var i: u64 = 0;
+    while (i < p.file_count) {
+        if (!ir_bytecode_charge(result, context.limits, 1)) { return false; }
+        if (p.files[i].id > 4294967295 || p.files[i].text >= p.text_count) {
+            return ir_bytecode_fail(result, 1, 91, 12, i);
+        }
+        var text: ptr<IrBytecodeText> = &p.texts[p.files[i].text];
+        var available: u64 = context.limits.max_workspace_bytes
+            - result.decoded_bytes - result.scratch_words * 8;
+        if (context.owned_bytes > available || text.count > available - context.owned_bytes) {
+            return ir_bytecode_fail(result, 2, 6, 12, i);
+        }
+        context.owned_bytes += text.count;
+        if (!ir_bytecode_charge(result, context.limits, text.count)) { return false; }
+        files[i].id = p.files[i].id;
+        files[i].bytes = &p.text_bytes[text.first];
+        files[i].length = text.count;
+        i += 1;
+    }
+    i = 0;
+    while (i < p.block_count) {
+        if (!ir_bytecode_charge(result, context.limits, 1)) { return false; }
+        blocks[i].function = p.functions[p.blocks[i].function].id;
+        blocks[i].block = p.blocks[i].id;
+        blocks[i].instructions = p.blocks[i].count - 1;
+        blocks[i].terminated = 1;
+        i += 1;
+    }
+    i = 0;
+    while (i < p.global_count) {
+        globals[i] = p.globals[i].id;
+        i += 1;
+    }
+    i = 0;
+    while (i < p.constant_global_count) {
+        globals[p.global_count + i] = p.constant_global_ids[i];
+        i += 1;
+    }
+    i = 0;
+    while (i < p.original_count) {
+        if (!ir_bytecode_charge(result, context.limits, 1)) { return false; }
+        var node: ptr<IrSourceOriginal> = &p.originals[i];
+        if (node.file > 4294967295 || node.line > 4294967295 || node.column > 4294967295
+            || node.end_line > 4294967295 || node.end_column > 4294967295) {
+            return ir_bytecode_fail(result, 1, 92, 13, i);
+        }
+        i += 1;
+    }
+    var source: IrSourceResult;
+    whale_ir_verify_sources(files, p.file_count, p.originals, p.original_count,
+        blocks, p.block_count, globals, global_count, p.mappings, p.mapping_count,
+        table, capacity, context.limits.max_work - result.work, &source);
+    if (!ir_bytecode_charge(result, context.limits, source.work)) { return false; }
+    if (source.status == 7) { return ir_bytecode_fail(result, 3, 1, 14, source.index); }
+    if (source.status != 0) { return ir_bytecode_fail(result, 1, 93, 14, source.index); }
+    return true;
+}
+
+fun ir_bytecode_verify_impl(program: ptr<IrBytecodeProgram>, words: ptr<u64>, capacity: u64,
+    limits: ptr<IrBytecodeLimits>, result: ptr<IrBytecodeResult>) -> i32 {
+    if (program == null || limits == null || !ir_span_valid(words as ptr<u8>, capacity, 8)) {
+        ir_bytecode_fail(result, 4, 1, 0, 0);
+        return result.status as i32;
+    }
+    var counts: ptr<u64> = &result.counts as ptr<u64>;
+    var table: u64 = 1;
+    while (table <= 16) {
+        var count: u64 = ir_bytecode_count(program, table);
+        if (!ir_span_valid(ir_bytecode_data(program, table), count, ir_bytecode_native_stride(table))) {
+            ir_bytecode_fail(result, 4, 2, table, 0);
+            return result.status as i32;
+        }
+        counts[table - 1] = count;
+        table += 1;
+    }
+    if (!ir_bytecode_sizes(&result.counts, limits, result)) { return result.status as i32; }
+    if (capacity < result.scratch_words) {
+        ir_bytecode_fail(result, 2, 4, 0, capacity);
+        return result.status as i32;
+    }
+    if (program.site_count != program.instruction_count || program.value_id_count != program.value_type_count) {
+        ir_bytecode_fail(result, 1, 5, 0, 0);
+        return result.status as i32;
+    }
+    var scratch: IrBytecodeScratch;
+    scratch.words = words;
+    scratch.capacity = capacity;
+    scratch.used = 0;
+    var context: IrBytecodeVerifier;
+    context.program = program;
+    context.owned_bytes = 0;
+    context.limits = limits;
+    context.result = result;
+    context.scratch = &scratch;
+    context.types = ir_bytecode_take(&scratch, program.type_count * 5, result) as ptr<IrBytecodeType>;
+    context.definitions = ir_bytecode_take(&scratch, program.value_type_count * 6, result) as ptr<IrBytecodeDefinition>;
+    context.operand_capacity = program.operand_count + 3;
+    context.operands = ir_bytecode_take(&scratch, context.operand_capacity * 5, result) as ptr<IrVerifyOperand>;
+    if (result.status != 0) { return result.status as i32; }
+    if (!ir_bytecode_metadata(&context)
+        || !ir_bytecode_verify_types(program, &scratch, limits, result)
+        || !ir_bytecode_layouts(&context)) { return result.status as i32; }
+    var base: u64 = scratch.used;
+    var total: u64 = program.function_count + program.block_count + program.value_type_count
+        + program.global_count + program.constant_global_count + program.operand_count;
+    var identity_capacity: u64 = 2;
+    while (identity_capacity / 2 < total) { identity_capacity *= 2; }
+    var identities: ptr<IrSourceSlot> = ir_bytecode_take(&scratch,
+        identity_capacity * 6, result) as ptr<IrSourceSlot>;
+    if (result.status != 0) { return result.status as i32; }
+    var i: u64 = 0;
+    while (i < identity_capacity) {
+        if (!ir_bytecode_charge(result, limits, 1)) { return result.status as i32; }
+        identities[i].kind = 0;
+        i += 1;
+    }
+    if (!ir_bytecode_verify_structure(&context, identities, identity_capacity)) { return result.status as i32; }
+    i = 0;
+    while (i < program.function_count) {
+        if (program.functions[i].has_body == 1
+            && !ir_bytecode_function_flow(&context, i, identities, identity_capacity)) {
+            return result.status as i32;
+        }
+        i += 1;
+    }
+    scratch.used = base;
+    if (!ir_bytecode_verify_sources(&context) || !ir_bytecode_inventory(program, limits, result)) {
+        return result.status as i32;
+    }
+    result.estimated_workspace_bytes = result.decoded_bytes + result.scratch_words * 8
+        + context.owned_bytes;
+    result.table = 0;
+    result.index = 0;
+    return 0;
+}
+
+export(c) fun whale_ir_bytecode_verify(program: ptr<IrBytecodeProgram>, words: ptr<u64>, capacity: u64,
+    limits: ptr<IrBytecodeLimits>, result: ptr<IrBytecodeResult>) -> i32 {
+    if (result == null) { return 4; }
+    ir_bytecode_result_init(result);
+    return ir_bytecode_verify_impl(program, words, capacity, limits, result);
+}

@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: MPL-2.0
+// Internal borrowed records shared by assembler source modules.
+struct AsmWide {
+    low: u64;
+    high: u64;
+}
+
+struct AsmToken {
+    kind: u64;
+    start: u64;
+    end: u64;
+    line: u64;
+    column: u64;
+    end_line: u64;
+    end_column: u64;
+    decoded_start: u64;
+    decoded_len: u64;
+    low: u64;
+    high: u64;
+}
+
+struct AsmLexResult {
+    status: u64;
+    reason: u64;
+    start: u64;
+    end: u64;
+    line: u64;
+    column: u64;
+    detail: u64;
+    tokens: u64;
+    decoded: u64;
+    work: u64;
+}
+
+struct AsmLexCursor {
+    source: ptr<u8>;
+    length: u64;
+    at: u64;
+    line: u64;
+    column: u64;
+    previous_cr: bool;
+    work: u64;
+    max_work: u64;
+    result: ptr<AsmLexResult>;
+}
+
+
+struct AsmOutputGrowth {
+    materialized: u64;
+    section: u64;
+}

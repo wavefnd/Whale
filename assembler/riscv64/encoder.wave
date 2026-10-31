@@ -1,0 +1,750 @@
+// SPDX-License-Identifier: MPL-2.0
+// The supported RV64I instruction inventory; no extension is inferred.
+struct RvOpcode {
+    form: u64;
+    opcode: u64;
+    f3: u64;
+    f7: u64;
+}
+
+fun rv_lookup(text: FixedText, fold: u64, output: ptr<RvOpcode>) -> bool {
+    // add
+    if (asm_fixed_word(text, 6579297, 3, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // addw
+    if (asm_fixed_word(text, 2003068001, 4, fold)) {
+        output.form = 0;
+        output.opcode = 59;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // sub
+    if (asm_fixed_word(text, 6452595, 3, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 0;
+        output.f7 = 32;
+        return true;
+    }
+    // subw
+    if (asm_fixed_word(text, 2002941299, 4, fold)) {
+        output.form = 0;
+        output.opcode = 59;
+        output.f3 = 0;
+        output.f7 = 32;
+        return true;
+    }
+    // sll
+    if (asm_fixed_word(text, 7105651, 3, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 1;
+        output.f7 = 0;
+        return true;
+    }
+    // sllw
+    if (asm_fixed_word(text, 2003594355, 4, fold)) {
+        output.form = 0;
+        output.opcode = 59;
+        output.f3 = 1;
+        output.f7 = 0;
+        return true;
+    }
+    // slt
+    if (asm_fixed_word(text, 7629939, 3, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 2;
+        output.f7 = 0;
+        return true;
+    }
+    // sltu
+    if (asm_fixed_word(text, 1970564211, 4, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 3;
+        output.f7 = 0;
+        return true;
+    }
+    // xor
+    if (asm_fixed_word(text, 7499640, 3, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 4;
+        output.f7 = 0;
+        return true;
+    }
+    // srl
+    if (asm_fixed_word(text, 7107187, 3, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 5;
+        output.f7 = 0;
+        return true;
+    }
+    // srlw
+    if (asm_fixed_word(text, 2003595891, 4, fold)) {
+        output.form = 0;
+        output.opcode = 59;
+        output.f3 = 5;
+        output.f7 = 0;
+        return true;
+    }
+    // sra
+    if (asm_fixed_word(text, 6386291, 3, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 5;
+        output.f7 = 32;
+        return true;
+    }
+    // sraw
+    if (asm_fixed_word(text, 2002874995, 4, fold)) {
+        output.form = 0;
+        output.opcode = 59;
+        output.f3 = 5;
+        output.f7 = 32;
+        return true;
+    }
+    // or
+    if (asm_fixed_word(text, 29295, 2, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 6;
+        output.f7 = 0;
+        return true;
+    }
+    // and
+    if (asm_fixed_word(text, 6581857, 3, fold)) {
+        output.form = 0;
+        output.opcode = 51;
+        output.f3 = 7;
+        output.f7 = 0;
+        return true;
+    }
+    // addi
+    if (asm_fixed_word(text, 1768186977, 4, fold)) {
+        output.form = 1;
+        output.opcode = 19;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // slti
+    if (asm_fixed_word(text, 1769237619, 4, fold)) {
+        output.form = 1;
+        output.opcode = 19;
+        output.f3 = 2;
+        output.f7 = 0;
+        return true;
+    }
+    // sltiu
+    if (asm_fixed_word(text, 504280411251, 5, fold)) {
+        output.form = 1;
+        output.opcode = 19;
+        output.f3 = 3;
+        output.f7 = 0;
+        return true;
+    }
+    // xori
+    if (asm_fixed_word(text, 1769107320, 4, fold)) {
+        output.form = 1;
+        output.opcode = 19;
+        output.f3 = 4;
+        output.f7 = 0;
+        return true;
+    }
+    // ori
+    if (asm_fixed_word(text, 6910575, 3, fold)) {
+        output.form = 1;
+        output.opcode = 19;
+        output.f3 = 6;
+        output.f7 = 0;
+        return true;
+    }
+    // andi
+    if (asm_fixed_word(text, 1768189537, 4, fold)) {
+        output.form = 1;
+        output.opcode = 19;
+        output.f3 = 7;
+        output.f7 = 0;
+        return true;
+    }
+    // addiw
+    if (asm_fixed_word(text, 512869295201, 5, fold)) {
+        output.form = 1;
+        output.opcode = 27;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // beq
+    if (asm_fixed_word(text, 7431522, 3, fold)) {
+        output.form = 2;
+        output.opcode = 0;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // bne
+    if (asm_fixed_word(text, 6647394, 3, fold)) {
+        output.form = 2;
+        output.opcode = 0;
+        output.f3 = 1;
+        output.f7 = 0;
+        return true;
+    }
+    // blt
+    if (asm_fixed_word(text, 7629922, 3, fold)) {
+        output.form = 2;
+        output.opcode = 0;
+        output.f3 = 4;
+        output.f7 = 0;
+        return true;
+    }
+    // bge
+    if (asm_fixed_word(text, 6645602, 3, fold)) {
+        output.form = 2;
+        output.opcode = 0;
+        output.f3 = 5;
+        output.f7 = 0;
+        return true;
+    }
+    // bltu
+    if (asm_fixed_word(text, 1970564194, 4, fold)) {
+        output.form = 2;
+        output.opcode = 0;
+        output.f3 = 6;
+        output.f7 = 0;
+        return true;
+    }
+    // bgeu
+    if (asm_fixed_word(text, 1969579874, 4, fold)) {
+        output.form = 2;
+        output.opcode = 0;
+        output.f3 = 7;
+        output.f7 = 0;
+        return true;
+    }
+    // lb
+    if (asm_fixed_word(text, 25196, 2, fold)) {
+        output.form = 3;
+        output.opcode = 0;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // lh
+    if (asm_fixed_word(text, 26732, 2, fold)) {
+        output.form = 3;
+        output.opcode = 0;
+        output.f3 = 1;
+        output.f7 = 0;
+        return true;
+    }
+    // lw
+    if (asm_fixed_word(text, 30572, 2, fold)) {
+        output.form = 3;
+        output.opcode = 0;
+        output.f3 = 2;
+        output.f7 = 0;
+        return true;
+    }
+    // ld
+    if (asm_fixed_word(text, 25708, 2, fold)) {
+        output.form = 3;
+        output.opcode = 0;
+        output.f3 = 3;
+        output.f7 = 0;
+        return true;
+    }
+    // lbu
+    if (asm_fixed_word(text, 7692908, 3, fold)) {
+        output.form = 3;
+        output.opcode = 0;
+        output.f3 = 4;
+        output.f7 = 0;
+        return true;
+    }
+    // lhu
+    if (asm_fixed_word(text, 7694444, 3, fold)) {
+        output.form = 3;
+        output.opcode = 0;
+        output.f3 = 5;
+        output.f7 = 0;
+        return true;
+    }
+    // lwu
+    if (asm_fixed_word(text, 7698284, 3, fold)) {
+        output.form = 3;
+        output.opcode = 0;
+        output.f3 = 6;
+        output.f7 = 0;
+        return true;
+    }
+    // sb
+    if (asm_fixed_word(text, 25203, 2, fold)) {
+        output.form = 4;
+        output.opcode = 0;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // sh
+    if (asm_fixed_word(text, 26739, 2, fold)) {
+        output.form = 4;
+        output.opcode = 0;
+        output.f3 = 1;
+        output.f7 = 0;
+        return true;
+    }
+    // sw
+    if (asm_fixed_word(text, 30579, 2, fold)) {
+        output.form = 4;
+        output.opcode = 0;
+        output.f3 = 2;
+        output.f7 = 0;
+        return true;
+    }
+    // sd
+    if (asm_fixed_word(text, 25715, 2, fold)) {
+        output.form = 4;
+        output.opcode = 0;
+        output.f3 = 3;
+        output.f7 = 0;
+        return true;
+    }
+    // nop
+    if (asm_fixed_word(text, 7368558, 3, fold)) {
+        output.form = 5;
+        output.opcode = 0;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // ret
+    if (asm_fixed_word(text, 7628146, 3, fold)) {
+        output.form = 5;
+        output.opcode = 1;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // ecall
+    if (asm_fixed_word(text, 465674789733, 5, fold)) {
+        output.form = 5;
+        output.opcode = 2;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // ebreak
+    if (asm_fixed_word(text, 118066057994853, 6, fold)) {
+        output.form = 5;
+        output.opcode = 3;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // mv
+    if (asm_fixed_word(text, 30317, 2, fold)) {
+        output.form = 5;
+        output.opcode = 4;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // not
+    if (asm_fixed_word(text, 7630702, 3, fold)) {
+        output.form = 5;
+        output.opcode = 5;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // neg
+    if (asm_fixed_word(text, 6776174, 3, fold)) {
+        output.form = 5;
+        output.opcode = 6;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // negw
+    if (asm_fixed_word(text, 2003264878, 4, fold)) {
+        output.form = 5;
+        output.opcode = 7;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // li
+    if (asm_fixed_word(text, 26988, 2, fold)) {
+        output.form = 5;
+        output.opcode = 8;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // jr
+    if (asm_fixed_word(text, 29290, 2, fold)) {
+        output.form = 5;
+        output.opcode = 9;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // j
+    if (asm_fixed_word(text, 106, 1, fold)) {
+        output.form = 5;
+        output.opcode = 10;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // jal
+    if (asm_fixed_word(text, 7102826, 3, fold)) {
+        output.form = 5;
+        output.opcode = 11;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // jalr
+    if (asm_fixed_word(text, 1919705450, 4, fold)) {
+        output.form = 5;
+        output.opcode = 12;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // beqz
+    if (asm_fixed_word(text, 2054251874, 4, fold)) {
+        output.form = 5;
+        output.opcode = 13;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // bnez
+    if (asm_fixed_word(text, 2053467746, 4, fold)) {
+        output.form = 5;
+        output.opcode = 14;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // lui
+    if (asm_fixed_word(text, 6911340, 3, fold)) {
+        output.form = 5;
+        output.opcode = 15;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // auipc
+    if (asm_fixed_word(text, 427087721825, 5, fold)) {
+        output.form = 5;
+        output.opcode = 16;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // slli
+    if (asm_fixed_word(text, 1768713331, 4, fold)) {
+        output.form = 5;
+        output.opcode = 17;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // srli
+    if (asm_fixed_word(text, 1768714867, 4, fold)) {
+        output.form = 5;
+        output.opcode = 18;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // srai
+    if (asm_fixed_word(text, 1767993971, 4, fold)) {
+        output.form = 5;
+        output.opcode = 19;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // slliw
+    if (asm_fixed_word(text, 512869821555, 5, fold)) {
+        output.form = 5;
+        output.opcode = 20;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // srliw
+    if (asm_fixed_word(text, 512869823091, 5, fold)) {
+        output.form = 5;
+        output.opcode = 21;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // sraiw
+    if (asm_fixed_word(text, 512869102195, 5, fold)) {
+        output.form = 5;
+        output.opcode = 22;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    // fence
+    if (asm_fixed_word(text, 435459876198, 5, fold)) {
+        output.form = 5;
+        output.opcode = 23;
+        output.f3 = 0;
+        output.f7 = 0;
+        return true;
+    }
+    return false;
+}
+
+fun rv_jump(context: ptr<FixedContext>, text: FixedText, rd: u64,
+    result: ptr<FixedResult>) -> bool {
+    var displacement: i64 = 0;
+    var scaled: u64 = 0;
+    if (!asm_fixed_pc_relative(context, text, 17, &displacement, result)
+        || !asm_fixed_displacement(displacement, 20, 2, &scaled, result)) {
+        return false;
+    }
+    result.word = rv_jump_bits(rd, displacement as u64);
+    return true;
+}
+
+fun rv_branch(context: ptr<FixedContext>, text: FixedText, f3: u64, rs1: u64,
+    rs2: u64, result: ptr<FixedResult>) -> bool {
+    var displacement: i64 = 0;
+    var scaled: u64 = 0;
+    if (!asm_fixed_pc_relative(context, text, 16, &displacement, result)
+        || !asm_fixed_displacement(displacement, 12, 2, &scaled, result)) {
+        return false;
+    }
+    result.word = rv_branch_bits(f3, rs1, rs2, displacement as u64);
+    return true;
+}
+
+fun rv_encode(instruction: ptr<FixedInstruction>, context: ptr<FixedContext>,
+    result: ptr<FixedResult>) -> bool {
+    var operation: RvOpcode;
+    if (!asm_fixed_charge(result, instruction.mnemonic.count)) {
+        return false;
+    }
+    if (!rv_lookup(instruction.mnemonic, instruction.fold, &operation)) {
+        asm_fixed_fail(result, 2006, instruction.mnemonic, 0);
+        result.display = instruction.fold;
+        return false;
+    }
+    var count: u64 = 3;
+    var rd: u64 = 0;
+    var rs1: u64 = 0;
+    var rs2: u64 = 0;
+    var immediate: u64 = 0;
+    var second: u64 = 0;
+    var word: u64 = 0;
+    if (operation.form == 3 || operation.form == 4) {
+        count = 2;
+    } else if (operation.form == 5) {
+        count = 2;
+        if (operation.opcode <= 3) {
+            count = 0;
+        } else if (operation.opcode == 9 || operation.opcode == 10) {
+            count = 1;
+        } else if (operation.opcode == 11) {
+            if (instruction.count == 1) {
+                count = 1;
+            }
+        } else if (operation.opcode == 12) {
+            count = 3;
+            if (instruction.count == 1 || instruction.count == 2) {
+                count = instruction.count;
+            }
+        } else if (operation.opcode >= 17 && operation.opcode <= 22) {
+            count = 3;
+        } else if (operation.opcode == 23 && instruction.count == 0) {
+            count = 0;
+        }
+    }
+    if (!asm_fixed_count(instruction, count, result)) {
+        return false;
+    }
+    if (operation.form == 0) {
+        if (!rv_reg(instruction.operands[0], &rd, result)
+            || !rv_reg(instruction.operands[1], &rs1, result)
+            || !rv_reg(instruction.operands[2], &rs2, result)) {
+            return false;
+        }
+        result.word = rv_r(operation.opcode, operation.f3, operation.f7, rd, rs1, rs2);
+        return true;
+    }
+    if (operation.form == 1) {
+        if (!rv_reg(instruction.operands[0], &rd, result)
+            || !rv_reg(instruction.operands[1], &rs1, result)
+            || !asm_fixed_signed(instruction.operands[2], 12, &immediate, result)) {
+            return false;
+        }
+        result.word = rv_i(operation.opcode, operation.f3, rd, rs1, immediate);
+        return true;
+    }
+    if (operation.form == 2) {
+        return rv_reg(instruction.operands[0], &rs1, result)
+            && rv_reg(instruction.operands[1], &rs2, result)
+            && rv_branch(context, instruction.operands[2], operation.f3, rs1, rs2, result);
+    }
+    if (operation.form == 3 || operation.form == 4) {
+        // Match the established diagnostic order: memory is validated before rd.
+        if (!rv_memory(instruction.operands[1], &rs1, &immediate, result)
+            || !rv_reg(instruction.operands[0], &rd, result)) {
+            return false;
+        }
+        if (operation.form == 3) {
+            result.word = rv_i(3, operation.f3, rd, rs1, immediate);
+        } else {
+            result.word = rv_store(operation.f3, rs1, rd, immediate);
+        }
+        return true;
+    }
+    var alias: u64 = operation.opcode;
+    if (alias <= 3) {
+        word = 19;
+        if (alias == 1) {
+            word = 32871;
+        } else if (alias == 2) {
+            word = 115;
+        } else if (alias == 3) {
+            word = 1048691;
+        }
+        result.word = word;
+        return true;
+    }
+    if (alias >= 4 && alias <= 7) {
+        if (!rv_reg(instruction.operands[0], &rd, result)
+            || !rv_reg(instruction.operands[1], &rs1, result)) {
+            return false;
+        }
+        word = rv_i(19, 0, rd, rs1, 0);
+        if (alias == 5) {
+            word = rv_i(19, 4, rd, rs1, 4095);
+        } else if (alias == 6) {
+            word = rv_r(51, 0, 32, rd, 0, rs1);
+        } else if (alias == 7) {
+            word = rv_r(59, 0, 32, rd, 0, rs1);
+        }
+        result.word = word;
+        return true;
+    }
+    if (alias == 8) {
+        if (!rv_reg(instruction.operands[0], &rd, result)
+            || !asm_fixed_signed(instruction.operands[1], 12, &immediate, result)) {
+            return false;
+        }
+        result.word = rv_i(19, 0, rd, 0, immediate);
+        return true;
+    }
+    if (alias == 9) {
+        if (!rv_reg(instruction.operands[0], &rs1, result)) {
+            return false;
+        }
+        result.word = rv_i(103, 0, 0, rs1, 0);
+        return true;
+    }
+    if (alias == 10) {
+        return rv_jump(context, instruction.operands[0], 0, result);
+    }
+    if (alias == 11) {
+        if (count == 1) {
+            return rv_jump(context, instruction.operands[0], 1, result);
+        }
+        return rv_reg(instruction.operands[0], &rd, result)
+            && rv_jump(context, instruction.operands[1], rd, result);
+    }
+    if (alias == 12) {
+        if (count == 1) {
+            if (!rv_reg(instruction.operands[0], &rs1, result)) {
+                return false;
+            }
+            result.word = rv_i(103, 0, 1, rs1, 0);
+            return true;
+        }
+        if (count == 2) {
+            if (!rv_memory(instruction.operands[1], &rs1, &immediate, result)
+                || !rv_reg(instruction.operands[0], &rd, result)) {
+                return false;
+            }
+        } else if (!rv_reg(instruction.operands[0], &rd, result)
+            || !rv_reg(instruction.operands[1], &rs1, result)
+            || !asm_fixed_signed(instruction.operands[2], 12, &immediate, result)) {
+            return false;
+        }
+        result.word = rv_i(103, 0, rd, rs1, immediate);
+        return true;
+    }
+    if (alias == 13 || alias == 14) {
+        return rv_reg(instruction.operands[0], &rs1, result)
+            && rv_branch(context, instruction.operands[1], alias - 13, rs1, 0, result);
+    }
+    if (alias == 15 || alias == 16) {
+        // The original contract validates the upper immediate before rd.
+        if (!asm_fixed_unsigned(instruction.operands[1], 20, &immediate, result)
+            || !rv_reg(instruction.operands[0], &rd, result)) {
+            return false;
+        }
+        word = 55;
+        if (alias == 16) {
+            word = 23;
+        }
+        result.word = rv_upper(word, rd, immediate);
+        return true;
+    }
+    if (alias >= 17 && alias <= 22) {
+        word = 19;
+        count = 6;
+        if (alias >= 20) {
+            word = 27;
+            count = 5;
+        }
+        // Shift validation precedes register validation in the original encoder.
+        if (!asm_fixed_unsigned(instruction.operands[2], count, &immediate, result)
+            || !rv_reg(instruction.operands[0], &rd, result)
+            || !rv_reg(instruction.operands[1], &rs1, result)) {
+            return false;
+        }
+        second = 5;
+        if (alias == 17 || alias == 20) {
+            second = 1;
+        }
+        if (alias == 19 || alias == 22) {
+            immediate = immediate | 1024;
+        }
+        result.word = rv_i(word, second, rd, rs1, immediate);
+        return true;
+    }
+    if (alias == 23) {
+        if (count == 0) {
+            result.word = 267386895;
+            return true;
+        }
+        if (!rv_fence(instruction.operands[0], &immediate, result)
+            || !rv_fence(instruction.operands[1], &second, result)) {
+            return false;
+        }
+        result.word = 15 | (immediate << 24) | (second << 20);
+        return true;
+    }
+    return asm_fixed_fail(result, 2006, instruction.mnemonic, 0);
+}

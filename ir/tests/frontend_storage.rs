@@ -398,8 +398,29 @@ fn aggregate_storage_expansion_and_new_ast_forms_are_bounded_and_versioned() {
     let json = interchange::encode(p.clone()).unwrap();
     assert!(interchange::decode(&json.replace("\"format_version\": 5", "\"format_version\": 4"))
         .is_err());
+    // Wave restores scope bindings in place, so empty branches no longer copy
+    // the wide aggregate environment. The retained Rust oracle bounds those
+    // copies; the production Wave path has no corresponding amplification.
+    #[cfg(whale_wave_ir)]
+    assert!(lower_o0(&p, "x86_64-whale-linux", DataLayout::default_64bit_le()).is_ok());
+    #[cfg(not(whale_wave_ir))]
     assert!(matches!(
         lower_o0(&p, "x86_64-whale-linux", DataLayout::default_64bit_le()),
+        Err(LowerError::ResourceLimit(AstLimitError::Expansion))
+    ));
+
+    // Actual emitted pointer annotations repeat the wide pointee tree. Bound
+    // that storage expansion in both implementations before publishing output.
+    let mut expanded = p;
+    expanded.functions[0].body.truncate(1);
+    for _ in 0..3000 {
+        expanded.functions[0].body.push(a::Stmt::ExprStmt(a::Expr::PointerOffset {
+            base: Box::new(address(var("s"))),
+            index: Box::new(n(64, 0)),
+        }));
+    }
+    assert!(matches!(
+        lower_o0(&expanded, "x86_64-whale-linux", DataLayout::default_64bit_le()),
         Err(LowerError::ResourceLimit(AstLimitError::Expansion))
     ));
 }

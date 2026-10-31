@@ -2,6 +2,7 @@
 """Meson/Cargo bridge checks independent of installed Rust/Wave compilers."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -11,7 +12,8 @@ from unittest.mock import patch
 
 from meson_cargo import (BuildError, build, cargo_command, cargo_dependencies,
                          cargo_environment, make_escape, native_target,
-                         smoke, source_dependencies, validate_features, validate_host)
+                         smoke, source_dependencies, revision_dependencies,
+                         validate_features, validate_host)
 
 
 class CommandTests(unittest.TestCase):
@@ -32,19 +34,48 @@ class CommandTests(unittest.TestCase):
         self.assertNotIn("--offline", command)
 
     def test_ambient_wave_and_cargo_target_cannot_change_selection(self):
-        with patch.dict(os.environ, {"WHALE_ASMOBJ_DIR": "old", "CARGO_BUILD_TARGET": "old"}):
+        with patch.dict(os.environ, {"WHALE_ASMOBJ_DIR": "old", "WHALE_WAVE_IR_DIR": "old",
+                                          "WHALE_WAVE_ASSEMBLER_DIR": "old",
+                                          "WHALE_WAVE_AMD64_DIR": "old",
+                                          "WHALE_WAVE_AARCH64_DIR": "old",
+                                          "WHALE_WAVE_RISCV64_DIR": "old",
+                                          "WHALE_WAVE_LOONGARCH64_DIR": "old",
+                                          "CARGO_BUILD_TARGET": "old"}):
             environment = cargo_environment("private", None, "dev", "2", "2")
         self.assertNotIn("WHALE_ASMOBJ_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_IR_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_ASSEMBLER_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_AMD64_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_AARCH64_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_RISCV64_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_LOONGARCH64_DIR", environment)
         self.assertNotIn("CARGO_BUILD_TARGET", environment)
         self.assertEqual(environment["CARGO_TARGET_DIR"], "private")
         self.assertEqual(environment["CARGO_PROFILE_DEV_OPT_LEVEL"], "2")
         self.assertEqual(environment["CARGO_PROFILE_DEV_DEBUG"], "2")
+        selected = cargo_environment("private", "asmobj", "dev", "2", "2", "wave-ir")
+        self.assertEqual(selected["WHALE_ASMOBJ_DIR"], "asmobj")
+        self.assertEqual(selected["WHALE_WAVE_IR_DIR"], "wave-ir")
+        selected = cargo_environment("private", "asmobj", "dev", "2", "2", "ir", "common", "amd64")
+        self.assertEqual(selected["WHALE_WAVE_ASSEMBLER_DIR"], "common")
+        self.assertEqual(selected["WHALE_WAVE_AMD64_DIR"], "amd64")
 
     def test_wave_is_explicit_and_unknown_features_fail(self):
         self.assertEqual(validate_features(["asm-amd64", "asm-amd64"]), ["asm-amd64"])
         for features in [["unknown"], ["wave-reverse"]]:
             with self.subTest(features=features), self.assertRaises(BuildError):
                 validate_features(features)
+
+    def test_reproducible_paths_preserve_encoded_arguments(self):
+        with patch.dict(os.environ, {"CARGO_ENCODED_RUSTFLAGS": "-C\x1flink-arg=literal path",
+                                     "RUSTFLAGS": "ignored", "CARGO_HOME": "/cache/cargo"}):
+            environment = cargo_environment("/build with space", None, "release", "3", "0",
+                                            source_root="/source with space")
+        flags = environment["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
+        self.assertEqual(flags[:2], ["-C", "link-arg=literal path"])
+        self.assertIn("--remap-path-prefix=/source with space=/whale-src", flags)
+        self.assertIn("--remap-path-prefix=/build with space=/whale-build", flags)
+        self.assertNotIn("RUSTFLAGS", environment)
 
     def test_native_host_is_observed_only_when_requested_at_build(self):
         result = subprocess.CompletedProcess([], 0, stdout="cargo 1.96\nhost: x86_64-unknown-linux-gnu\n")
@@ -76,14 +107,36 @@ class CommandTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, b"whale 0.1.0\n", b"")
                 if "asm" in command:
                     return subprocess.CompletedProcess(command, 1, b"", b"Error: unregistered assembler; available: \n")
+                if "build-info" in command:
+                    payload = {"assemblers": [], "native_linker": False, "product_mode": "wave",
+                               "implementations": {"ir": "wave"}}
+                    return subprocess.CompletedProcess(command, 0, json.dumps(payload).encode(), b"")
+                if "emit" in command:
+                    Path(command[-1]).write_bytes(b"WHALEBC\0fixture")
                 return subprocess.CompletedProcess(command, 0, b"i32 42\n", b"")
 
             with patch("meson_cargo.subprocess.run", side_effect=answer) as execute:
                 smoke(arguments)
-            self.assertEqual(execute.call_count, 3)
+            self.assertEqual(execute.call_count, 7)
 
 
 class DependencyTests(unittest.TestCase):
+    def test_linked_worktree_revision_is_a_build_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source, common = root / "source", root / "common"
+            worktree = common / "worktrees/task"
+            source.mkdir()
+            worktree.mkdir(parents=True)
+            (source / ".git").write_text("gitdir: ../common/worktrees/task\n")
+            (worktree / "commondir").write_text("../..\n")
+            (worktree / "HEAD").write_text("ref: refs/heads/task\n")
+            (worktree / "index").write_bytes(b"index")
+            (common / "refs/heads").mkdir(parents=True)
+            revision = common / "refs/heads/task"
+            revision.write_text("a" * 40)
+            self.assertEqual(revision_dependencies(source), {worktree / "HEAD", worktree / "index", revision})
+
     def test_depfile_roundtrip_handles_spaces_unicode_and_make_metacharacters(self):
         dependencies = ["/source with space/α.rs", "/source/hash#dollar$.rs", r"C:\source folder\a.rs"]
         with tempfile.TemporaryDirectory() as temporary:
@@ -108,15 +161,29 @@ class DependencyTests(unittest.TestCase):
     def test_source_dirs_and_manifests_track_additions_without_disabled_isas(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary).resolve()
-            for name in ["src", "assembler/amd64/src", "assembler/aarch64/src"]:
+            for name in ["src", "toolchain/src", "assembler/amd64/src", "assembler/aarch64/src"]:
                 (source / name).mkdir(parents=True)
                 (source / name / "lib.rs").write_text("// source")
+            (source / "ir").mkdir()
+            (source / "ir/model.wave").write_text("// type graph")
+            (source / "toolchain/src/assembly_object.rs").write_text("// ffi boundary")
             (source / "Cargo.toml").write_text("manifest")
+            (source / "assembler/model.wave").write_text("shared model")
+            (source / "assembler/build_support.rs").write_text("guard")
+            (source / "assembler/amd64/encoder.wave").write_text("disabled")
+            (source / "assembler/aarch64/encoder.wave").write_text("selected")
             dependencies = source_dependencies(source, ["asm-aarch64"])
+            self.assertNotIn(source, dependencies)
             self.assertIn(source / "assembler/aarch64/src", dependencies)
             self.assertIn(source / "assembler/aarch64/src/lib.rs", dependencies)
             self.assertNotIn(source / "assembler/amd64/src/lib.rs", dependencies)
+            self.assertNotIn(source / "assembler/amd64/encoder.wave", dependencies)
+            self.assertIn(source / "assembler/aarch64/encoder.wave", dependencies)
+            self.assertIn(source / "assembler/model.wave", dependencies)
+            self.assertIn(source / "assembler/build_support.rs", dependencies)
             self.assertIn(source / "Cargo.toml", dependencies)
+            self.assertIn(source / "toolchain/src/assembly_object.rs", dependencies)
+            self.assertIn(source / "ir/model.wave", dependencies)
 
 
 class PublicationTests(unittest.TestCase):
@@ -132,7 +199,7 @@ class PublicationTests(unittest.TestCase):
         self.depfile = self.root / "whale.d"
         self.depfile.write_bytes(b"previous dependencies")
         self.arguments = argparse.Namespace(source_root=self.source, target_dir=self.target,
-            output=self.output, depfile=self.depfile, asmobj_dir=None, feature=[],
+            output=self.output, depfile=self.depfile, asmobj_dir=None, wave_ir_dir=None, feature=[],
             profile="dev", opt_level="0", debug_info="2", host_target="x86_64-unknown-linux-gnu",
             cargo="explicit cargo", rustc="explicit rustc", offline=True, jobs=2,
             host_system="linux", host_cpu_family="x86_64")
@@ -191,6 +258,7 @@ class PublicationTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 build(self.arguments)
         self.assertEqual(self.output.read_bytes(), b"previous")
+        self.assertEqual(self.depfile.read_bytes(), b"previous dependencies")
         self.assertEqual(list(self.root.glob(".whale-*")), [])
 
     def test_root_cargo_target_dir_is_rejected_before_running_cargo(self):

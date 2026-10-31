@@ -6,8 +6,10 @@ use crate::{
     tables,
 };
 
+use assembler::fixed::reference::{count, signed, unsigned};
+
 use assembler::{
-    fixed::{self, count, error, signed, unsigned, Context, Instruction},
+    fixed::{self, error, Context, Instruction},
     AsmError,
 };
 
@@ -36,7 +38,7 @@ pub(crate) fn encode(inst: &Instruction, cx: &mut Context<'_>) -> Result<u32, As
             opcode,
             reg(&a[0])?,
             reg(&a[1])?,
-            cx.pc_relative(&a[2], tables::B16_RELOCATION)?,
+            cx.pc_relative_reference(&a[2], tables::B16_RELOCATION)?,
         );
     }
     match m {
@@ -56,7 +58,7 @@ pub(crate) fn encode(inst: &Instruction, cx: &mut Context<'_>) -> Result<u32, As
         },
         "lu12i.w" | "lu32i.d" => {
             let a = count(inst, 2)?;
-            let n = fixed::integer(&a[1])?;
+            let n = fixed::reference::integer(&a[1])?;
             if !(-(1 << 19)..(1 << 19)).contains(&n) {
                 return Err(error("upper immediate must fit signed 20 bits"));
             }
@@ -68,15 +70,19 @@ pub(crate) fn encode(inst: &Instruction, cx: &mut Context<'_>) -> Result<u32, As
         },
         "b" | "bl" => {
             let a = count(inst, 1)?;
-            branch::direct(m == "bl", cx.pc_relative(&a[0], tables::B26_RELOCATION)?)
+            branch::direct(m == "bl", cx.pc_relative_reference(&a[0], tables::B26_RELOCATION)?)
         },
         "beqz" | "bnez" => {
             let a = count(inst, 2)?;
-            branch::zero(m == "bnez", reg(&a[0])?, cx.pc_relative(&a[1], tables::B21_RELOCATION)?)
+            branch::zero(
+                m == "bnez",
+                reg(&a[0])?,
+                cx.pc_relative_reference(&a[1], tables::B21_RELOCATION)?,
+            )
         },
         "jirl" => {
             let a = count(inst, 3)?;
-            let value = i64::try_from(fixed::integer(&a[2])?)
+            let value = i64::try_from(fixed::reference::integer(&a[2])?)
                 .map_err(|_| error("jirl displacement exceeds i64"))?;
             branch::indirect(reg(&a[0])?, reg(&a[1])?, value)
         },

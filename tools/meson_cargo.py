@@ -8,6 +8,7 @@ asm-* features select which machine-code outputs that executable can produce.
 
 import argparse
 import json
+import json
 import os
 from pathlib import Path
 import re
@@ -21,7 +22,7 @@ class BuildError(ValueError):
 
 
 ASSEMBLERS = ("amd64", "aarch64", "riscv64", "loongarch64")
-FEATURES = {"asm-" + arch for arch in ASSEMBLERS} | {"socket-cli"}
+FEATURES = {"asm-" + arch for arch in ASSEMBLERS} | {"socket-cli", "native-linker", "rust-reference"}
 COMPONENTS = ("diagnostic", "assembler", "backend-api", "toolchain",
               "reverse", "target-spec", "object", "linker", "ir")
 TRIPLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]+\Z")
@@ -35,17 +36,53 @@ def validate_features(features):
     return features
 
 
-def cargo_environment(target_dir, asmobj_directory, profile, optimization, debug_info):
+def cargo_environment(target_dir, asmobj_directory, profile, optimization, debug_info,
+                      wave_ir_directory=None, wave_assembler_directory=None,
+                      wave_amd64_directory=None, wave_aarch64_directory=None,
+                      wave_riscv64_directory=None, wave_loongarch64_directory=None,
+                      source_root=None):
     environment = os.environ.copy()
     environment.pop("WHALE_ASMOBJ_DIR", None)
+    environment.pop("WHALE_WAVE_IR_DIR", None)
+    environment.pop("WHALE_WAVE_ASSEMBLER_DIR", None)
+    environment.pop("WHALE_WAVE_AMD64_DIR", None)
+    environment.pop("WHALE_WAVE_AARCH64_DIR", None)
+    environment.pop("WHALE_WAVE_RISCV64_DIR", None)
+    environment.pop("WHALE_WAVE_LOONGARCH64_DIR", None)
+
     environment.pop("CARGO_BUILD_TARGET", None)
     environment["CARGO_TARGET_DIR"] = str(target_dir)
     environment["CARGO_INCREMENTAL"] = "0"
     prefix = "CARGO_PROFILE_" + profile.upper() + "_"
     environment[prefix + "OPT_LEVEL"] = optimization
     environment[prefix + "DEBUG"] = debug_info
+    if source_root:
+        # Cargo's encoded form preserves paths with spaces and existing flags.
+        encoded = environment.get("CARGO_ENCODED_RUSTFLAGS")
+        if encoded is not None:
+            flags = encoded.split("\x1f") if encoded else []
+        else:
+            flags = environment.get("RUSTFLAGS", "").split()
+        cargo_home = Path(environment.get("CARGO_HOME", Path.home() / ".cargo")).resolve()
+        flags += [f"--remap-path-prefix={source_root}=/whale-src",
+                  f"--remap-path-prefix={target_dir}=/whale-build",
+                  f"--remap-path-prefix={cargo_home}=/cargo"]
+        environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
+        environment.pop("RUSTFLAGS", None)
     if asmobj_directory:
         environment["WHALE_ASMOBJ_DIR"] = str(asmobj_directory)
+    if wave_ir_directory:
+        environment["WHALE_WAVE_IR_DIR"] = str(wave_ir_directory)
+    if wave_assembler_directory:
+        environment["WHALE_WAVE_ASSEMBLER_DIR"] = str(wave_assembler_directory)
+    if wave_amd64_directory:
+        environment["WHALE_WAVE_AMD64_DIR"] = str(wave_amd64_directory)
+    if wave_aarch64_directory:
+        environment["WHALE_WAVE_AARCH64_DIR"] = str(wave_aarch64_directory)
+    if wave_riscv64_directory:
+        environment["WHALE_WAVE_RISCV64_DIR"] = str(wave_riscv64_directory)
+    if wave_loongarch64_directory:
+        environment["WHALE_WAVE_LOONGARCH64_DIR"] = str(wave_loongarch64_directory)
     return environment
 
 
@@ -130,7 +167,9 @@ def cargo_dependencies(path):
 
 def source_dependencies(source, features):
     """Explicit source-tree components, with directories tracking new files."""
-    dependencies = {source, source / "Cargo.toml", source / "Cargo.lock", Path(__file__).resolve()}
+    # The repository root also receives unrelated tool state (for example
+    # .git and editor directories). Tracking it makes every warm build dirty.
+    dependencies = {source / "Cargo.toml", source / "Cargo.lock", Path(__file__).resolve()}
     components = [*COMPONENTS, *("assembler/" + arch for arch in ASSEMBLERS if "asm-" + arch in features)]
     for component in ["", *components]:
         root = source / component
@@ -150,8 +189,38 @@ def source_dependencies(source, features):
             dependencies.add(path)
             dependencies.update(path.iterdir())
     dependencies.add(source / "assembler/asmobj")
-    dependencies.update((source / "assembler/asmobj").glob("*.wave"))
+    dependencies.update((source / "assembler/asmobj").rglob("*.wave"))
+    dependencies.update(path for path in (source / "assembler/asmobj").rglob("*") if path.is_dir())
+    dependencies.update((source / "ir").glob("*.wave"))
+    dependencies.update((source / "assembler").glob("*.wave"))
+    if (source / "assembler/build_support.rs").is_file():
+        dependencies.add(source / "assembler/build_support.rs")
+    for arch in ASSEMBLERS:
+        if "asm-" + arch in features:
+            dependencies.update((source / "assembler" / arch).glob("*.wave"))
     return dependencies
+
+
+def revision_dependencies(source):
+    """Track provenance changes for normal and linked Git worktrees."""
+    marker = source / ".git"
+    directory = marker
+    if marker.is_file():
+        text = marker.read_text().strip()
+        if not text.startswith("gitdir: "):
+            return set()
+        directory = (source / text[8:]).resolve()
+    if not directory.is_dir():
+        return set()
+    common = directory
+    if (directory / "commondir").is_file():
+        common = (directory / (directory / "commondir").read_text().strip()).resolve()
+    dependencies = {directory / "HEAD", directory / "index", common / "packed-refs"}
+    if (directory / "HEAD").is_file():
+        head = (directory / "HEAD").read_text().strip()
+        if head.startswith("ref: "):
+            dependencies.add(common / head[5:])
+    return {path for path in dependencies if path.is_file()}
 
 
 def _temporary_copy(source, destination):
@@ -176,11 +245,41 @@ def build(arguments):
     output = arguments.output.parent.resolve() / arguments.output.name
     depfile = arguments.depfile.parent.resolve() / arguments.depfile.name
     asmobj_directory = arguments.asmobj_dir.resolve() if arguments.asmobj_dir else None
+    wave_ir_directory = arguments.wave_ir_dir.resolve() if arguments.wave_ir_dir else None
     features = validate_features(arguments.feature)
+    shared_path = getattr(arguments, "wave_assembler_dir", None)
+    amd64_path = getattr(arguments, "wave_amd64_dir", None)
+    wave_assembler_directory = shared_path.resolve() if shared_path else None
+    wave_amd64_directory = amd64_path.resolve() if amd64_path else None
+    aarch64_path = getattr(arguments, "wave_aarch64_dir", None)
+    wave_aarch64_directory = aarch64_path.resolve() if aarch64_path else None
+    if wave_aarch64_directory and "asm-aarch64" not in features:
+        raise BuildError("a Wave aarch64 archive requires its selected assembler output")
+    if wave_aarch64_directory and not wave_assembler_directory:
+        raise BuildError("a Wave ISA archive requires the shared Wave assembler archive")
+    riscv64_path = getattr(arguments, "wave_riscv64_dir", None)
+    wave_riscv64_directory = riscv64_path.resolve() if riscv64_path else None
+    if wave_riscv64_directory and "asm-riscv64" not in features:
+        raise BuildError("a Wave riscv64 archive requires its selected assembler output")
+    if wave_riscv64_directory and not wave_assembler_directory:
+        raise BuildError("a Wave ISA archive requires the shared Wave assembler archive")
+    loongarch64_path = getattr(arguments, "wave_loongarch64_dir", None)
+    wave_loongarch64_directory = loongarch64_path.resolve() if loongarch64_path else None
+    if wave_loongarch64_directory and "asm-loongarch64" not in features:
+        raise BuildError("a Wave loongarch64 archive requires its selected assembler output")
+    if wave_loongarch64_directory and not wave_assembler_directory:
+        raise BuildError("a Wave ISA archive requires the shared Wave assembler archive")
+    if wave_amd64_directory and "asm-amd64" not in features:
+        raise BuildError("a Wave AMD64 archive requires the AMD64 product output")
+    if wave_amd64_directory and not wave_assembler_directory:
+        raise BuildError("the Wave AMD64 archive requires the shared Wave assembler archive")
     if target_dir in [source, source / "target"]:
         raise BuildError("Meson requires its own private Cargo target directory")
     environment = cargo_environment(target_dir, asmobj_directory, arguments.profile,
-                                    arguments.opt_level, arguments.debug_info)
+                                    arguments.opt_level, arguments.debug_info,
+                                    wave_ir_directory, wave_assembler_directory, wave_amd64_directory,
+                                    wave_aarch64_directory, wave_riscv64_directory,
+                                    wave_loongarch64_directory, source_root=source)
     target = arguments.host_target or native_target(arguments.cargo, source, environment)
     if not TRIPLE.fullmatch(target):
         raise BuildError("cargo host target must be a Rust target triple")
@@ -193,28 +292,56 @@ def build(arguments):
     if not binary.is_file():
         raise BuildError("Cargo did not produce the requested Whale host executable")
     dependencies = source_dependencies(source, features)
+    dependencies.update(revision_dependencies(source))
     dependencies.update(Path(path) if Path(path).is_absolute() else source / path
                         for path in cargo_dependencies(directory / "whale.d"))
     if asmobj_directory:
         archive = "whale_asmobj.lib" if "msvc" in target else "libwhale_asmobj.a"
-        dependencies.update(asmobj_directory / name for name in [archive, "asmobj.meta"])
+        dependencies.update(asmobj_directory / name for name in [archive, "asmobj.meta", "provenance.json"])
+    if wave_ir_directory:
+        archive = "whale_wave_ir.lib" if "msvc" in target else "libwhale_wave_ir.a"
+        dependencies.update(wave_ir_directory / name for name in [archive, "wave-ir.meta", "provenance.json"])
+    for name, directory in [("assembler", wave_assembler_directory), ("amd64", wave_amd64_directory),
+                            ("aarch64", wave_aarch64_directory), ("riscv64", wave_riscv64_directory),
+                            ("loongarch64", wave_loongarch64_directory)]:
+        if directory:
+            archive = f"whale_wave_{name}.lib" if "msvc" in target else f"libwhale_wave_{name}.a"
+            dependencies.update(directory / file for file in
+                                [archive, f"wave-{name}.meta", "provenance.json"])
     contents = make_escape(output) + ": " + " ".join(make_escape(path) for path in sorted(dependencies)) + "\n"
     candidate = None
     candidate_depfile = None
+    previous_depfile = None
     try:
         candidate = _temporary_copy(binary, output)
         with tempfile.NamedTemporaryFile(prefix=".whale-deps-", dir=depfile.parent, delete=False) as temporary:
             candidate_depfile = Path(temporary.name)
             temporary.write(contents.encode("utf-8"))
-        # Prepare both before publishing. Dependency output failure cannot
-        # replace the last-good executable.
-        os.replace(candidate_depfile, depfile)
-        os.replace(candidate, output)
+        # Keep the old depfile until the executable has also been published.
+        # A failed second replacement must not leave new dependencies paired
+        # with the last-good executable.
+        if depfile.exists():
+            with tempfile.NamedTemporaryFile(prefix=".whale-old-deps-", dir=depfile.parent,
+                                             delete=False) as temporary:
+                previous_depfile = Path(temporary.name)
+            os.replace(depfile, previous_depfile)
+        try:
+            os.replace(candidate_depfile, depfile)
+            os.replace(candidate, output)
+        except OSError:
+            if previous_depfile is None:
+                depfile.unlink(missing_ok=True)
+            else:
+                os.replace(previous_depfile, depfile)
+                previous_depfile = None
+            raise
     finally:
         if candidate is not None:
             candidate.unlink(missing_ok=True)
         if candidate_depfile is not None:
             candidate_depfile.unlink(missing_ok=True)
+        if previous_depfile is not None:
+            previous_depfile.unlink(missing_ok=True)
 
 
 def smoke(arguments):
@@ -244,6 +371,27 @@ def smoke(arguments):
         result = invoke(["ir", "run", ir, "--function", "@f0"])
         if result.returncode or result.stdout != b"i32 42\n":
             raise BuildError("Whale IR smoke failed")
+        metadata = invoke(["build-info", "--json"])
+        try:
+            info = json.loads(metadata.stdout)
+        except (ValueError, UnicodeError) as error:
+            raise BuildError("Whale build provenance is invalid") from error
+        selected = sorted(arch for arch in ASSEMBLERS if "asm-" + arch in features)
+        if (metadata.returncode or info.get("assemblers") != selected
+                or info.get("native_linker") != ("native-linker" in features)):
+            raise BuildError("Whale build provenance differs from selected components")
+        if "rust-reference" not in features and info.get("product_mode") != "wave":
+            raise BuildError("the default Meson product must execute Wave modules")
+        if info.get("implementations", {}).get("ir") == "wave":
+            ir.write_text(ir.read_text().replace('"x86_64-whale-linux"', '"whale-bytecode-v1"'))
+            image = directory / "answer.wbc"
+            emitted = invoke(["ir", "emit", ir, "-o", image])
+            if emitted.returncode or not image.is_file() or image.read_bytes()[:8] != b"WHALEBC\0":
+                raise BuildError("Whale bytecode emission smoke failed")
+            verified = invoke(["bytecode", "verify", image])
+            result = invoke(["bytecode", "run", image, "--function", "@f0"])
+            if verified.returncode or result.returncode or result.stdout != b"i32 42\n":
+                raise BuildError("Whale bytecode execution smoke failed")
 
 
 def bootstrap(arguments):
@@ -284,6 +432,12 @@ def main(argv=None):
     compile_parser.add_argument("--offline", action="store_true")
     compile_parser.add_argument("--feature", action="append", default=[])
     compile_parser.add_argument("--asmobj-dir", type=Path)
+    compile_parser.add_argument("--wave-ir-dir", type=Path)
+    compile_parser.add_argument("--wave-assembler-dir", type=Path)
+    compile_parser.add_argument("--wave-amd64-dir", type=Path)
+    compile_parser.add_argument("--wave-aarch64-dir", type=Path)
+    compile_parser.add_argument("--wave-riscv64-dir", type=Path)
+    compile_parser.add_argument("--wave-loongarch64-dir", type=Path)
     smoke_parser = commands.add_parser("smoke")
     smoke_parser.add_argument("--binary", type=Path, required=True)
     smoke_parser.add_argument("--feature", action="append", default=[])
