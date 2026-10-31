@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: MPL-2.0
+// Scaled B16/B21/B26 immediate packing. Callers validate byte displacements first.
+fun loong_b26(opcode: u64, immediate: u64) -> u64 {
+    return opcode | ((immediate & 65535) << 10) | (immediate >> 16);
+}
+
+fun loong_b21(opcode: u64, rj: u64, immediate: u64) -> u64 {
+    return opcode | (rj << 5) | ((immediate & 65535) << 10) | (immediate >> 16);
+}
+
+fun loong_b16(opcode: u64, rj: u64, rd: u64, immediate: u64) -> u64 {
+    return opcode | rd | (rj << 5) | (immediate << 10);
+}

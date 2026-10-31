@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: MPL-2.0
+// Exact ASCII register spellings after shared Unicode whitespace trimming.
+fun rv_name(data: ptr<u8>, count: u64, word: u64, length: u64, fold: bool) -> bool {
+    if (count != length) {
+        return false;
+    }
+    var at: u64 = 0;
+    while (at < length) {
+        var value: u8 = data[at];
+        if (fold && value >= 65 && value <= 90) {
+            value += 32;
+        }
+        if (value != ((word >> (at * 8)) & 255) as u8) {
+            return false;
+        }
+        at += 1;
+    }
+    return true;
+}
+
+fun rv_register(data: ptr<u8>, count: u64, output: ptr<u64>) -> bool {
+    // zero
+    if (rv_name(data, count, 1869768058, 4, true)) {
+        output[0] = 0;
+        return true;
+    }
+    // ra
+    if (rv_name(data, count, 24946, 2, true)) {
+        output[0] = 1;
+        return true;
+    }
+    // sp
+    if (rv_name(data, count, 28787, 2, true)) {
+        output[0] = 2;
+        return true;
+    }
+    // gp
+    if (rv_name(data, count, 28775, 2, true)) {
+        output[0] = 3;
+        return true;
+    }
+    // tp
+    if (rv_name(data, count, 28788, 2, true)) {
+        output[0] = 4;
+        return true;
+    }
+    // t0
+    if (rv_name(data, count, 12404, 2, true)) {
+        output[0] = 5;
+        return true;
+    }
+    // t1
+    if (rv_name(data, count, 12660, 2, true)) {
+        output[0] = 6;
+        return true;
+    }
+    // t2
+    if (rv_name(data, count, 12916, 2, true)) {
+        output[0] = 7;
+        return true;
+    }
+    // s0
+    if (rv_name(data, count, 12403, 2, true)) {
+        output[0] = 8;
+        return true;
+    }
+    // s1
+    if (rv_name(data, count, 12659, 2, true)) {
+        output[0] = 9;
+        return true;
+    }
+    // a0
+    if (rv_name(data, count, 12385, 2, true)) {
+        output[0] = 10;
+        return true;
+    }
+    // a1
+    if (rv_name(data, count, 12641, 2, true)) {
+        output[0] = 11;
+        return true;
+    }
+    // a2
+    if (rv_name(data, count, 12897, 2, true)) {
+        output[0] = 12;
+        return true;
+    }
+    // a3
+    if (rv_name(data, count, 13153, 2, true)) {
+        output[0] = 13;
+        return true;
+    }
+    // a4
+    if (rv_name(data, count, 13409, 2, true)) {
+        output[0] = 14;
+        return true;
+    }
+    // a5
+    if (rv_name(data, count, 13665, 2, true)) {
+        output[0] = 15;
+        return true;
+    }
+    // a6
+    if (rv_name(data, count, 13921, 2, true)) {
+        output[0] = 16;
+        return true;
+    }
+    // a7
+    if (rv_name(data, count, 14177, 2, true)) {
+        output[0] = 17;
+        return true;
+    }
+    // s2
+    if (rv_name(data, count, 12915, 2, true)) {
+        output[0] = 18;
+        return true;
+    }
+    // s3
+    if (rv_name(data, count, 13171, 2, true)) {
+        output[0] = 19;
+        return true;
+    }
+    // s4
+    if (rv_name(data, count, 13427, 2, true)) {
+        output[0] = 20;
+        return true;
+    }
+    // s5
+    if (rv_name(data, count, 13683, 2, true)) {
+        output[0] = 21;
+        return true;
+    }
+    // s6
+    if (rv_name(data, count, 13939, 2, true)) {
+        output[0] = 22;
+        return true;
+    }
+    // s7
+    if (rv_name(data, count, 14195, 2, true)) {
+        output[0] = 23;
+        return true;
+    }
+    // s8
+    if (rv_name(data, count, 14451, 2, true)) {
+        output[0] = 24;
+        return true;
+    }
+    // s9
+    if (rv_name(data, count, 14707, 2, true)) {
+        output[0] = 25;
+        return true;
+    }
+    // s10
+    if (rv_name(data, count, 3158387, 3, true)) {
+        output[0] = 26;
+        return true;
+    }
+    // s11
+    if (rv_name(data, count, 3223923, 3, true)) {
+        output[0] = 27;
+        return true;
+    }
+    // t3
+    if (rv_name(data, count, 13172, 2, true)) {
+        output[0] = 28;
+        return true;
+    }
+    // t4
+    if (rv_name(data, count, 13428, 2, true)) {
+        output[0] = 29;
+        return true;
+    }
+    // t5
+    if (rv_name(data, count, 13684, 2, true)) {
+        output[0] = 30;
+        return true;
+    }
+    // t6
+    if (rv_name(data, count, 13940, 2, true)) {
+        output[0] = 31;
+        return true;
+    }
+    // fp is the ABI alias for s0/x8.
+    if (rv_name(data, count, 28774, 2, true)) {
+        output[0] = 8;
+        return true;
+    }
+    if ((count != 2 && count != 3) || (data[0] != 120 && data[0] != 88)
+        || data[1] < 48 || data[1] > 57) {
+        return false;
+    }
+    var number: u64 = (data[1] - 48) as u64;
+    if (count == 3) {
+        if (number == 0 || data[2] < 48 || data[2] > 57) {
+            return false;
+        }
+        number = number * 10 + ((data[2] - 48) as u64);
+    }
+    if (number >= 32) {
+        return false;
+    }
+    output[0] = number;
+    return true;
+}

@@ -109,10 +109,10 @@ jobs:
             WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o$optimization" \
               cargo test -p ir --all-features --locked --offline
           done
-      - name: Run shared and AMD64 Wave assemblers at O0 and O2
+      - name: Run all Wave assemblers at O0 and O2
         run: |
           for optimization in 0 2; do
-            for module in common amd64; do
+            for module in common amd64 aarch64 riscv64 loongarch64; do
               python3 tools/build_wave_assembler.py --module "$module" \
                 --wave-source .asmobj-bootstrap-source \
                 --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
@@ -121,6 +121,9 @@ jobs:
             done
             export WHALE_WAVE_ASSEMBLER_DIR="$RUNNER_TEMP/assembler-common-o$optimization"
             export WHALE_WAVE_AMD64_DIR="$RUNNER_TEMP/assembler-amd64-o$optimization"
+            export WHALE_WAVE_AARCH64_DIR="$RUNNER_TEMP/assembler-aarch64-o$optimization"
+            export WHALE_WAVE_RISCV64_DIR="$RUNNER_TEMP/assembler-riscv64-o$optimization"
+            export WHALE_WAVE_LOONGARCH64_DIR="$RUNNER_TEMP/assembler-loongarch64-o$optimization"
             export WHALE_ASMOBJ_DIR="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu"
             export WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o2"
             cc -shared -Wl,--whole-archive "$WHALE_WAVE_ASSEMBLER_DIR/libwhale_wave_assembler.a" \
@@ -138,7 +141,20 @@ jobs:
             timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
               tools/check_wave_amd64_layout.py \
               --library "$RUNNER_TEMP/assembler-amd64-o$optimization.so" --cases 2000
-            cargo test -p assembler -p amd64 --locked --offline
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_fixed.py \
+              --library "$RUNNER_TEMP/assembler-common-o$optimization.so" --cases 10000
+            for module in riscv64 loongarch64; do
+              cc -shared -Wl,--whole-archive \
+                "$RUNNER_TEMP/assembler-$module-o$optimization/libwhale_wave_$module.a" \
+                "$WHALE_WAVE_ASSEMBLER_DIR/libwhale_wave_assembler.a" \
+                -Wl,--no-whole-archive -o "$RUNNER_TEMP/assembler-$module-o$optimization.so"
+              timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+                "tools/check_wave_$module.py" \
+                --library "$RUNNER_TEMP/assembler-$module-o$optimization.so" --cases 50000
+            done
+            cargo test -p assembler -p amd64 -p aarch64 -p riscv64 -p loongarch64 --locked --offline
+            cargo test -p whale --all-features --locked --offline
             cargo build -p whale --all-features --locked --offline
             timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
               tools/check_wave_amd64_cli.py --binary target/debug/whale \

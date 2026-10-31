@@ -9,7 +9,12 @@ from pathlib import Path
 import tempfile
 from wave_bootstrap import DEFAULT_RUST_TOOLCHAIN, RUST_VERSION, WAVE_REVISION, ensure_bootstrap, run, digest
 
-SOURCES = ('model.wave', 'sections.wave', 'symbols.wave', 'relocations.wave', 'entry.wave')
+SOURCES = (
+    'model.wave', 'sections.wave', 'symbols.wave',
+    'relocations/amd64.wave', 'relocations/aarch64.wave',
+    'relocations/riscv64.wave', 'relocations/loongarch64.wave',
+    'relocations.wave', 'entry.wave',
+)
 ABI_SOURCE = 'toolchain/src/assembly_object.rs'
 TARGETS = ('x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu',
            'riscv64gc-unknown-linux-gnu', 'x86_64-pc-windows-msvc',

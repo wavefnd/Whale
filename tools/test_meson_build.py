@@ -35,12 +35,18 @@ class CommandTests(unittest.TestCase):
         with patch.dict(os.environ, {"WHALE_ASMOBJ_DIR": "old", "WHALE_WAVE_IR_DIR": "old",
                                           "WHALE_WAVE_ASSEMBLER_DIR": "old",
                                           "WHALE_WAVE_AMD64_DIR": "old",
+                                          "WHALE_WAVE_AARCH64_DIR": "old",
+                                          "WHALE_WAVE_RISCV64_DIR": "old",
+                                          "WHALE_WAVE_LOONGARCH64_DIR": "old",
                                           "CARGO_BUILD_TARGET": "old"}):
             environment = cargo_environment("private", None, "dev", "2", "2")
         self.assertNotIn("WHALE_ASMOBJ_DIR", environment)
         self.assertNotIn("WHALE_WAVE_IR_DIR", environment)
         self.assertNotIn("WHALE_WAVE_ASSEMBLER_DIR", environment)
         self.assertNotIn("WHALE_WAVE_AMD64_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_AARCH64_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_RISCV64_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_LOONGARCH64_DIR", environment)
         self.assertNotIn("CARGO_BUILD_TARGET", environment)
         self.assertEqual(environment["CARGO_TARGET_DIR"], "private")
         self.assertEqual(environment["CARGO_PROFILE_DEV_OPT_LEVEL"], "2")

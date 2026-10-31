@@ -7,7 +7,8 @@ use crate::{
 };
 
 use assembler::{
-    fixed::{self, count, error, unsigned, Context, Instruction},
+    fixed::reference::{self as fixed, count, error, unsigned},
+    fixed::{Context, Instruction},
     AsmError,
 };
 
@@ -119,7 +120,7 @@ pub(crate) fn encode(inst: &Instruction, cx: &mut Context<'_>) -> Result<u32, As
             let a = count(inst, 1)?;
             let relocation =
                 if m == "b" { tables::JUMP26_RELOCATION } else { tables::CALL26_RELOCATION };
-            branch::direct(m == "bl", cx.pc_relative(&a[0], relocation)?)
+            branch::direct(m == "bl", cx.pc_relative_reference(&a[0], relocation)?)
         },
         "cbz" | "cbnz" => {
             let a = count(inst, 2)?;
@@ -128,7 +129,7 @@ pub(crate) fn encode(inst: &Instruction, cx: &mut Context<'_>) -> Result<u32, As
                 m == "cbnz",
                 rt.width == 64,
                 rt.index,
-                cx.pc_relative(&a[1], tables::CONDBR19_RELOCATION)?,
+                cx.pc_relative_reference(&a[1], tables::CONDBR19_RELOCATION)?,
             )
         },
         "adr" => {
@@ -137,13 +138,16 @@ pub(crate) fn encode(inst: &Instruction, cx: &mut Context<'_>) -> Result<u32, As
             if rd.width != 64 {
                 return Err(error("adr requires an X register"));
             }
-            branch::address(rd.index, cx.pc_relative(&a[1], tables::ADR_RELOCATION)?)
+            branch::address(rd.index, cx.pc_relative_reference(&a[1], tables::ADR_RELOCATION)?)
         },
         _ if m.starts_with("b.") => {
             let condition =
                 tables::condition(&m[2..]).ok_or_else(|| error("invalid A64 branch condition"))?;
             let a = count(inst, 1)?;
-            branch::conditional(condition, cx.pc_relative(&a[0], tables::CONDBR19_RELOCATION)?)
+            branch::conditional(
+                condition,
+                cx.pc_relative_reference(&a[0], tables::CONDBR19_RELOCATION)?,
+            )
         },
         _ => Err(error(format!("unsupported A64 instruction {m:?}"))),
     }

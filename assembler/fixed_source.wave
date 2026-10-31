@@ -1,0 +1,288 @@
+// SPDX-License-Identifier: MPL-2.0
+// First-pass fixed-width source grammar, shared by each owning ISA module.
+fun asm_fixed_source_operands(state: ptr<FixedState>, text: FixedText,
+    first: ptr<u64>, count: ptr<u64>, result: ptr<FixedResult>) -> bool {
+    var length: u64 = 0;
+    if (!asm_fixed_operands(text, null, 0, &length, result)) {
+        return false;
+    }
+    if (state.operand_count > state.packet.operand_capacity
+        || length > state.packet.operand_capacity - state.operand_count) {
+        return asm_fixed_fail(result, 94, text, 0);
+    }
+    first[0] = state.operand_count;
+    count[0] = length;
+    if (length != 0) {
+        var written: u64 = 0;
+        if (!asm_fixed_operands(text, &state.packet.operands[state.operand_count],
+            state.packet.operand_capacity - state.operand_count, &written, result)) {
+            return false;
+        }
+        if (written != length) {
+            return asm_fixed_fail(result, 94, text, 0);
+        }
+    }
+    state.operand_count += length;
+    return true;
+}
+
+fun asm_fixed_source_record(state: ptr<FixedState>, mnemonic: FixedText,
+    tail: FixedText, result: ptr<FixedResult>) -> bool {
+    var record: FixedRecord;
+    record.section = state.selected;
+    record.offset = state.packet.sections[state.selected].size;
+    record.start = result.start;
+    record.end = result.end;
+    record.line = result.line;
+    record.kind = 0;
+    record.unit = 0;
+    record.first = 0;
+    record.count = 0;
+    record.size = 4;
+    record.mnemonic = mnemonic;
+    var number: AsmWide;
+    var alignment: u64 = 0;
+    if (asm_fixed_word(mnemonic, 435745808942, 5, 1)
+        || asm_fixed_word(mnemonic, 110442659145774, 6, 1)
+        || asm_fixed_word(mnemonic, 128034844209966, 6, 1)
+        || asm_fixed_word(mnemonic, 431416637230, 5, 1)
+        || asm_fixed_word(mnemonic, 444234427438, 5, 1)
+        || asm_fixed_word(mnemonic, 431131816238, 5, 1)) {
+        record.kind = 1;
+        record.unit = 4;
+        if (asm_fixed_word(mnemonic, 435745808942, 5, 1)) {
+            record.unit = 1;
+        } else if (asm_fixed_word(mnemonic, 110442659145774, 6, 1)
+            || asm_fixed_word(mnemonic, 128034844209966, 6, 1)) {
+            record.unit = 2;
+        } else if (asm_fixed_word(mnemonic, 431131816238, 5, 1)) {
+            record.unit = 8;
+        }
+        if (!asm_fixed_source_operands(state, tail, &record.first, &record.count, result)) {
+            return false;
+        }
+        if (record.count == 0) {
+            return asm_fixed_fail(result, 32, mnemonic, 0);
+        }
+        if (record.count > 18446744073709551615 / record.unit) {
+            return asm_fixed_fail(result, 40, mnemonic, 0);
+        }
+        record.size = record.count * record.unit;
+    } else if (asm_fixed_word(mnemonic, 478660622894, 5, 1)
+        || asm_fixed_word(mnemonic, 111477510927150, 6, 1)) {
+        record.kind = 2;
+        record.unit = 1;
+        if (!asm_fixed_integer(tail, &number, result)) {
+            return false;
+        }
+        if (!asm_number_fits_unsigned(&number, 64)) {
+            return asm_fixed_fail(result, 33, tail, 0);
+        }
+        record.size = number.low;
+    } else if (asm_fixed_word(mnemonic, 31075949925720622, 7, 1)
+        || asm_fixed_word(mnemonic, 7955443180981350446, 8, 1)
+        || asm_fixed_word(mnemonic, 121390429397294, 6, 1)) {
+        record.kind = 3;
+        if (!asm_fixed_integer(tail, &number, result)) {
+            return false;
+        }
+        if (!asm_number_fits_unsigned(&number, 64)) {
+            return asm_fixed_fail(result, 36, tail, 0);
+        }
+        alignment = number.low;
+        if (!asm_fixed_word(mnemonic, 31075949925720622, 7, 1)) {
+            if (alignment >= 64) {
+                return asm_fixed_fail(result, 37, tail, 0);
+            }
+            var one: u64 = 1;
+            alignment = one << alignment;
+        }
+        if (!asm_power_two(alignment)) {
+            return asm_fixed_fail(result, 38, tail, 0);
+        }
+        if (alignment > state.packet.sections[state.selected].align) {
+            state.packet.sections[state.selected].align = alignment;
+        }
+        record.unit = alignment;
+        record.size = (alignment - record.offset % alignment) % alignment;
+    } else {
+        if (mnemonic.count != 0 && mnemonic.data[0] == 46) {
+            asm_fixed_fail(result, 39, mnemonic, 0);
+            result.display = 1;
+            return false;
+        }
+        if (!asm_fixed_source_operands(state, tail, &record.first, &record.count, result)) {
+            return false;
+        }
+    }
+    var section_kind: u64 = state.packet.sections[state.selected].kind;
+    if (section_kind == 3 && record.kind != 2 && record.kind != 3) {
+        return asm_fixed_fail(result, 34, mnemonic, 0);
+    }
+    if (record.kind == 0 && (section_kind != 0 || record.offset % 4 != 0)) {
+        return asm_fixed_fail(result, 35, mnemonic, 0);
+    }
+    return asm_fixed_record(state, &record, result);
+}
+
+fun asm_fixed_source_statement(state: ptr<FixedState>, text: FixedText,
+    result: ptr<FixedResult>) -> bool {
+    var colon: u64 = 0;
+    var label: FixedText;
+    var symbol: u64 = 0;
+    var word_end: u64 = 0;
+    var mnemonic: FixedText;
+    var tail: FixedText;
+    var section: FixedText;
+    var kind: u64 = 0;
+    var first: u64 = 0;
+    var count: u64 = 0;
+    var index: u64 = 0;
+    text = asm_fixed_trim(text);
+    while (text.count != 0) {
+        colon = 0;
+        while (colon < text.count && text.data[colon] != 58) {
+            if (!asm_fixed_charge(result, 1)) {
+                return false;
+            }
+            colon += 1;
+        }
+        if (colon == text.count) {
+            break;
+        }
+        label = asm_fixed_trim(asm_fixed_slice(text, 0, colon));
+        if (!asm_fixed_identifier(label, result)) {
+            return false;
+        }
+        symbol = asm_fixed_symbol(state, label, 1, result);
+        if (result.status != 0) {
+            return false;
+        }
+        text = asm_fixed_trim(asm_fixed_slice(text, colon + 1, text.count));
+    }
+    if (text.count == 0) {
+        return true;
+    }
+    while (word_end < text.count && asm_fixed_space(text, word_end) == 0) {
+        if (!asm_fixed_charge(result, 1)) {
+            return false;
+        }
+        word_end += 1;
+    }
+    mnemonic = asm_fixed_slice(text, 0, word_end);
+    tail = asm_fixed_trim(asm_fixed_slice(text, word_end, text.count));
+    if (asm_fixed_word(mnemonic, 500236121134, 5, 1)
+        || asm_fixed_word(mnemonic, 418564367406, 5, 1)
+        || asm_fixed_word(mnemonic, 27431034386608686, 7, 1)
+        || asm_fixed_word(mnemonic, 1936941614, 4, 1)
+        || asm_fixed_word(mnemonic, 7957695015191671598, 8, 1)) {
+        if (asm_fixed_word(mnemonic, 7957695015191671598, 8, 1)) {
+            if (!asm_fixed_identifier(tail, result)) {
+                return false;
+            }
+            section = tail;
+        } else {
+            if (tail.count != 0) {
+                return asm_fixed_fail(result, 30, mnemonic, 0);
+            }
+            kind = 1;
+            if (asm_fixed_word(mnemonic, 500236121134, 5, 1)) {
+                kind = 0;
+            } else if (asm_fixed_word(mnemonic, 27431034386608686, 7, 1)) {
+                kind = 2;
+            } else if (asm_fixed_word(mnemonic, 1936941614, 4, 1)) {
+                kind = 3;
+            }
+            section.data = null;
+            section.count = kind;
+        }
+        return asm_fixed_section(state, section, result);
+    }
+    if (asm_fixed_word(mnemonic, 30506372888815406, 7, 1)
+        || asm_fixed_word(mnemonic, 119170031970094, 6, 1)
+        || asm_fixed_word(mnemonic, 31088027509482798, 7, 1)) {
+        if (!asm_fixed_source_operands(state, tail, &first, &count, result)) {
+            return false;
+        }
+        if (count == 0) {
+            return asm_fixed_fail(result, 31, mnemonic, 0);
+        }
+        kind = 2;
+        if (asm_fixed_word(mnemonic, 31088027509482798, 7, 1)) {
+            kind = 3;
+        }
+        while (index < count) {
+            if (!asm_fixed_charge(result, 1)) {
+                return false;
+            }
+            label = state.packet.operands[first + index];
+            if (!asm_fixed_identifier(label, result)) {
+                return false;
+            }
+            symbol = asm_fixed_symbol(state, label, kind, result);
+            if (result.status != 0) {
+                return false;
+            }
+            index += 1;
+        }
+        return true;
+    }
+    return asm_fixed_source_record(state, mnemonic, tail, result);
+}
+
+fun asm_fixed_source(state: ptr<FixedState>, result: ptr<FixedResult>) -> bool {
+    var source: FixedText = state.packet.source;
+    var line_start: u64 = 0;
+    var line_end: u64 = 0;
+    var span_end: u64 = 0;
+    var end: u64 = 0;
+    var at: u64 = 0;
+    var comment: u64 = 0;
+    var line: u64 = 1;
+    var text: FixedText;
+    while (line_start < source.count) {
+        line_end = line_start;
+        while (line_end < source.count && source.data[line_end] != 10) {
+            if (!asm_fixed_charge(result, 1)) {
+                return false;
+            }
+            line_end += 1;
+        }
+        end = line_end;
+        if (line_end < source.count) {
+            line_end += 1;
+        }
+        span_end = line_end;
+        while (span_end > line_start
+            && (source.data[span_end - 1] == 10 || source.data[span_end - 1] == 13)) {
+            span_end -= 1;
+        }
+        result.start = line_start;
+        result.end = span_end;
+        result.line = line;
+        result.previous_start = 0;
+        result.previous_end = 0;
+        result.previous_line = 0;
+        at = line_start;
+        comment = end;
+        while (at < end) {
+            if (!asm_fixed_charge(result, 1)) {
+                return false;
+            }
+            if (source.data[at] == 59
+                || (state.packet.hash_comments != 0 && source.data[at] == 35)
+                || (source.data[at] == 47 && at + 1 < end && source.data[at + 1] == 47)) {
+                comment = at;
+                break;
+            }
+            at += 1;
+        }
+        text = asm_fixed_slice(source, line_start, comment);
+        if (!asm_fixed_source_statement(state, text, result)) {
+            return false;
+        }
+        line_start = line_end;
+        line += 1;
+    }
+    return true;
+}

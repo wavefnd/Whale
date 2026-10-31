@@ -40,9 +40,11 @@ wave_bootstrap = []
 needs_wave_bootstrap = asmobj_directory == ''
 if wave_source != ''
   needs_wave_bootstrap = needs_wave_bootstrap or get_option('wave-ir-dir') == '' or get_option('wave-assembler-dir') == ''
-  if get_option('asm-amd64')
-    needs_wave_bootstrap = needs_wave_bootstrap or get_option('wave-amd64-dir') == ''
-  endif
+  foreach arch : ['amd64', 'aarch64', 'riscv64', 'loongarch64']
+    if get_option('asm-' + arch)
+      needs_wave_bootstrap = needs_wave_bootstrap or get_option('wave-' + arch + '-dir') == ''
+    endif
+  endforeach
 endif
 if needs_wave_bootstrap
   if wave_source == '' or not fs.is_absolute(wave_source) or not fs.is_dir(wave_source)
@@ -101,6 +103,15 @@ if wave_assembler_directory != ''
 endif
 if wave_amd64_directory != ''
   build_arguments += ['--wave-amd64-dir', wave_amd64_directory]
+endif
+if wave_aarch64_directory != ''
+  build_arguments += ['--wave-aarch64-dir', wave_aarch64_directory]
+endif
+if wave_riscv64_directory != ''
+  build_arguments += ['--wave-riscv64-dir', wave_riscv64_directory]
+endif
+if wave_loongarch64_directory != ''
+  build_arguments += ['--wave-loongarch64-dir', wave_loongarch64_directory]
 endif
 foreach feature : selected_features
   build_arguments += ['--feature', feature]

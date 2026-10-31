@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: MPL-2.0
+// Source preparation, instruction selection and publication stay in native code.
+export(c) fun whale_aarch64_assemble(packet: ptr<FixedInput>, result: ptr<FixedResult>) -> i32 {
+    if (result == null) {
+        return 2;
+    }
+    if (packet == null) {
+        result.status = 2;
+        result.word = 0;
+        return 2;
+    }
+    var state: FixedState;
+    if (!asm_fixed_prepare(packet, &state, result)) {
+        if (result.status == 0) {
+            result.status = 2;
+            result.word = 0;
+        }
+        return result.status as i32;
+    }
+    while (true) {
+        var instruction: FixedInstruction;
+        var next: i32 = asm_fixed_next(&state, &instruction, result);
+        if (next == 0) {
+            return result.status as i32;
+        }
+        if (next != 1) {
+            if (result.status == 0) {
+                result.status = 2;
+                result.word = 0;
+            }
+            return result.status as i32;
+        }
+        if (!a64_encode(&instruction, &state.context, result)
+            || !asm_fixed_commit(&state, result.word, result)) {
+            if (result.status == 0) {
+                result.status = 2;
+                result.word = 0;
+            }
+            return result.status as i32;
+        }
+    }
+    return 0;
+}

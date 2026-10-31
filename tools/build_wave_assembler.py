@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
-"""Build the explicit shared or AMD64 Wave assembler module with the pinned compiler, without editing Wave."""
+"""Build the explicit shared or ISA Wave assembler module with the pinned compiler, without editing Wave."""
 
 import argparse
 import hashlib
@@ -21,10 +21,21 @@ MODULES = {
             'assembler/numeric.wave',
             'assembler/output.wave',
             'assembler/lexer.wave',
+            'assembler/fixed_model.wave',
+            'assembler/fixed_text.wave',
+            'assembler/fixed_numbers.wave',
+            'assembler/fixed_operands.wave',
+            'assembler/fixed_namespace.wave',
+            'assembler/fixed_relative.wave',
+            'assembler/fixed_scalar.wave',
+            'assembler/fixed_source.wave',
+            'assembler/fixed_driver.wave',
         ),
         'abi': (
             'assembler/src/tokens.rs',
             'assembler/src/tokens_wave.rs',
+            'assembler/src/fixed.rs',
+            'assembler/src/fixed_wave.rs',
         ),
         'name': 'assembler',
     },
@@ -63,6 +74,71 @@ MODULES = {
             'assembler/amd64/src/encoding/sib.rs',
         ),
         'name': 'amd64',
+    },
+    'aarch64': {
+        'sources': (
+            'assembler/model.wave',
+            'assembler/declarations.wave',
+            'assembler/fixed_model.wave',
+            'assembler/fixed_declarations.wave',
+            'assembler/aarch64/registers.wave',
+            'assembler/aarch64/parser.wave',
+            'assembler/aarch64/operands.wave',
+            'assembler/aarch64/encoding.wave',
+            'assembler/aarch64/encoder.wave',
+            'assembler/aarch64/entry.wave',
+        ),
+        'abi': (
+            'assembler/aarch64/src/wave.rs',
+            'assembler/aarch64/src/lib.rs',
+            'assembler/aarch64/src/encoder.rs',
+            'assembler/aarch64/src/parser.rs',
+        ),
+        'name': 'aarch64',
+    },
+    'riscv64': {
+        'sources': (
+            'assembler/model.wave',
+            'assembler/declarations.wave',
+            'assembler/fixed_model.wave',
+            'assembler/fixed_declarations.wave',
+            'assembler/riscv64/registers.wave',
+            'assembler/riscv64/operands.wave',
+            'assembler/riscv64/encoding.wave',
+            'assembler/riscv64/encoder.wave',
+            'assembler/riscv64/parser.wave',
+            'assembler/riscv64/entry.wave',
+        ),
+        'abi': (
+            'assembler/riscv64/src/wave.rs',
+            'assembler/riscv64/src/lib.rs',
+            'assembler/riscv64/src/encoder.rs',
+            'assembler/riscv64/src/parser.rs',
+        ),
+        'name': 'riscv64',
+    },
+    'loongarch64': {
+        'sources': (
+            'assembler/model.wave',
+            'assembler/declarations.wave',
+            'assembler/fixed_model.wave',
+            'assembler/fixed_declarations.wave',
+            'assembler/loongarch64/model.wave',
+            'assembler/loongarch64/registers.wave',
+            'assembler/loongarch64/tables.wave',
+            'assembler/loongarch64/operands.wave',
+            'assembler/loongarch64/formats.wave',
+            'assembler/loongarch64/branch.wave',
+            'assembler/loongarch64/encoder.wave',
+            'assembler/loongarch64/entry.wave',
+        ),
+        'abi': (
+            'assembler/loongarch64/src/wave.rs',
+            'assembler/loongarch64/src/lib.rs',
+            'assembler/loongarch64/src/encoder.rs',
+            'assembler/loongarch64/src/parser.rs',
+        ),
+        'name': 'loongarch64',
     },
 }
 TARGETS = (

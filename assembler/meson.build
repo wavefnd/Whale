@@ -26,8 +26,19 @@ if wave_assembler_directory == '' and wave_source != ''
       'numeric.wave',
       'output.wave',
       'lexer.wave',
+      'fixed_model.wave',
+      'fixed_text.wave',
+      'fixed_numbers.wave',
+      'fixed_operands.wave',
+      'fixed_namespace.wave',
+      'fixed_relative.wave',
+      'fixed_scalar.wave',
+      'fixed_source.wave',
+      'fixed_driver.wave',
       'src/tokens.rs',
       'src/tokens_wave.rs',
+      'src/fixed.rs',
+      'src/fixed_wave.rs',
       '../tools/build_wave_assembler.py',
       '../tools/wave_bootstrap.py',
       'build_support.rs',
@@ -50,6 +61,18 @@ wave_amd64_directory = ''
 if get_option('asm-amd64')
   subdir('amd64')
 endif
-if wave_amd64_directory != '' and wave_assembler_directory == ''
-  error('The Wave AMD64 module requires -Dwave-assembler-dir or a Wave source build.')
+wave_aarch64_directory = ''
+if get_option('asm-aarch64')
+  subdir('aarch64')
+endif
+wave_riscv64_directory = ''
+if get_option('asm-riscv64')
+  subdir('riscv64')
+endif
+wave_loongarch64_directory = ''
+if get_option('asm-loongarch64')
+  subdir('loongarch64')
+endif
+if wave_assembler_directory == '' and (wave_amd64_directory != '' or wave_aarch64_directory != '' or wave_riscv64_directory != '' or wave_loongarch64_directory != '')
+  error('Wave ISA modules require -Dwave-assembler-dir or a Wave source build.')
 endif

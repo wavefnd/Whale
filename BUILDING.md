@@ -78,12 +78,12 @@ to use them. Ordinary Cargo keeps the Rust reference during the IR migration.
 The Wave numeric core uses two 64-bit words for 128-bit integers and exact
 IEEE rounding; it does not depend on host floating-point arithmetic.
 
-Source builds also compile the shared Wave assembler and selected AMD64 module.
+Source builds also compile the shared Wave assembler and selected ISA modules.
 Prebuilt builds select them with `-Dwave-assembler-dir=...` and
-`-Dwave-amd64-dir=...`; unselected ISA archives are not linked.
-For focused Cargo tests, `tools/build_wave_assembler.py --module common|amd64`
+`-Dwave-ARCH-dir=...` for each selected ISA; unselected archives are not linked.
+For focused Cargo tests, `tools/build_wave_assembler.py --module common|amd64|aarch64|riscv64|loongarch64`
 produces the corresponding archive. Set `WHALE_WAVE_ASSEMBLER_DIR` and
-`WHALE_WAVE_AMD64_DIR` explicitly; Cargo does not invoke Wave.
+the corresponding `WHALE_WAVE_ARCH_DIR` explicitly; Cargo does not invoke Wave.
 
 For work confined to Rust components, ordinary Cargo builds remain available:
 

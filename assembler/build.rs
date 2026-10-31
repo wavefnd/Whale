@@ -15,7 +15,21 @@ const SOURCES: &[&str] = &[
     "assembler/numeric.wave",
     "assembler/output.wave",
     "assembler/lexer.wave",
+    "assembler/fixed_model.wave",
+    "assembler/fixed_text.wave",
+    "assembler/fixed_numbers.wave",
+    "assembler/fixed_operands.wave",
+    "assembler/fixed_namespace.wave",
+    "assembler/fixed_relative.wave",
+    "assembler/fixed_scalar.wave",
+    "assembler/fixed_source.wave",
+    "assembler/fixed_driver.wave",
 ];
 
-const ABI_SOURCES: &[&str] = &["assembler/src/tokens.rs", "assembler/src/tokens_wave.rs"];
+const ABI_SOURCES: &[&str] = &[
+    "assembler/src/tokens.rs",
+    "assembler/src/tokens_wave.rs",
+    "assembler/src/fixed.rs",
+    "assembler/src/fixed_wave.rs",
+];
 include!("build_support.rs");

@@ -21,7 +21,8 @@ NATIVE = "x86_64-unknown-linux-gnu"
 class PublicationTests(unittest.TestCase):
     def test_all_owned_wave_roles_are_in_the_explicit_build_lists(self):
         owned = {path.relative_to(ROOT).as_posix()
-                 for directory in (ROOT / "assembler", ROOT / "assembler/amd64")
+                 for directory in (ROOT / "assembler", *(ROOT / "assembler" / name
+                                                     for name in helper.MODULES if name != "common"))
                  for path in directory.glob("*.wave")}
         configured = {file for config in helper.MODULES.values() for file in config["sources"]}
         self.assertEqual(owned, configured)

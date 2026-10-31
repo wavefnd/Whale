@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: MPL-2.0
+// RV64I field packing after operand validation; results are exactly 32 bits.
+fun rv_r(opcode: u64, f3: u64, f7: u64, rd: u64, rs1: u64, rs2: u64) -> u64 {
+    return (opcode | (rd << 7) | (f3 << 12) | (rs1 << 15) | (rs2 << 20) | (f7 << 25))
+        & 4294967295;
+}
+
+fun rv_i(opcode: u64, f3: u64, rd: u64, rs1: u64, immediate: u64) -> u64 {
+    return (opcode | (rd << 7) | (f3 << 12) | (rs1 << 15) | (immediate << 20)) & 4294967295;
+}
+
+fun rv_store(f3: u64, rs1: u64, rs2: u64, immediate: u64) -> u64 {
+    return (35 | ((immediate & 31) << 7) | (f3 << 12) | (rs1 << 15) | (rs2 << 20)
+        | ((immediate >> 5) << 25)) & 4294967295;
+}
+
+fun rv_upper(opcode: u64, rd: u64, immediate: u64) -> u64 {
+    return (opcode | (rd << 7) | ((immediate & 1048575) << 12)) & 4294967295;
+}
+
+fun rv_jump_bits(rd: u64, displacement: u64) -> u64 {
+    return (111 | (rd << 7) | (((displacement >> 20) & 1) << 31)
+        | (((displacement >> 1) & 1023) << 21) | (((displacement >> 11) & 1) << 20)
+        | (((displacement >> 12) & 255) << 12)) & 4294967295;
+}
+
+fun rv_branch_bits(f3: u64, rs1: u64, rs2: u64, displacement: u64) -> u64 {
+    return (99 | (((displacement >> 11) & 1) << 7) | (((displacement >> 1) & 15) << 8)
+        | (f3 << 12) | (rs1 << 15) | (rs2 << 20) | (((displacement >> 5) & 63) << 25)
+        | (((displacement >> 12) & 1) << 31)) & 4294967295;
+}

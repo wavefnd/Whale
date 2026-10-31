@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: MPL-2.0
+// Direct operand/branch boundaries keep native tests independent of source layout.
+export(c) fun whale_riscv64_operand(mode: u64, text: ptr<FixedText>,
+    result: ptr<FixedResult>) -> i32 {
+    if (result == null) {
+        return 2;
+    }
+    asm_fixed_result_init(result, 16777216);
+    if (text == null || !asm_span_valid(text.data, text.count, 1) || mode > 2) {
+        result.status = 2;
+        return 2;
+    }
+    var value: u64 = 0;
+    var second: u64 = 0;
+    var success: bool = false;
+    if (mode == 0) {
+        success = rv_reg(text[0], &value, result);
+    } else if (mode == 1) {
+        success = rv_memory(text[0], &value, &second, result);
+    } else {
+        success = rv_fence(text[0], &value, result);
+    }
+    if (!success) {
+        return result.status as i32;
+    }
+    result.word = value;
+    result.detail = second;
+    return 0;
+}
+
+export(c) fun whale_riscv64_branch(jump: u64, f3: u64, rs1: u64, rs2: u64,
+    value: i64, result: ptr<FixedResult>) -> i32 {
+    if (result == null) {
+        return 2;
+    }
+    asm_fixed_result_init(result, 16777216);
+    if (jump > 1 || f3 > 7 || rs1 > 31 || rs2 > 31) {
+        result.status = 2;
+        return 2;
+    }
+    var scaled: u64 = 0;
+    var bits: u64 = 12;
+    if (jump == 1) {
+        bits = 20;
+    }
+    if (!asm_fixed_displacement(value, bits, 2, &scaled, result)) {
+        return result.status as i32;
+    }
+    if (jump == 1) {
+        result.word = rv_jump_bits(rs1, value as u64);
+    } else {
+        result.word = rv_branch_bits(f3, rs1, rs2, value as u64);
+    }
+    return 0;
+}

@@ -11,15 +11,11 @@ fun asmobj_relocation_kind(state: ptr<AsmobjState>, target: ptr<AsmobjTarget>,
     kind[0] = relocation.kind;
     code[0] = 0;
     if (relocation.kind == 4) {
-        if (target.format == 2) {
-            kind[0] = 8;
-            code[0] = 2;
-        } else if (undefined == 0) {
-            kind[0] = 3;
-        }
+        return asmobj_amd64_control(target, undefined, kind, code);
+    }
+    if (relocation.kind != 6) {
         return 0;
     }
-    if (relocation.kind != 6) { return 0; }
     var machine: u64 = 18446744073709551615;
     if (asmobj_literal_equal(state, relocation.namespace, relocation.namespace_len,
         "aarch64" as ptr<u8>, 7)) {
@@ -31,27 +27,22 @@ fun asmobj_relocation_kind(state: ptr<AsmobjState>, target: ptr<AsmobjTarget>,
         "loongarch64" as ptr<u8>, 11)) {
         machine = 3;
     }
-    if (state.status != 0) { return state.status; }
-    if (machine == 18446744073709551615) { return 3; }
-    if (machine != target.machine) { return 4; }
-    if (target.format == 0) {
-        code[0] = relocation.code;
-        return 0;
+    if (state.status != 0) {
+        return state.status;
     }
-    if (target.format == 2 && machine == 1 && (relocation.code == 282 || relocation.code == 283)) {
-        kind[0] = 8;
-        code[0] = 2;
-        return 0;
+    if (machine == 18446744073709551615) {
+        return 3;
     }
-    if (target.format == 1 && machine == 1) {
-        kind[0] = 7;
-        if (relocation.code == 274) { code[0] = 5; }
-        else if (relocation.code == 280) { code[0] = 15; }
-        else if (relocation.code == 282 || relocation.code == 283) { code[0] = 3; }
-        else { return 5; }
-        return 0;
+    if (machine != target.machine) {
+        return 4;
     }
-    return 6;
+    if (machine == 1) {
+        return asmobj_aarch64_relocation(target, relocation, kind, code);
+    }
+    if (machine == 2) {
+        return asmobj_riscv64_relocation(target, relocation, code);
+    }
+    return asmobj_loongarch64_relocation(target, relocation, code);
 }
 
 fun asmobj_relocation_valid(relocation: ptr<AsmobjRelocation>, section_count: u64) -> bool {

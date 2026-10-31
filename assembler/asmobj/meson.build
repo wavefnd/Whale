@@ -20,7 +20,10 @@ if asmobj_directory == ''
   asmobj_module = custom_target('asmobj',
     output: [archive_name, 'asmobj.meta', 'provenance.json'],
     command: [python, files('../../tools/build_asmobj.py'), arguments],
-    depend_files: files('model.wave', 'sections.wave', 'symbols.wave', 'relocations.wave', 'entry.wave',
+    depend_files: files('model.wave', 'sections.wave', 'symbols.wave',
+                        'relocations/amd64.wave', 'relocations/aarch64.wave',
+                        'relocations/riscv64.wave', 'relocations/loongarch64.wave',
+                        'relocations.wave', 'entry.wave',
                         '../../toolchain/src/assembly_object.rs',
                         '../../tools/build_asmobj.py', '../../tools/wave_bootstrap.py'),
     depends: wave_bootstrap, console: true)

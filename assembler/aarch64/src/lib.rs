@@ -1,17 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0
 //! AArch64 assembler entry point; instruction handling lives in the ISA modules.
 use assembler::{
-    fixed::{self, Context, FixedIsa, Instruction},
+    fixed::{Context, FixedIsa, Instruction},
     AsmError, AssemblerOutput, AssemblyLimits,
 };
 
+#[cfg(any(not(whale_wave_aarch64), test))]
 mod encoder;
 
+#[cfg(any(not(whale_wave_aarch64), test))]
 mod encoding;
 
+#[cfg(any(not(whale_wave_aarch64), test))]
 mod parser;
 
+#[cfg(any(not(whale_wave_aarch64), test))]
 mod tables;
+
+#[cfg(whale_wave_aarch64)]
+mod wave;
 
 pub struct AArch64;
 
@@ -30,7 +37,14 @@ impl assembler::extension::Assembler for AArch64 {
         source: &str,
         limits: &AssemblyLimits,
     ) -> Result<AssemblerOutput, AsmError> {
-        fixed::assemble(self, name, source, limits)
+        #[cfg(whale_wave_aarch64)]
+        {
+            wave::assemble(name, source, limits)
+        }
+        #[cfg(not(whale_wave_aarch64))]
+        {
+            assembler::fixed::reference::assemble(self, name, source, limits)
+        }
     }
 }
 
@@ -43,11 +57,28 @@ impl FixedIsa for AArch64 {
         false
     }
 
+    #[cfg(whale_wave_aarch64)]
+    fn native_assemble(
+        &self,
+        name: &str,
+        source: &str,
+        limits: &AssemblyLimits,
+    ) -> Option<Result<AssemblerOutput, AsmError>> {
+        Some(wave::assemble(name, source, limits))
+    }
+
     fn encode(
         &self,
         instruction: &Instruction,
         context: &mut Context<'_>,
     ) -> Result<u32, AsmError> {
-        encoder::encode(instruction, context)
+        #[cfg(whale_wave_aarch64)]
+        {
+            wave::encode(instruction, context)
+        }
+        #[cfg(not(whale_wave_aarch64))]
+        {
+            encoder::encode(instruction, context)
+        }
     }
 }

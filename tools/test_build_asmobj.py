@@ -218,6 +218,7 @@ class BuildGuardTests(unittest.TestCase):
         sources = root / "assembler/asmobj"
         sources.mkdir(parents=True)
         for index, name in enumerate(helper.SOURCES):
+            (sources / name).parent.mkdir(parents=True, exist_ok=True)
             (sources / name).write_bytes(f"source {index}: {name}\n".encode())
         archive_dir = root / "archive"
         archive_dir.mkdir()
@@ -275,7 +276,7 @@ class BuildGuardTests(unittest.TestCase):
                 environment["WHALE_ASMOBJ_DIR"] = str(archive_dir)
             return subprocess.run([str(self.guard)], env=environment, capture_output=True, text=True)
 
-    def test_matching_guard_watches_all_five_sources_and_published_artifacts(self):
+    def test_matching_guard_watches_all_sources_and_published_artifacts(self):
         result = self.run_guard()
         self.assertEqual(result.returncode, 0, result.stderr)
         for name in (*helper.SOURCES, "asmobj.meta", "provenance.json", "libwhale_asmobj.a",
@@ -305,6 +306,21 @@ class BuildGuardTests(unittest.TestCase):
                 self.assertIn(reason, result.stderr)
                 self.assertNotIn("cargo:rustc-link-lib", result.stdout)
                 self.assertNotIn("cargo:rustc-cfg=whale_asmobj", result.stdout)
+
+    def test_each_isa_relocation_source_invalidates_the_guard(self):
+        for name in helper.SOURCES:
+            if "/" not in name:
+                continue
+            with self.subTest(source=name), tempfile.TemporaryDirectory() as temporary:
+                manifest, sources, archive_dir, _, _ = self.make_project(Path(temporary).resolve())
+                (sources / name).write_bytes(b"changed architecture mapping")
+                environment = os.environ.copy()
+                environment.update(CARGO_MANIFEST_DIR=str(manifest), HOST=NATIVE, TARGET=NATIVE,
+                                   WHALE_ASMOBJ_DIR=str(archive_dir))
+                result = subprocess.run([str(self.guard)], env=environment, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("stale asmobj archive", result.stderr)
+                self.assertNotIn("cargo:rustc-link-lib", result.stdout)
 
     def test_plain_cargo_build_needs_neither_compiler_nor_wave_artifact(self):
         result = self.run_guard("missing-metadata", enabled=False)
@@ -384,6 +400,7 @@ class SourceStructureTests(unittest.TestCase):
             abi.parent.mkdir(parents=True)
             shutil.copyfile(ROOT / ".gitattributes", root / ".gitattributes")
             for name in helper.SOURCES:
+                (sources / name).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / "assembler/asmobj" / name, sources / name)
             shutil.copyfile(ROOT / helper.ABI_SOURCE, abi)
             original = helper.source_bytes(root)
@@ -409,9 +426,9 @@ class SourceStructureTests(unittest.TestCase):
             self.assertNotIn(b"\r\n", abi.read_bytes())
             self.assertEqual(abi.read_bytes(), original_abi)
 
-    def test_asmobj_is_a_complete_wave_module_with_five_role_files(self):
+    def test_asmobj_is_a_complete_wave_module_with_isa_owned_role_files(self):
         module = ROOT / "assembler/asmobj"
-        self.assertEqual(sorted(path.name for path in module.glob("*.wave")), sorted(helper.SOURCES))
+        self.assertEqual(sorted(path.relative_to(module).as_posix() for path in module.rglob("*.wave")), sorted(helper.SOURCES))
         self.assertEqual(list(module.rglob("*.rs")), [])
         self.assertFalse((module / "Cargo.toml").exists())
         for directory in ("assembler", "object", "reverse", "ir", "toolchain", "src"):

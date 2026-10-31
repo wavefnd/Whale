@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MPL-2.0
+// Native source execution stays in Wave across the shared driver and ISA kernel.
+export(c) fun whale_loongarch64_assemble(packet: ptr<FixedInput>,
+    result: ptr<FixedResult>) -> i32 {
+    if (packet == null || result == null) {
+        return 2;
+    }
+    var state: FixedState;
+    var instruction: FixedInstruction;
+    var next: i32 = 0;
+    if (!asm_fixed_prepare(packet, &state, result)) {
+        return result.status as i32;
+    }
+    while (true) {
+        next = asm_fixed_next(&state, &instruction, result);
+        if (next == 0) {
+            return 0;
+        }
+        if (next != 1) {
+            return result.status as i32;
+        }
+        if (whale_loongarch64_encode(&instruction, &state.context, result) != 0
+            || !asm_fixed_commit(&state, result.word, result)) {
+            return result.status as i32;
+        }
+    }
+    return 0;
+}

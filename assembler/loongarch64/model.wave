@@ -1,0 +1,8 @@
+// SPDX-License-Identifier: MPL-2.0
+// LoongArch64 instruction classification; integer fields contain no host addresses.
+struct LoongOpcode {
+    form: u64;
+    opcode: u64;
+    bits: u64;
+    count: u64;
+}

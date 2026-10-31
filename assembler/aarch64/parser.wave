@@ -1,0 +1,39 @@
+// SPDX-License-Identifier: MPL-2.0
+// Typed register parsing and diagnostic selection stay in the A64 module.
+fun a64_fail(result: ptr<FixedResult>, code: u64) -> bool {
+    var empty: FixedText;
+    empty.data = null;
+    empty.count = 0;
+    return asm_fixed_fail(result, code, empty, 0);
+}
+
+fun a64_register(text: FixedText, output: ptr<A64Register>, result: ptr<FixedResult>) -> bool {
+    if (!asm_fixed_charge(result, text.count)) {
+        return false;
+    }
+    var trimmed: FixedText = asm_fixed_trim(text);
+    if (!a64_register_bytes(trimmed.data, trimmed.count, output)) {
+        asm_fixed_fail(result, 1000, trimmed, 0);
+        result.display = 1;
+        return false;
+    }
+    return true;
+}
+
+fun a64_same(left: ptr<A64Register>, right: ptr<A64Register>, result: ptr<FixedResult>) -> bool {
+    if (left.width != right.width) {
+        return a64_fail(result, 1001); // Register widths must match.
+    }
+    return true;
+}
+
+fun a64_no_sp(register: ptr<A64Register>, result: ptr<FixedResult>) -> bool {
+    if (register.sp != 0) {
+        return a64_fail(result, 1002); // SP is not valid in this operand.
+    }
+    return true;
+}
+
+fun a64_mnemonic(instruction: ptr<FixedInstruction>, key: u64, length: u64) -> bool {
+    return asm_fixed_word(instruction.mnemonic, key, length, instruction.fold);
+}

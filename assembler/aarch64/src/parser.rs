@@ -3,7 +3,7 @@
 use crate::tables;
 
 use assembler::{
-    fixed::{self, error, unsigned},
+    fixed::reference::{self as fixed, error, unsigned},
     AsmError,
 };
 

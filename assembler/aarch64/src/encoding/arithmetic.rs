@@ -5,7 +5,8 @@ use super::sf;
 use crate::parser::{no_sp, reg, same, shift};
 
 use assembler::{
-    fixed::{self, error, unsigned, Instruction},
+    fixed::reference::{self as fixed, error, unsigned},
+    fixed::Instruction,
     AsmError,
 };
 

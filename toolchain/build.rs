@@ -90,10 +90,19 @@ fn main() {
     let root =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../assembler/asmobj");
     let mut source = Vec::new();
-    for (index, name) in
-        ["model.wave", "sections.wave", "symbols.wave", "relocations.wave", "entry.wave"]
-            .iter()
-            .enumerate()
+    for (index, name) in [
+        "model.wave",
+        "sections.wave",
+        "symbols.wave",
+        "relocations/amd64.wave",
+        "relocations/aarch64.wave",
+        "relocations/riscv64.wave",
+        "relocations/loongarch64.wave",
+        "relocations.wave",
+        "entry.wave",
+    ]
+    .iter()
+    .enumerate()
     {
         let path = root.join(name);
         println!("cargo:rerun-if-changed={}", path.display());

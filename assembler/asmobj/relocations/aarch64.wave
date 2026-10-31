@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: MPL-2.0
+// AArch64 ELF IDs and the supported COFF/Mach-O translations.
+fun asmobj_aarch64_relocation(target: ptr<AsmobjTarget>, relocation: ptr<AsmobjRelocation>,
+    kind: ptr<u64>, code: ptr<u64>) -> i32 {
+    if (target.format == 0) {
+        code[0] = relocation.code;
+        return 0;
+    }
+    // Mach-O ARM64_RELOC_BRANCH26.
+    if (target.format == 2 && (relocation.code == 282 || relocation.code == 283)) {
+        kind[0] = 8;
+        code[0] = 2;
+        return 0;
+    }
+    if (target.format == 1) {
+        kind[0] = 7;
+        if (relocation.code == 274) { // ADR_PREL_LO21 -> REL21.
+            code[0] = 5;
+        } else if (relocation.code == 280) { // CONDBR19 -> BRANCH19.
+            code[0] = 15;
+        } else if (relocation.code == 282 || relocation.code == 283) { // JUMP26/CALL26.
+            code[0] = 3;
+        } else {
+            return 5;
+        }
+        return 0;
+    }
+    return 6;
+}

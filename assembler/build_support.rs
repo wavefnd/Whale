@@ -35,10 +35,10 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg({CFG})");
     println!("cargo:rerun-if-env-changed={ENV}");
     let Some(directory) = env::var_os(ENV) else { return };
-    if CFG == "whale_wave_amd64" {
+    if CFG != "whale_wave_assembler" {
         assert!(
             env::var_os("WHALE_WAVE_ASSEMBLER_DIR").is_some(),
-            "Wave AMD64 requires WHALE_WAVE_ASSEMBLER_DIR for shared assembler utilities"
+            "Wave ISA modules require WHALE_WAVE_ASSEMBLER_DIR for shared assembler utilities"
         );
     }
     let directory = PathBuf::from(directory)
