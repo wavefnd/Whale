@@ -694,8 +694,10 @@ module's responsibility.
 [Meson](BUILDING.md) compiles and links this module as part of the product.
 Cargo development builds select a prebuilt archive with `WHALE_ASMOBJ_DIR`.
 There is one implementation of its policies: an absent module returns an explicit
-unavailable error. The former partial Wave ELF-record and reverse-analysis
-implementations have been removed. IR remains Rust.
+unavailable error. The IR module also runs in Wave when built with its pinned
+archive: parsing, verification, numeric semantics, constant evaluation, passes
+and execution live in role-specific `ir/*.wave` sources. Rust supplies owned
+data, allocation and I/O; its reference implementation supports migration tests.
 
 ### Assembly symbol metadata and library resolution
 

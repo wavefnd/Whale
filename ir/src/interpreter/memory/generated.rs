@@ -395,6 +395,9 @@ fn run(ops: &[Op]) {
     for (i, &op) in ops.iter().enumerate() {
         let expected = model.apply(op, &bits);
         let result = actual(&mut memory, bases, &tokens, &types, global, op);
+        if let (Err(Fault::Trap(actual)), Err(expected)) = (&result, &expected) {
+            assert_eq!(actual, expected, "operation {i}: {op:?}");
+        }
         outcome(result, expected);
         check_state(&mut memory, bases, &tokens, global, &model, &signature);
         assert!(memory.work <= 4_000_000, "step {i}");
@@ -544,37 +547,19 @@ fn memory_resource_rejections_never_publish_partial_destination_changes() {
                 assert_eq!(m.load(dst, &Type::ptr_to(Type::U8), 1).unwrap().pointer(), target);
             }
         }
-        let before = (
-            m.allocations[2].bytes.clone(),
-            m.allocations[2].initialized.clone(),
-            m.allocations[2].fragments.clone(),
-        );
+        let before = m.test_snapshot(2);
         m.limits.max_work = m.work;
         assert!(matches!(
             m.retire_stack(dst, 0),
             Err(Fault::Limit { resource: MemoryResource::Work, .. })
         ));
-        assert!(m.allocations[2].alive);
-        assert_eq!(
-            (
-                m.allocations[2].bytes.clone(),
-                m.allocations[2].initialized.clone(),
-                m.allocations[2].fragments.clone()
-            ),
-            before
-        );
+        assert!(m.test_alive(2));
+        assert_eq!(m.test_snapshot(2), before);
         assert!(matches!(
             m.set(dst, 0, 8, 1),
             Err(Fault::Limit { resource: MemoryResource::Work, .. })
         ));
-        assert_eq!(
-            (
-                m.allocations[2].bytes.clone(),
-                m.allocations[2].initialized.clone(),
-                m.allocations[2].fragments.clone()
-            ),
-            before
-        );
+        assert_eq!(m.test_snapshot(2), before);
     }
     let mut m = Memory::new(MemoryLimits { max_bytes: 3, ..Default::default() });
     assert!(matches!(

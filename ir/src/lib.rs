@@ -8,9 +8,15 @@ pub mod const_expr;
 
 mod constant;
 
+#[cfg(whale_wave_ir)]
+mod constant_wave;
+
 pub mod float;
 
 pub mod effects;
+
+#[cfg(whale_wave_ir)]
+mod effects_wave;
 
 pub mod pass;
 

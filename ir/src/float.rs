@@ -2,6 +2,22 @@
 
 pub mod arithmetic;
 
+#[cfg(whale_wave_ir)]
+#[path = "float/wave.rs"]
+mod wave;
+
+/// A malformed native response is distinct from a defined invalid conversion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FloatBackendError(pub &'static str);
+
+impl std::fmt::Display for FloatBackendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Wave float backend error: {}", self.0)
+    }
+}
+
+impl std::error::Error for FloatBackendError {}
+
 /// Exact IEEE storage bits. Equality compares storage, including NaN payloads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FloatBits {
@@ -27,11 +43,84 @@ impl FloatBits {
         }
     }
 
+    /// Compare equal-width IEEE values; unsupported width pairs return `None`.
+    pub fn try_compare(
+        self,
+        rhs: Self,
+        predicate: &crate::FCmpPred,
+    ) -> Result<Option<bool>, FloatBackendError> {
+        #[cfg(whale_wave_ir)]
+        {
+            wave::compare(self, rhs, predicate)
+        }
+        #[cfg(not(whale_wave_ir))]
+        {
+            Ok(self.compare_reference(rhs, predicate))
+        }
+    }
+
+    /// Compare storage through the explicit ordered/unordered predicate.
+    pub fn compare(self, rhs: Self, predicate: &crate::FCmpPred) -> Option<bool> {
+        self.try_compare(rhs, predicate).expect("Wave float comparison backend invariant")
+    }
+
+    /// Read exact-width hexadecimal storage bits.
+    pub fn parse(width: u16, text: &str) -> Result<Self, String> {
+        #[cfg(whale_wave_ir)]
+        {
+            wave::parse(width, text)
+        }
+        #[cfg(not(whale_wave_ir))]
+        {
+            Self::parse_reference(width, text)
+        }
+    }
+
+    /// Numeric conversion with explicit backend errors; unsupported widths return `None`.
+    pub fn try_from_f64(width: u16, value: f64) -> Result<Option<Self>, FloatBackendError> {
+        if !matches!(width, 16 | 32 | 64) {
+            return Ok(None);
+        }
+        #[cfg(whale_wave_ir)]
+        {
+            wave::from_f64(width, value.to_bits()).map(Some)
+        }
+        #[cfg(not(whale_wave_ir))]
+        {
+            Ok(Self::from_f64_reference(width, value).ok())
+        }
+    }
+
+    /// Numeric convenience conversion. Use variants to preserve source storage bits.
+    pub fn from_f64(width: u16, value: f64) -> Result<Self, String> {
+        Self::try_from_f64(width, value)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "float width must be 16, 32 or 64".into())
+    }
+
+    /// Expand storage to binary64 using the defined per-width NaN payload rules.
+    pub fn try_to_f64(self) -> Result<f64, FloatBackendError> {
+        #[cfg(whale_wave_ir)]
+        {
+            wave::to_binary64(self).map(f64::from_bits)
+        }
+        #[cfg(not(whale_wave_ir))]
+        {
+            Ok(self.to_f64_reference())
+        }
+    }
+
+    /// Numeric convenience view of the Wave-produced binary64 storage.
+    pub fn to_f64(self) -> f64 {
+        self.try_to_f64().expect("Wave storage conversion backend invariant")
+    }
+
     /// Compare equal-width IEEE values using an explicit ordered/unordered
     /// predicate. Returns `None` for mismatched widths. Integer bit ordering
     /// avoids host floating exceptions/conversions and treats both zeros equal;
     /// any quiet or signaling NaN makes the operands unordered.
-    pub fn compare(self, rhs: Self, predicate: &crate::FCmpPred) -> Option<bool> {
+    #[cfg(any(not(whale_wave_ir), test))]
+    pub(crate) fn compare_reference(self, rhs: Self, predicate: &crate::FCmpPred) -> Option<bool> {
         use crate::FCmpPred::*;
 
         use std::cmp::Ordering;
@@ -83,7 +172,8 @@ impl FloatBits {
     }
 
     /// Exact-width hexadecimal storage, not a decimal floating-point number.
-    pub fn parse(width: u16, text: &str) -> Result<Self, String> {
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn parse_reference(width: u16, text: &str) -> Result<Self, String> {
         let digits = match width {
             16 => 4,
             32 => 8,
@@ -103,7 +193,8 @@ impl FloatBits {
     }
 
     /// Numeric convenience conversion. Use the variants to preserve source bits.
-    pub fn from_f64(width: u16, value: f64) -> Result<Self, String> {
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn from_f64_reference(width: u16, value: f64) -> Result<Self, String> {
         Ok(match width {
             16 => Self::F16(f64_to_f16(value)),
             32 => Self::F32((value as f32).to_bits()),
@@ -112,7 +203,8 @@ impl FloatBits {
         })
     }
 
-    pub fn to_f64(self) -> f64 {
+    #[cfg(any(not(whale_wave_ir), test))]
+    fn to_f64_reference(self) -> f64 {
         match self {
             Self::F64(bits) => f64::from_bits(bits),
             Self::F32(bits) => f32::from_bits(bits) as f64,
@@ -145,6 +237,7 @@ impl std::fmt::Display for FloatBits {
 }
 
 // Direct binary64 -> binary16 rounding avoids the intermediate f32 double round.
+#[cfg(any(not(whale_wave_ir), test))]
 fn f64_to_f16(value: f64) -> u16 {
     let bits = value.to_bits();
     let sign = ((bits >> 48) & 0x8000) as u16;
@@ -173,5 +266,78 @@ fn f64_to_f16(value: f64) -> u16 {
         sign | rounded as u16
     } else {
         sign | ((((unbiased + 14) as u16) << 10) + rounded as u16)
+    }
+}
+
+#[cfg(all(test, whale_wave_ir))]
+mod wave_tests {
+    use super::*;
+
+    #[test]
+    fn wave_storage_conveniences_preserve_reference_payload_and_spelling_rules() {
+        for (width, raw) in [
+            (16, 0u64),
+            (16, 1),
+            (16, 0x7c01),
+            (16, 0xfcff),
+            (32, 0x7f800001),
+            (32, 0xffc12345),
+            (32, 1),
+            (64, 0x7ff0000000000001),
+            (64, 0xfff800000000cafe),
+            (64, 1),
+        ] {
+            let text = format!("0x{raw:0digits$x}", digits = usize::from(width) / 4);
+            let value = FloatBits::parse(width, &text).unwrap();
+            assert_eq!(value, FloatBits::parse_reference(width, &text).unwrap());
+            assert_eq!(value.to_f64().to_bits(), value.to_f64_reference().to_bits(), "{value:?}");
+            for pred in [
+                crate::FCmpPred::Oeq,
+                crate::FCmpPred::One,
+                crate::FCmpPred::Olt,
+                crate::FCmpPred::Ole,
+                crate::FCmpPred::Ogt,
+                crate::FCmpPred::Oge,
+                crate::FCmpPred::Ord,
+                crate::FCmpPred::Uno,
+                crate::FCmpPred::Ueq,
+                crate::FCmpPred::Une,
+                crate::FCmpPred::Ult,
+                crate::FCmpPred::Ule,
+                crate::FCmpPred::Ugt,
+                crate::FCmpPred::Uge,
+            ] {
+                assert_eq!(
+                    value.try_compare(value, &pred).unwrap(),
+                    value.compare_reference(value, &pred)
+                );
+            }
+        }
+        for bits in [
+            0,
+            1,
+            0x8000000000000000,
+            0x3ff0020000000001,
+            0x7ff0000000000000,
+            0x7ff0000000000001,
+            0xfff800000000cafe,
+            u64::MAX,
+        ] {
+            for width in [16, 32, 64] {
+                let input = f64::from_bits(bits);
+                assert_eq!(
+                    FloatBits::from_f64(width, input).unwrap(),
+                    FloatBits::from_f64_reference(width, input).unwrap(),
+                    "{bits:x} {width}"
+                );
+            }
+        }
+        for width in [16, 32, 64, 80] {
+            for text in
+                ["", "0", "0X0", "0x0000", "0xGGGG", "0x01🦀", "0x12345678", "0x0123456789abcdef"]
+            {
+                assert_eq!(FloatBits::parse(width, text), FloatBits::parse_reference(width, text));
+            }
+        }
     }
 }

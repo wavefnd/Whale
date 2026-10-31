@@ -2,7 +2,8 @@
 
 Meson configures the product, compiles the Wave `asmobj` and IR sources, then
 builds Rust components with Cargo. `assembler/asmobj/` is entirely Wave. IR model,
-parsing, printing, layout and verification run in Wave when its archive is selected;
+text, verification, numeric semantics, passes and execution run in Wave when
+its archive is selected;
 Rust supplies typed transport and retained reference implementations.
 Generated files and Cargo outputs stay in the selected build directory.
 
@@ -70,9 +71,12 @@ the pinned compiler, std, Rust/LLVM bootstrap requirements, ABI, source and arch
 hashes. Changing the Rust/Wave boundary requires rebuilding the archive. Failed
 compilation or archiving preserves the previous complete publication. Ambient environment
 variables cannot select a different module for a Meson product.
-Source builds also compile the Wave IR model, parser, printer, layout and verifier.
+Source builds also compile Wave IR parsing, printing, verification, numeric
+semantics, constant evaluation, verified passes and execution.
 With a prebuilt `asmobj`, pass `-Dwave-ir-dir=/absolute/path/to/built-wave-ir`
 to use them. Ordinary Cargo keeps the Rust reference during the IR migration.
+The Wave numeric core uses two 64-bit words for 128-bit integers and exact
+IEEE rounding; it does not depend on host floating-point arithmetic.
 
 For work confined to Rust components, ordinary Cargo builds remain available:
 

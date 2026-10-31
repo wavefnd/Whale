@@ -1,0 +1,612 @@
+// SPDX-License-Identifier: MPL-2.0
+// Preparation and admission are native decisions over caller-owned, bounded records.
+fun ir_runtime_error(p: ptr<IrRuntimeDriver>, error: u64, site: u64,
+    detail: u64, extra: u64) -> bool {
+    p.result.status = 3;
+    p.result.error = error;
+    p.result.site = site;
+    p.result.detail = detail;
+    p.result.extra = extra;
+    p.result.steps = p.steps;
+    return false;
+}
+
+fun ir_runtime_backend(p: ptr<IrRuntimeDriver>) -> bool {
+    p.result.status = 4;
+    p.result.site = p.pending_site;
+    p.result.steps = p.steps;
+    return false;
+}
+
+fun ir_runtime_charge(p: ptr<IrRuntimeDriver>) -> bool {
+    if (p.work >= p.max_work) {
+        return ir_runtime_error(p, 18, p.pending_site, p.max_work, 0);
+    }
+    p.work += 1;
+    return true;
+}
+
+fun ir_runtime_equal(p: ptr<IrRuntimeDriver>, a: u64, b: u64) -> bool {
+    if (a >= p.type_count || b >= p.type_count) {
+        ir_runtime_backend(p);
+        return false;
+    }
+    var result: IrVerifyResult;
+    result.status = 0;
+    result.work = p.work;
+    var equal: bool = ir_verify_equal(a, b, p.types, p.type_edges, 1024,
+        &result, p.max_work);
+    p.work = result.work;
+    if (result.status != 0) {
+        ir_runtime_error(p, 18, p.pending_site, p.max_work, 0);
+    }
+    return equal;
+}
+
+fun ir_runtime_scalar(kind: u64) -> bool {
+    return kind >= 1 && kind <= 16;
+}
+
+fun ir_runtime_call_value(kind: u64) -> bool {
+    return kind >= 1 && kind <= 18;
+}
+
+fun ir_runtime_value_type(p: ptr<IrRuntimeDriver>, ty: u64) -> bool {
+    var t: ptr<IrVerifyType> = &p.types[ty];
+    if (ir_runtime_call_value(t.kind)) {
+        return true;
+    }
+    return t.kind == 21 && t.count == 2
+        && ir_verify_integer(p.types[p.type_edges[t.first]].kind)
+        && p.types[p.type_edges[t.first + 1]].kind == 1;
+}
+
+fun ir_runtime_callable(p: ptr<IrRuntimeDriver>, signature: u64) -> bool {
+    var t: ptr<IrVerifyType> = &p.types[signature];
+    if (t.kind != 18 || t.extra != 0 || t.count == 0) {
+        return false;
+    }
+    var i: u64 = 0;
+    while (i < t.count) {
+        if (!ir_runtime_charge(p)) {
+            return false;
+        }
+        var kind: u64 = p.types[p.type_edges[t.first + i]].kind;
+        if (!(i == 0 && kind == 0) && !ir_runtime_call_value(kind)) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fun ir_runtime_find(p: ptr<IrRuntimeDriver>, id: u64) -> u64 {
+    var mask: u64 = p.function_table_capacity - 1;
+    var index: u64 = ir_source_mix(id) & mask;
+    var count: u64 = 0;
+    while (count < p.function_table_capacity) {
+        if (!ir_runtime_charge(p)) {
+            return 18446744073709551615;
+        }
+        var function: u64 = p.function_table[index];
+        if (function == 18446744073709551615 || p.functions[function].id == id) {
+            return function;
+        }
+        index = (index + 1) & mask;
+        count += 1;
+    }
+    ir_runtime_backend(p);
+    return 18446744073709551615;
+}
+
+fun ir_runtime_push_pending(p: ptr<IrRuntimeDriver>, function: u64) -> bool {
+    if (!ir_runtime_charge(p) || function >= p.function_count) {
+        return false;
+    }
+    if (p.prepared[function] != 0) {
+        return true;
+    }
+    if (p.pending_flags[function] != 0) {
+        var previous: u64 = p.pending_previous[function];
+        var next: u64 = p.pending_next[function];
+        if (previous == 18446744073709551615) {
+            p.pending_head = next;
+        } else {
+            p.pending_next[previous] = next;
+        }
+        if (next != 18446744073709551615) {
+            p.pending_previous[next] = previous;
+        }
+    }
+    p.pending_previous[function] = 18446744073709551615;
+    p.pending_next[function] = p.pending_head;
+    if (p.pending_head != 18446744073709551615) {
+        p.pending_previous[p.pending_head] = function;
+    }
+    p.pending_head = function;
+    p.pending_flags[function] = 1;
+    return true;
+}
+
+fun ir_runtime_target(p: ptr<IrRuntimeDriver>, target: u64, site: u64) -> bool {
+    if (target >= p.function_count) {
+        return ir_runtime_backend(p);
+    }
+    if (p.functions[target].linkage != 0 || p.functions[target].has_body == 0) {
+        return ir_runtime_error(p, 5, site, 9, 0);
+    }
+    return ir_runtime_push_pending(p, target);
+}
+
+fun ir_runtime_add_callable(p: ptr<IrRuntimeDriver>, target: u64) -> bool {
+    if (target >= p.function_count) {
+        return ir_runtime_backend(p);
+    }
+    if (p.callable_flags[target] != 0) {
+        return true;
+    }
+    p.callable_flags[target] = 1;
+    p.callable_targets[p.callable_count] = target;
+    p.callable_count += 1;
+    var i: u64 = 0;
+    while (i < p.indirect_count) {
+        if (ir_runtime_equal(p, p.functions[target].signature, p.indirect_signatures[i])) {
+            return ir_runtime_target(p, target, p.indirect_sites[i]);
+        }
+        if (p.result.status != 0) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fun ir_runtime_add_indirect(p: ptr<IrRuntimeDriver>, signature: u64, site: u64) -> bool {
+    var i: u64 = 0;
+    while (i < p.indirect_count) {
+        if (ir_runtime_equal(p, signature, p.indirect_signatures[i])) {
+            return true;
+        }
+        if (p.result.status != 0) {
+            return false;
+        }
+        i += 1;
+    }
+    if (p.indirect_count >= p.indirect_capacity) {
+        return ir_runtime_backend(p);
+    }
+    p.indirect_signatures[p.indirect_count] = signature;
+    p.indirect_sites[p.indirect_count] = site;
+    p.indirect_count += 1;
+    i = 0;
+    while (i < p.callable_count) {
+        var target: u64 = p.callable_targets[i];
+        if (ir_runtime_equal(p, signature, p.functions[target].signature)) {
+            if (!ir_runtime_target(p, target, site)) {
+                return false;
+            }
+        }
+        if (p.result.status != 0) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fun ir_runtime_layout(p: ptr<IrRuntimeDriver>, ty: u64) -> bool {
+    var remaining: u64 = p.max_work - p.work;
+    var status: i32 = ir_layout_node(ty, p.layout_nodes, p.type_count, p.type_edges,
+        p.type_edge_count, p.storage, 1024, p.layouts, p.layout_offsets, &remaining);
+    p.work = p.max_work - remaining;
+    if (status == 6) {
+        return ir_runtime_error(p, 18, p.pending_site, p.max_work, 0);
+    }
+    if (status != 0) {
+        return ir_runtime_backend(p);
+    }
+    return true;
+}
+
+fun ir_runtime_supported(p: ptr<IrRuntimeDriver>, inst: ptr<IrRuntimeInstruction>,
+    site: u64) -> bool {
+    var op: u64 = inst.op;
+    var kind: u64 = p.types[inst.ty].kind;
+    var integer: bool = ir_verify_integer(kind);
+    var scalar: bool = ir_runtime_scalar(kind);
+    var floating: bool = ir_verify_float(kind);
+    var valid: bool = op == 0 || op == 1 || op == 2 || op == 3 || op >= 24;
+    var reason: u64 = 3;
+    if (op == 4) {
+        valid = scalar;
+        reason = 1;
+    } else if (op == 5) {
+        valid = false;
+        reason = 0;
+    } else if (op == 6 || op == 13 || op == 15) {
+        valid = ir_runtime_value_type(p, inst.ty);
+        reason = 2;
+    } else if (op == 7 || op == 8) {
+        valid = integer || floating;
+    } else if (op == 9 || op == 17) {
+        valid = integer;
+    } else if (op == 10 || op == 11) {
+        valid = kind == 1 || integer || kind == 17 || (op == 10 && floating);
+    } else if (op == 12) {
+        valid = floating;
+    } else if (op == 14) {
+        var source: u64 = p.types[inst.other].kind;
+        valid = ir_verify_cast(inst.sub, source, kind);
+        reason = 4;
+    } else if (op == 16) {
+        valid = scalar;
+        reason = 2;
+    } else if (op == 18 || op == 23) {
+        valid = p.layout_nodes[inst.ty].kind != 0;
+        reason = 5;
+        if (op == 23) {
+            reason = 8;
+        }
+    } else if (op >= 19 && op <= 22) {
+        valid = ir_runtime_value_type(p, inst.ty);
+        reason = 6;
+        if (op == 20 || op == 22) {
+            reason = 7;
+        }
+    }
+    if (!valid) {
+        return ir_runtime_error(p, 5, site, reason, 0);
+    }
+    return true;
+}
+
+fun ir_runtime_prepare_function(p: ptr<IrRuntimeDriver>, function: u64) -> bool {
+    var f: ptr<IrRuntimeFunction> = &p.functions[function];
+    if (!ir_runtime_callable(p, f.signature)) {
+        if (p.result.status != 0) {
+            return false;
+        }
+        return ir_runtime_error(p, 2, 18446744073709551615, function, 0);
+    }
+    var b: u64 = f.first_block;
+    while (b < f.first_block + f.block_count) {
+        var block: ptr<IrRuntimeBlock> = &p.blocks[b];
+        var i: u64 = block.first;
+        while (i < block.first + block.count) {
+            if (!ir_runtime_charge(p)) {
+                return false;
+            }
+            var inst: ptr<IrRuntimeInstruction> = &p.instructions[i];
+            if ((inst.op == 3 || inst.op == 4) && inst.dst < f.value_count) {
+                if ((inst.literal == 1 || inst.literal == 2) && inst.high == 0) {
+                    p.ordinals[f.first_value_type + inst.dst] = inst.low;
+                }
+            }
+            i += 1;
+        }
+        b += 1;
+    }
+    b = f.first_block;
+    while (b < f.first_block + f.block_count) {
+        var block: ptr<IrRuntimeBlock> = &p.blocks[b];
+        var i: u64 = block.first;
+        while (i < block.first + block.count) {
+            p.pending_site = i;
+            if (!ir_runtime_charge(p)) {
+                return false;
+            }
+            var inst: ptr<IrRuntimeInstruction> = &p.instructions[i];
+            if (!ir_runtime_supported(p, inst, i)) {
+                return false;
+            }
+            if (inst.op == 29) {
+                if (inst.sub != 0) {
+                    return ir_runtime_error(p, 5, i, 9, 0);
+                }
+                if (inst.flags == 0) {
+                    if (!ir_runtime_target(p, inst.a, i)) {
+                        return false;
+                    }
+                } else {
+                    var signature: u64 = p.value_types[f.first_value_type + inst.a];
+                    if (!ir_runtime_add_indirect(p, signature, i)) {
+                        return false;
+                    }
+                }
+            } else if (inst.op == 28) {
+                if (!ir_runtime_add_callable(p, inst.a)) {
+                    return false;
+                }
+            } else if (inst.op == 18 || inst.op == 23) {
+                if (!ir_runtime_layout(p, inst.ty)) {
+                    return false;
+                }
+                inst.size = p.layouts[inst.ty].size;
+                inst.natural = p.layouts[inst.ty].allocation_align;
+            } else if (inst.op == 24) {
+                var selected: u64 = p.types[p.value_types[f.first_value_type + inst.a]].child;
+                inst.plan_first = p.plan_count;
+                inst.plan_count = inst.count;
+                var index: u64 = 0;
+                while (index < inst.count) {
+                    if (!ir_runtime_charge(p) || p.plan_count >= p.plan_capacity) {
+                        if (p.result.status == 0) {
+                            ir_runtime_backend(p);
+                        }
+                        return false;
+                    }
+                    var plan: ptr<IrMemGep> = &p.plans[p.plan_count];
+                    plan.kind = 0;
+                    if (index == 0 || p.types[selected].kind == 19) {
+                        if (index != 0) {
+                            selected = p.types[selected].child;
+                        }
+                        if (!ir_runtime_layout(p, selected)) {
+                            return false;
+                        }
+                        plan.amount = p.layouts[selected].size;
+                        if (plan.amount == 0) {
+                            return ir_runtime_error(p, 5, i, 10, 0);
+                        }
+                    } else {
+                        var ordinal: u64 = p.ordinals[f.first_value_type
+                            + p.operands[inst.first + index]];
+                        if (!ir_runtime_layout(p, selected)
+                            || ordinal >= p.types[selected].count) {
+                            return ir_runtime_backend(p);
+                        }
+                        plan.kind = 1;
+                        plan.amount = p.layout_offsets[p.types[selected].first + ordinal];
+                        selected = p.type_edges[p.types[selected].first + ordinal];
+                    }
+                    p.plan_count += 1;
+                    index += 1;
+                }
+            }
+            i += 1;
+        }
+        b += 1;
+    }
+    return true;
+}
+
+fun ir_runtime_clear_value(value: ptr<IrRuntimeValue>) {
+    value.kind = 0;
+    value.ty = 18446744073709551615;
+    value.literal = 0;
+    value.low = 0;
+    value.high = 0;
+    value.flag = 0;
+    value.pointer.address = 0;
+    value.pointer.present = 0;
+    value.pointer.arena = 0;
+    value.pointer.allocation = 0;
+    value.pointer.generation = 0;
+    value.pointer.lower = 0;
+    value.pointer.upper = 0;
+    value.pointer.offset = 0;
+    value.pointer.read = 0;
+    value.pointer.write = 0;
+    value.signature = 18446744073709551615;
+    value.target_kind = 0;
+    value.target = 0;
+    value.origin = 1;
+}
+
+fun ir_runtime_literal(kind: u64) -> u64 {
+    if (kind == 1) {
+        return 3;
+    }
+    if (ir_verify_signed(kind)) {
+        return 1;
+    }
+    if (ir_verify_unsigned(kind)) {
+        return 2;
+    }
+    return kind - 10;
+}
+
+fun ir_runtime_make_scalar(p: ptr<IrRuntimeDriver>, ty: u64, low: u64, high: u64,
+    value: ptr<IrRuntimeValue>) {
+    ir_runtime_clear_value(value);
+    value.kind = 1;
+    value.ty = ty;
+    value.literal = ir_runtime_literal(p.types[ty].kind);
+    value.low = low;
+    value.high = high;
+}
+
+fun ir_runtime_initialize(p: ptr<IrRuntimeDriver>) -> bool {
+    p.pending_site = 18446744073709551615;
+    p.pending_head = 18446744073709551615;
+    p.result.global = 18446744073709551615;
+    p.result.site = 18446744073709551615;
+    if (!ir_power_two(p.function_table_capacity)
+        || p.function_count > p.function_table_capacity / 2
+        || !ir_storage_valid(p.storage)
+        || p.scalar_arguments > 1) {
+        return ir_runtime_backend(p);
+    }
+    var i: u64 = 0;
+    while (i < p.function_table_capacity) {
+        if (!ir_runtime_charge(p)) {
+            return false;
+        }
+        p.function_table[i] = 18446744073709551615;
+        i += 1;
+    }
+    i = 0;
+    while (i < p.function_count) {
+        if (!ir_runtime_charge(p)) {
+            return false;
+        }
+        var f: ptr<IrRuntimeFunction> = &p.functions[i];
+        if (f.signature >= p.type_count || p.types[f.signature].kind != 18
+            || f.first_block > p.block_count || f.block_count > p.block_count - f.first_block
+            || f.first_value_type > p.value_type_count
+            || f.value_count > p.value_type_count - f.first_value_type
+            || f.first_parameter > p.operand_count
+            || f.parameter_count > p.operand_count - f.first_parameter) {
+            return ir_runtime_backend(p);
+        }
+        var mask: u64 = p.function_table_capacity - 1;
+        var slot: u64 = ir_source_mix(f.id) & mask;
+        while (p.function_table[slot] != 18446744073709551615) {
+            if (!ir_runtime_charge(p)) {
+                return false;
+            }
+            if (p.functions[p.function_table[slot]].id == f.id) {
+                return ir_runtime_backend(p);
+            }
+            slot = (slot + 1) & mask;
+        }
+        p.function_table[slot] = i;
+        p.prepared[i] = 0;
+        p.pending_flags[i] = 0;
+        p.callable_flags[i] = 0;
+        i += 1;
+    }
+    i = 0;
+    while (i < p.type_count) {
+        if (!ir_runtime_charge(p)) {
+            return false;
+        }
+        var t: ptr<IrVerifyType> = &p.types[i];
+        var node: ptr<IrTypeNode> = &p.layout_nodes[i];
+        node.child = t.child;
+        node.first = t.first;
+        node.count = t.count;
+        node.kind = 0;
+        var width: u64 = ir_verify_width(t.kind);
+        if (t.kind == 1 || width == 1 || width == 8) {
+            node.kind = 1;
+        } else if (width == 16) {
+            node.kind = 2;
+        } else if (width == 32) {
+            node.kind = 3;
+        } else if (width == 64) {
+            node.kind = 4;
+        } else if (width == 128) {
+            node.kind = 5;
+        } else if (t.kind == 17 || t.kind == 18) {
+            node.kind = t.kind - 11;
+            node.child = i;
+        } else if (t.kind >= 19 && t.kind <= 21) {
+            node.kind = t.kind - 11;
+        }
+        i += 1;
+    }
+    i = 0;
+    while (i < p.value_type_count) {
+        if (!ir_runtime_charge(p)) {
+            return false;
+        }
+        p.ordinals[i] = 18446744073709551615;
+        i += 1;
+    }
+    p.entry = ir_runtime_find(p, p.entry_id);
+    if (p.result.status != 0) {
+        return false;
+    }
+    if (p.entry == 18446744073709551615 || p.functions[p.entry].has_body == 0) {
+        return ir_runtime_error(p, 1, 18446744073709551615, p.entry_id, 0);
+    }
+    var entry: ptr<IrRuntimeFunction> = &p.functions[p.entry];
+    var signature: ptr<IrVerifyType> = &p.types[entry.signature];
+    if (p.scalar_arguments == 1) {
+        i = 0;
+        while (i < signature.count) {
+            if (!ir_runtime_charge(p)) {
+                return false;
+            }
+            var kind: u64 = p.types[p.type_edges[signature.first + i]].kind;
+            if (!(i == 0 && kind == 0) && !ir_runtime_scalar(kind)) {
+                return ir_runtime_error(p, 2, 18446744073709551615, p.entry, 0);
+            }
+            i += 1;
+        }
+    }
+    if (p.argument_count != entry.parameter_count) {
+        return ir_runtime_error(p, 3, 18446744073709551615,
+            entry.parameter_count, p.argument_count);
+    }
+    i = 0;
+    while (i < p.argument_count) {
+        if (!ir_runtime_charge(p)) {
+            return false;
+        }
+        var argument: ptr<IrRuntimeValue> = &p.arguments[i];
+        var ty: u64 = p.type_edges[signature.first + 1 + i];
+        var kind: u64 = p.types[ty].kind;
+        var valid: bool = false;
+        if (argument.kind == 1) {
+            valid = ir_runtime_scalar(kind)
+                && ir_const_value_valid(kind, argument.literal, argument.low, argument.high);
+        } else if (argument.kind == 3) {
+            valid = kind == 17;
+        } else if (argument.kind == 4) {
+            valid = kind == 18 && ir_runtime_equal(p, ty, argument.signature);
+            if (valid && argument.target_kind == 1) {
+                var target: u64 = ir_runtime_find(p, argument.target);
+                valid = target != 18446744073709551615 && argument.origin == 1;
+                if (valid) {
+                    valid = ir_runtime_equal(p, ty, p.functions[target].signature);
+                }
+                if (valid && !ir_runtime_add_callable(p, target)) {
+                    return false;
+                }
+            } else if (argument.target_kind > 2) {
+                valid = false;
+            }
+        }
+        if (p.result.status != 0) {
+            return false;
+        }
+        if (valid && p.scalar_arguments == 0) {
+            valid = ir_runtime_equal(p, argument.ty, ty);
+        }
+        if (!valid) {
+            return ir_runtime_error(p, 4, 18446744073709551615, i, ty);
+        }
+        argument.ty = ty;
+        i += 1;
+    }
+    if (!ir_runtime_push_pending(p, p.entry)) {
+        return false;
+    }
+    while (p.pending_head != 18446744073709551615) {
+        var function: u64 = p.pending_head;
+        p.pending_head = p.pending_next[function];
+        if (p.pending_head != 18446744073709551615) {
+            p.pending_previous[p.pending_head] = 18446744073709551615;
+        }
+        p.pending_flags[function] = 0;
+        p.prepared[function] = 1;
+        if (!ir_runtime_prepare_function(p, function)) {
+            return false;
+        }
+    }
+    i = 0;
+    while (i < p.global_count) {
+        if (!ir_runtime_charge(p)) {
+            return false;
+        }
+        p.result.global = i;
+        var global: ptr<IrRuntimeGlobal> = &p.globals[i];
+        if (!ir_runtime_call_value(p.types[global.ty].kind)) {
+            return ir_runtime_error(p, 17, 18446744073709551615, i, 0);
+        }
+        if (!ir_runtime_layout(p, global.ty)) {
+            return false;
+        }
+        global.size = p.layouts[global.ty].size;
+        global.natural = p.layouts[global.ty].align;
+        i += 1;
+    }
+    p.result.global = 18446744073709551615;
+    p.pending_site = 18446744073709551615;
+    p.phase = 1;
+    p.cursor = 0;
+    p.global_phase = 0;
+    return true;
+}

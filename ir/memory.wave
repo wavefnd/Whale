@@ -1,0 +1,895 @@
+// SPDX-License-Identifier: MPL-2.0
+// Tracked identities are integers; native pointers address only caller buffers.
+struct IrMemPointer {
+    address: u64;
+    present: u64;
+    arena: u64;
+    allocation: u64;
+    generation: u64;
+    lower: u64;
+    upper: u64;
+    offset: u64;
+    read: u64;
+    write: u64;
+}
+
+struct IrMemAuthority {
+    kind: u64;
+    pointer: IrMemPointer;
+    signature: u64;
+    target_kind: u64;
+    target: u64;
+}
+
+struct IrMemFragment {
+    occupied: u64;
+    offset: u64;
+    ordinal: u64;
+    authority: IrMemAuthority;
+}
+
+struct IrMemAllocation {
+    kind: u64;
+    address: u64;
+    generation: u64;
+    alive: u64;
+    read: u64;
+    write: u64;
+    length: u64;
+    data: ptr<u8>;
+    initialized: ptr<u8>;
+    fragments: ptr<IrMemFragment>;
+    fragment_capacity: u64;
+    fragment_count: u64;
+}
+
+struct IrMemState {
+    arena: u64;
+    allocations: u64;
+    bytes: u64;
+    fragments: u64;
+    work: u64;
+    next_address: u64;
+}
+
+struct IrMemLimits {
+    bytes: u64;
+    allocations: u64;
+    fragments: u64;
+    work: u64;
+}
+
+struct IrMemPart {
+    offset: u64;
+    kind: u64;
+    low: u64;
+    high: u64;
+    authority: IrMemAuthority;
+}
+
+struct IrMemGep {
+    kind: u64;
+    amount: u64;
+    low: u64;
+    high: u64;
+    signed: u64;
+}
+
+struct IrMemRequest {
+    op: u64;
+    mode: u64;
+    size: u64;
+    natural: u64;
+    align: u64;
+    flag: u64;
+    owner: u64;
+    pointer: IrMemPointer;
+    source: IrMemPointer;
+    parts: ptr<IrMemPart>;
+    part_count: u64;
+    geps: ptr<IrMemGep>;
+    gep_count: u64;
+}
+
+struct IrMemResult {
+    status: u64;
+    detail: u64;
+    extra: u64;
+    work: u64;
+    allocation: u64;
+    start: u64;
+    end: u64;
+    fragments: u64;
+    fragment_capacity: u64;
+    low: u64;
+    high: u64;
+    pointer: IrMemPointer;
+}
+
+fun ir_mem_clear_pointer(p: ptr<IrMemPointer>) {
+    p.address = 0;
+    p.present = 0;
+    p.arena = 0;
+    p.allocation = 0;
+    p.generation = 0;
+    p.lower = 0;
+    p.upper = 0;
+    p.offset = 0;
+    p.read = 0;
+    p.write = 0;
+}
+
+fun ir_mem_zero_authority(a: ptr<IrMemAuthority>) {
+    a.kind = 0;
+    ir_mem_clear_pointer(&a.pointer);
+    a.signature = 0;
+    a.target_kind = 0;
+    a.target = 0;
+}
+
+fun ir_mem_fail(r: ptr<IrMemResult>, status: u64, detail: u64, extra: u64) -> i32 {
+    r.status = status;
+    r.detail = detail;
+    r.extra = extra;
+    return status as i32;
+}
+
+fun ir_mem_charge(r: ptr<IrMemResult>, n: u64, state: ptr<IrMemState>,
+    limits: ptr<IrMemLimits>) -> bool {
+    if (state.work > limits.work || r.work > limits.work - state.work
+ || n > limits.work - state.work - r.work) {
+        r.status = 104;
+        r.detail = limits.work;
+        return false;
+    }
+    r.work += n;
+    return true;
+}
+
+fun ir_mem_identity(state: ptr<IrMemState>, allocations: ptr<IrMemAllocation>,
+    p: ptr<IrMemPointer>, r: ptr<IrMemResult>) -> bool {
+    if (p.address == 0) {
+        ir_mem_fail(r, 1, 0, 0);
+        return false;
+    }
+    if (p.present == 0) {
+        ir_mem_fail(r, 2, 0, 0);
+        return false;
+    }
+    if (p.present != 1 || p.read > 1 || p.write > 1) {
+        ir_mem_fail(r, 200, 0, 0);
+        return false;
+    }
+    if (p.arena != state.arena || p.allocation >= state.allocations) {
+        ir_mem_fail(r, 3, 0, 0);
+        return false;
+    }
+    var a: ptr<IrMemAllocation> = &allocations[p.allocation];
+    if (a.kind > 1 || a.alive > 1 || a.read > 1 || a.write > 1
+ || (a.fragment_capacity != 0 && (a.fragment_capacity < 2
+ || !ir_power_two(a.fragment_capacity)))
+ || a.fragment_count > a.fragment_capacity / 2 || a.fragment_count > state.fragments) {
+        ir_mem_fail(r, 200, 0, 0);
+        return false;
+    }
+    if (a.alive == 0 || a.generation != p.generation) {
+        ir_mem_fail(r, 3, 0, 0);
+        return false;
+    }
+    if (p.lower > p.offset || p.offset > p.upper || p.upper > a.length
+ || p.offset > 18446744073709551615 - a.address || a.address + p.offset != p.address) {
+        ir_mem_fail(r, 4, 0, 0);
+        return false;
+    }
+    return true;
+}
+
+fun ir_mem_access(state: ptr<IrMemState>, allocations: ptr<IrMemAllocation>, p: ptr<IrMemPointer>,
+    size: u64, align: u64, write: bool, r: ptr<IrMemResult>) -> bool {
+    if (!ir_mem_identity(state, allocations, p, r)) {
+        return false;
+    }
+    if (size > 18446744073709551615 - p.offset) {
+        ir_mem_fail(r, 5, 0, 0);
+        return false;
+    }
+    if (p.offset + size > p.upper) {
+        ir_mem_fail(r, 4, 0, 0);
+        return false;
+    }
+    var a: ptr<IrMemAllocation> = &allocations[p.allocation];
+    if ((write && (p.write == 0 || a.write == 0)) || (!write && (p.read == 0 || a.read == 0))) {
+        ir_mem_fail(r, 6, 0, 0);
+        return false;
+    }
+    if (align == 0 || !ir_power_two(align)) {
+        ir_mem_fail(r, 200, 0, 0);
+        return false;
+    }
+    if (p.address % align != 0) {
+        ir_mem_fail(r, 7, p.address, align);
+        return false;
+    }
+    if (!ir_span_valid(a.data, a.length, 1) || !ir_span_valid(a.initialized, a.length,
+        1) || !ir_span_valid(a.fragments as ptr<u8>, a.fragment_capacity, 136)) {
+        ir_mem_fail(r, 200, 0, 0);
+        return false;
+    }
+    r.allocation = p.allocation;
+    r.start = p.offset;
+    r.end = p.offset + size;
+    return true;
+}
+
+fun ir_mem_part_size(kind: u64) -> u64 {
+    if (kind == 1 || kind == 2 || kind == 3 || kind == 4 || kind == 9) {
+        return 1;
+    }
+    if (kind == 5 || kind == 10 || kind == 14) {
+        return 2;
+    }
+    if (kind == 6 || kind == 11 || kind == 15) {
+        return 4;
+    }
+    if (kind == 7 || kind == 12 || kind == 16 || kind == 17 || kind == 18) {
+        return 8;
+    }
+    if (kind == 8 || kind == 13) {
+        return 16;
+    }
+    return 0;
+}
+
+fun ir_mem_authority_bits(a: ptr<IrMemAuthority>) -> u64 {
+    if (a.kind == 1) {
+        return a.pointer.address;
+    }
+    if (a.kind == 2) {
+        if (a.target_kind == 0) {
+            return 0;
+        }
+        if (a.target_kind == 1) {
+            return a.target + 1;
+        }
+        return a.target;
+    }
+    return 0;
+}
+
+fun ir_mem_authority_same(a: ptr<IrMemAuthority>, b: ptr<IrMemAuthority>) -> bool {
+    return a.kind == b.kind && a.signature == b.signature && a.target_kind == b.target_kind
+        && a.target == b.target         && a.pointer.address == b.pointer.address
+        && a.pointer.present == b.pointer.present && a.pointer.arena == b.pointer.arena
+        && a.pointer.allocation == b.pointer.allocation
+        && a.pointer.generation == b.pointer.generation
+        && a.pointer.lower == b.pointer.lower && a.pointer.upper == b.pointer.upper
+        && a.pointer.offset == b.pointer.offset         && a.pointer.read == b.pointer.read
+        && a.pointer.write == b.pointer.write;
+}
+
+fun ir_mem_fragment_find(table: ptr<IrMemFragment>, capacity: u64, offset: u64,
+    r: ptr<IrMemResult>, state: ptr<IrMemState>, limits: ptr<IrMemLimits>) -> u64 {
+    if (capacity == 0) {
+        return 0;
+    }
+    var at: u64 = ir_source_mix(offset) & (capacity - 1);
+    var n: u64 = 0;
+    while (n < capacity) {
+        if (!ir_mem_charge(r, 1, state, limits)) {
+            return capacity;
+        }
+        if (table[at].occupied == 0 || table[at].offset == offset) {
+            return at;
+        }
+        at = (at + 1) & (capacity - 1);
+        n += 1;
+    }
+    ir_mem_fail(r, 200, 0, 0);
+    return capacity;
+}
+
+fun ir_mem_fragment_put(table: ptr<IrMemFragment>, capacity: u64, offset: u64, ordinal: u64,
+    authority: ptr<IrMemAuthority>, r: ptr<IrMemResult>, state: ptr<IrMemState>,
+    limits: ptr<IrMemLimits>) -> bool {
+    var at: u64 = ir_mem_fragment_find(table, capacity, offset, r, state, limits);
+    if (at == capacity) {
+        return false;
+    }
+    table[at].occupied = 1;
+    table[at].offset = offset;
+    table[at].ordinal = ordinal;
+    table[at].authority = authority[0];
+    return true;
+}
+
+fun ir_mem_metadata_count(a: ptr<IrMemAllocation>, start: u64, end: u64, r: ptr<IrMemResult>,
+    state: ptr<IrMemState>, limits: ptr<IrMemLimits>) -> u64 {
+    var removed: u64 = 0;
+    var i: u64 = 0;
+    while (i < a.fragment_capacity) {
+        if (!ir_mem_charge(r, 1, state, limits)) {
+            return 18446744073709551615;
+        }
+        if (a.fragments[i].occupied == 1 && a.fragments[i].offset >= start
+            && a.fragments[i].offset < end) {
+            removed += 1;
+        }
+        i += 1;
+    }
+    return removed;
+}
+
+fun ir_mem_capacity(count: u64, r: ptr<IrMemResult>) -> u64 {
+    if (count == 0) {
+        return 0;
+    }
+    var capacity: u64 = 2;
+    if (count > 4611686018427387904) {
+        ir_mem_fail(r, 105, count, 0);
+        return 0;
+    }
+    while (capacity / 2 < count) {
+        capacity *= 2;
+    }
+    return capacity;
+}
+
+fun ir_mem_metadata_build(a: ptr<IrMemAllocation>, start: u64, end: u64,
+    source: ptr<IrMemAllocation>, source_start: u64, source_end: u64, q: ptr<IrMemRequest>,
+    output: ptr<IrMemFragment>, capacity: u64, r: ptr<IrMemResult>, state: ptr<IrMemState>,
+    limits: ptr<IrMemLimits>) -> bool {
+    var i: u64 = 0;
+    while (i < capacity) {
+        if (!ir_mem_charge(r, 1, state, limits)) {
+            return false;
+        }
+        output[i].occupied = 0;
+        i += 1;
+    }
+    i = 0;
+    while (i < a.fragment_capacity) {
+        if (!ir_mem_charge(r, 1, state, limits)) {
+            return false;
+        }
+        if (a.fragments[i].occupied == 1 && (a.fragments[i].offset < start
+ || a.fragments[i].offset >= end)) {
+            if (!ir_mem_fragment_put(output, capacity, a.fragments[i].offset,
+                a.fragments[i].ordinal, &a.fragments[i].authority, r, state, limits)) {
+                return false;
+            }
+        }
+        i += 1;
+    }
+    if (q.op == 6) {
+        i = 0;
+        while (i < source.fragment_capacity) {
+            if (!ir_mem_charge(r, 1, state, limits)) {
+                return false;
+            }
+            if (source.fragments[i].occupied == 1 && source.fragments[i].offset >= source_start
+                && source.fragments[i].offset < source_end) {
+                if (!ir_mem_fragment_put(output, capacity,
+                    start + source.fragments[i].offset - source_start, source.fragments[i].ordinal,
+                    &source.fragments[i].authority, r, state, limits)) {
+                    return false;
+                }
+            }
+            i += 1;
+        }
+    } else if (q.op == 4) {
+        i = 0;
+        while (i < q.part_count) {
+            var part: ptr<IrMemPart> = &q.parts[i];
+            if (part.kind == 17 || part.kind == 18) {
+                var k: u64 = 0;
+                while (k < 8) {
+                    if (!ir_mem_fragment_put(output, capacity, start + part.offset + k, k,
+                        &part.authority, r, state, limits)) {
+                        return false;
+                    }
+                    k += 1;
+                }
+            }
+            i += 1;
+        }
+    }
+    return true;
+}
+
+// Operations:0 allocate,1 seal-global,2 retire-stack,3 load,4 store,5 uninit,
+// 6 memcpy,7 memset,8 gep,9 equal,10 difference,11 retire-frame.
+export(c) fun whale_ir_memory(state: ptr<IrMemState>, limits: ptr<IrMemLimits>,
+    allocations: ptr<IrMemAllocation>, allocation_capacity: u64, q: ptr<IrMemRequest>,
+    new_fragments: ptr<IrMemFragment>, new_capacity: u64, output_parts: ptr<IrMemPart>,
+    output_part_capacity: u64, r: ptr<IrMemResult>) -> i32 {
+    if (r == null) {
+        return 200;
+    }
+    r.status = 0;
+    r.detail = 0;
+    r.extra = 0;
+    r.work = 0;
+    r.allocation = 18446744073709551615;
+    r.start = 0;
+    r.end = 0;
+    r.fragments = 0;
+    r.fragment_capacity = 0;
+    r.low = 0;
+    r.high = 0;
+    ir_mem_clear_pointer(&r.pointer);
+    if (state == null || limits == null || q == null || q.op > 11 || q.mode > 1
+ || state.allocations > allocation_capacity || state.bytes > limits.bytes
+ || state.fragments > limits.fragments || state.work > limits.work
+ || !ir_span_valid(allocations as ptr<u8>, allocation_capacity, 96)) {
+        return ir_mem_fail(r, 200, 0, 0);
+    }
+    if (q.op == 0) {
+        if (q.flag > 1 || q.natural == 0 || q.align == 0 || !ir_power_two(q.natural)
+ || !ir_power_two(q.align)) {
+            return ir_mem_fail(r, 200, 0, 0);
+        }
+        if (state.allocations >= limits.allocations) {
+            return ir_mem_fail(r, 102, limits.allocations, 0);
+        }
+        if (q.size > limits.bytes - state.bytes) {
+            return ir_mem_fail(r, 101, limits.bytes, 0);
+        }
+        var alignment: u64 = q.align;
+        if (q.natural > alignment) {
+            alignment = q.natural;
+        }
+        if (alignment - 1 > 18446744073709551615 - state.next_address) {
+            return ir_mem_fail(r, 5, 0, 0);
+        }
+        var address: u64 = (state.next_address + alignment - 1) & (18446744073709551615 - alignment + 1);
+        var span: u64 = q.size;
+        if (span == 0) {
+            span = 1;
+        }
+        if (span >= 18446744073709551615 - address || q.size > 9223372036854775807) {
+            return ir_mem_fail(r, 5, 0, 0);
+        }
+        if (!ir_mem_charge(r, q.size * 2 + 1, state, limits)) {
+            return r.status as i32;
+        }
+        r.pointer.address = address;
+        r.pointer.present = 1;
+        r.pointer.arena = state.arena;
+        r.pointer.allocation = state.allocations;
+        r.pointer.generation = 0;
+        r.pointer.lower = 0;
+        r.pointer.upper = q.size;
+        r.pointer.offset = 0;
+        r.pointer.read = 1;
+        r.pointer.write = 1;
+        r.allocation = state.allocations;
+        if (q.mode == 0) {
+            return 0;
+        }
+        if (state.allocations >= allocation_capacity) {
+            return ir_mem_fail(r, 200, 0, 0);
+        }
+        var a: ptr<IrMemAllocation> = &allocations[state.allocations];
+        if (!ir_span_valid(a.data, q.size, 1) || !ir_span_valid(a.initialized, q.size, 1)) {
+            return ir_mem_fail(r, 200, 0, 0);
+        }
+        var i: u64 = 0;
+        while (i < q.size) {
+            a.data[i] = 0;
+            a.initialized[i] = 0;
+            i += 1;
+        }
+        a.kind = q.flag;
+        a.address = address;
+        a.generation = 0;
+        a.alive = 1;
+        a.read = 1;
+        a.write = 1;
+        a.length = q.size;
+        a.fragment_capacity = 0;
+        a.fragment_count = 0;
+        a.fragments = null;
+        state.allocations += 1;
+        state.bytes += q.size;
+        state.next_address = address + span + 1;
+        state.work += r.work;
+        return 0;
+    }
+    if (q.op == 11) {
+        if (q.owner > state.allocations) {
+            return ir_mem_fail(r, 200, 0, 0);
+        }
+        if (!ir_mem_charge(r, state.allocations - q.owner, state, limits)) {
+            return r.status as i32;
+        }
+        if (q.mode == 1) {
+            var i: u64 = q.owner;
+            while (i < state.allocations) {
+                var a: ptr<IrMemAllocation> = &allocations[i];
+                if (a.kind == 0 && a.alive != 0) {
+                    a.alive = 0;
+                    state.fragments -= a.fragment_count;
+                    a.fragment_count = 0;
+                    a.fragment_capacity = 0;
+                    a.fragments = null;
+                    a.length = 0;
+                }
+                i += 1;
+            }
+            state.work += r.work;
+        }
+        return 0;
+    }
+    if (q.op == 9 && q.pointer.address == 0 && q.source.address == 0) {
+        r.low = 1;
+        return 0;
+    }
+    if (q.op == 9 && (q.pointer.address == 0 || q.source.address == 0)) {
+        var p: ptr<IrMemPointer> = &q.pointer;
+        if (q.pointer.address == 0) {
+            p = &q.source;
+        }
+        if (!ir_mem_identity(state, allocations, p, r)) {
+            return r.status as i32;
+        }
+        return 0;
+    }
+    if (q.op == 8 && q.gep_count == 0) {
+        r.pointer = q.pointer;
+        return 0;
+    }
+    if ((q.op == 6 || q.op == 7) && q.size == 0) {
+        return 0;
+    }
+    // memcpy validates its readable source before its writable destination.
+    if (q.op == 6
+        && !ir_mem_access(state, allocations, &q.source, q.size, q.align, false, r)) {
+        return r.status as i32;
+    }
+    if (!ir_mem_identity(state, allocations, &q.pointer, r)) {
+        return r.status as i32;
+    }
+    var a: ptr<IrMemAllocation> = &allocations[q.pointer.allocation];
+    if (q.op == 1) {
+        if (a.kind != 1) {
+            return ir_mem_fail(r, 13, 0, 0);
+        }
+        if (q.flag > 1) {
+            return ir_mem_fail(r, 200, 0, 0);
+        }
+        r.pointer = q.pointer;
+        r.pointer.write = 1 - q.flag;
+        if (q.mode == 1) {
+            a.write = 1 - q.flag;
+        }
+        return 0;
+    }
+    if (q.op == 2) {
+        if (q.pointer.allocation < q.owner || a.kind != 0 || q.pointer.offset != 0
+ || q.pointer.lower != 0 || q.pointer.upper != a.length) {
+            return ir_mem_fail(r, 13, 0, 0);
+        }
+        if (!ir_mem_charge(r, 1 + a.fragment_count, state, limits)) {
+            return r.status as i32;
+        }
+        if (q.mode == 1) {
+            a.alive = 0;
+            state.fragments -= a.fragment_count;
+            a.fragment_count = 0;
+            a.fragment_capacity = 0;
+            a.fragments = null;
+            a.length = 0;
+            state.work += r.work;
+        }
+        return 0;
+    }
+    if (q.op == 9 || q.op == 10) {
+        if (!ir_mem_identity(state, allocations, &q.source, r)) {
+            return r.status as i32;
+        }
+        if (q.op == 9) {
+            if (q.pointer.allocation == q.source.allocation
+                && q.pointer.generation == q.source.generation && q.pointer.offset == q.source.offset) {
+                r.low = 1;
+            }
+            return 0;
+        }
+        if (q.pointer.allocation != q.source.allocation
+ || q.pointer.generation != q.source.generation) {
+            return ir_mem_fail(r, 12, 0, 0);
+        }
+        if (q.pointer.offset >= q.source.offset) {
+            r.low = q.pointer.offset - q.source.offset;
+        } else {
+            r.low = 18446744073709551615 - (q.source.offset - q.pointer.offset) + 1;
+            r.high = 18446744073709551615;
+        }
+        return 0;
+    }
+    if (q.op == 8) {
+        if (!ir_span_valid(q.geps as ptr<u8>, q.gep_count, 40)) {
+            return ir_mem_fail(r, 200, 0, 0);
+        }
+        var address: u64 = q.pointer.address;
+        var i: u64 = 0;
+        while (i < q.gep_count) {
+            var g: ptr<IrMemGep> = &q.geps[i];
+            var delta: u64 = g.amount;
+            var negative: bool = false;
+            if (g.kind == 0) {
+                if (g.signed > 1 || (g.signed == 0 && g.high >= 9223372036854775808)) {
+                    return ir_mem_fail(r, 5, 0, 0);
+                }
+                var low: u64 = g.low;
+                var high: u64 = g.high;
+                negative = g.signed == 1 && high >= 9223372036854775808;
+                if (negative) {
+                    low = 18446744073709551615 - low + 1;
+                    high = 18446744073709551615 - high;
+                    if (low == 0) {
+                        high += 1;
+                    }
+                }
+                if (g.amount == 0) {
+                    delta = 0;
+                } else {
+                    if (high != 0 || low > 18446744073709551615 / g.amount) {
+                        return ir_mem_fail(r, 5, 0, 0);
+                    }
+                    delta = low * g.amount;
+                }
+            } else if (g.kind != 1) {
+                return ir_mem_fail(r, 200, 0, 0);
+            }
+            if (negative) {
+                if (delta > address) {
+                    return ir_mem_fail(r, 5, 0, 0);
+                }
+                address -= delta;
+            } else {
+                if (delta > 18446744073709551615 - address) {
+                    return ir_mem_fail(r, 5, 0, 0);
+                }
+                address += delta;
+            }
+            i += 1;
+        }
+        if (address < a.address) {
+            return ir_mem_fail(r, 4, 0, 0);
+        }
+        var offset: u64 = address - a.address;
+        if (offset < q.pointer.lower || offset > q.pointer.upper) {
+            return ir_mem_fail(r, 4, 0, 0);
+        }
+        r.pointer = q.pointer;
+        r.pointer.address = address;
+        r.pointer.offset = offset;
+        return 0;
+    }
+    var source: ptr<IrMemAllocation> = a;
+    var source_start: u64 = 0;
+    var source_end: u64 = 0;
+    if (q.op == 6) {
+        source = &allocations[q.source.allocation];
+        source_start = q.source.offset;
+        source_end = source_start + q.size;
+    }
+    if (!ir_mem_access(state, allocations, &q.pointer, q.size, q.align, q.op != 3, r)) {
+        return r.status as i32;
+    }
+    var start: u64 = r.start;
+    var end: u64 = r.end;
+    if (q.op == 6 && q.pointer.allocation == q.source.allocation && start < source_end
+        && source_start < end) {
+        return ir_mem_fail(r, 11, 0, 0);
+    }
+    if (q.op == 3 || q.op == 4) {
+        if (q.part_count == 0 || q.part_count > 2 || !ir_span_valid(q.parts as ptr<u8>,
+            q.part_count, 144) || (q.op == 3 && (output_part_capacity < q.part_count
+ || !ir_span_valid(output_parts as ptr<u8>, output_part_capacity, 144)))) {
+            return ir_mem_fail(r, 200, 0, 0);
+        }
+        var i: u64 = 0;
+        while (i < q.part_count) {
+            var n: u64 = ir_mem_part_size(q.parts[i].kind);
+            if (n == 0 || q.parts[i].offset > q.size || n > q.size - q.parts[i].offset) {
+                return ir_mem_fail(r, 200, 0, 0);
+            }
+            i += 1;
+        }
+    }
+    if (!ir_mem_charge(r, q.size, state, limits)) {
+        return r.status as i32;
+    }
+    if (q.op == 3) {
+        var i: u64 = 0;
+        while (i < q.part_count) {
+            var part: IrMemPart = q.parts[i];
+            var n: u64 = ir_mem_part_size(part.kind);
+            var offset: u64 = start + part.offset;
+            var k: u64 = 0;
+            var low: u64 = 0;
+            var high: u64 = 0;
+            while (k < n) {
+                if (a.initialized[offset + k] == 0) {
+                    return ir_mem_fail(r, 8, offset + k, 0);
+                }
+                if (k < 8) {
+                    low = low | ((a.data[offset + k] as u64) << (k * 8));
+                } else {
+                    high = high | ((a.data[offset + k] as u64) << ((k - 8) * 8));
+                }
+                k += 1;
+            }
+            part.low = low;
+            part.high = high;
+            ir_mem_zero_authority(&part.authority);
+            if (part.kind == 1 && low > 1) {
+                return ir_mem_fail(r, 9, low, 0);
+            }
+            if (part.kind == 17 || part.kind == 18) {
+                var at: u64 = ir_mem_fragment_find(a.fragments, a.fragment_capacity, offset, r,
+                    state, limits);
+                if (r.status != 0) {
+                    return r.status as i32;
+                }
+                var complete: bool = at < a.fragment_capacity && a.fragments[at].occupied == 1
+                    && a.fragments[at].ordinal == 0
+                    && ir_mem_authority_bits(&a.fragments[at].authority) == low;
+                var authority: IrMemAuthority;
+                ir_mem_zero_authority(&authority);
+                if (complete) {
+                    authority = a.fragments[at].authority;
+                }
+                k = 1;
+                while (complete && k < 8) {
+                    at = ir_mem_fragment_find(a.fragments, a.fragment_capacity, offset + k, r,
+                        state, limits);
+                    if (r.status != 0) {
+                        return r.status as i32;
+                    }
+                    complete = at < a.fragment_capacity && a.fragments[at].occupied == 1
+                        && a.fragments[at].ordinal == k && ir_mem_authority_same(&authority,
+                        &a.fragments[at].authority);
+                    k += 1;
+                }
+                if (low != 0 && complete && ((part.kind == 17 && authority.kind == 1)
+ || (part.kind == 18 && authority.kind == 2
+                    && authority.signature == q.parts[i].authority.signature))) {
+                    part.authority = authority;
+                }
+            }
+            if (part.kind == 2 || (part.kind >= 4 && part.kind <= 8)) {
+                var bits: u64 = n * 8;
+                if (part.kind == 2) {
+                    bits = 1;
+                }
+                if (bits < 64) {
+                    var one: u64 = 1;
+                    var all: u64 = 18446744073709551615;
+                    low = low & ((one << bits) - 1);
+                    if ((low >> (bits - 1)) != 0) {
+                        low = low | (all << bits);
+                        high = all;
+                    }
+                } else if (bits == 64 && low >= 9223372036854775808) {
+                    high = 18446744073709551615;
+                }
+                part.low = low;
+                part.high = high;
+            } else if (part.kind == 3) {
+                part.low = low & 1;
+            }
+            output_parts[i] = part;
+            i += 1;
+        }
+        if (q.mode == 1) {
+            state.work += r.work;
+        }
+        return 0;
+    }
+    var added: u64 = 0;
+    if (q.op == 4) {
+        var i: u64 = 0;
+        while (i < q.part_count) {
+            if (q.parts[i].kind == 17 || q.parts[i].kind == 18) {
+                added += 8;
+            }
+            i += 1;
+        }
+    }
+    if (q.op == 6) {
+        added = ir_mem_metadata_count(source, source_start, source_end, r, state, limits);
+        if (r.status != 0) {
+            return r.status as i32;
+        }
+    }
+    var removed: u64 = ir_mem_metadata_count(a, start, end, r, state, limits);
+    if (r.status != 0) {
+        return r.status as i32;
+    }
+    if (removed > a.fragment_count || removed > state.fragments
+ || added > 18446744073709551615 - state.fragments + removed) {
+        return ir_mem_fail(r, 200, 0, 0);
+    }
+    var total: u64 = state.fragments - removed + added;
+    if (total > limits.fragments) {
+        return ir_mem_fail(r, 103, limits.fragments, 0);
+    }
+    var count: u64 = a.fragment_count - removed + added;
+    var capacity: u64 = ir_mem_capacity(count, r);
+    if (r.status != 0) {
+        return r.status as i32;
+    }
+    r.fragments = count;
+    r.fragment_capacity = capacity;
+    if (q.mode == 0) {
+        return 0;
+    }
+    if (new_capacity < capacity || !ir_span_valid(new_fragments as ptr<u8>, new_capacity, 136)) {
+        return ir_mem_fail(r, 200, 0, 0);
+    }
+    if (!ir_mem_metadata_build(a, start, end, source, source_start, source_end, q, new_fragments,
+        capacity, r, state, limits)) {
+        return r.status as i32;
+    }
+    // Reserve every physical byte operation before publishing any destination.
+    var copy_cost: u64 = q.size;
+    if (q.op == 6 || q.op == 7) {
+        copy_cost = q.size * 2;
+    }
+    if (q.size > 9223372036854775807 || !ir_mem_charge(r, copy_cost, state, limits)) {
+        if (r.status == 0) {
+            return ir_mem_fail(r, 5, 0, 0);
+        }
+        return r.status as i32;
+    }
+    if (q.op == 4) {
+        var i: u64 = 0;
+        while (i < q.part_count) {
+            var part: ptr<IrMemPart> = &q.parts[i];
+            var n: u64 = ir_mem_part_size(part.kind);
+            var k: u64 = 0;
+            while (k < n) {
+                var octet: u8 = 0;
+                if (k < 8) {
+                    octet = (part.low >> (k * 8)) as u8;
+                } else {
+                    octet = (part.high >> ((k - 8) * 8)) as u8;
+                }
+                a.data[start + part.offset + k] = octet;
+                a.initialized[start + part.offset + k] = 1;
+                k += 1;
+            }
+            i += 1;
+        }
+    } else if (q.op == 5) {
+        var i: u64 = start;
+        while (i < end) {
+            a.initialized[i] = 0;
+            i += 1;
+        }
+    } else if (q.op == 6) {
+        var i: u64 = 0;
+        while (i < q.size) {
+            a.data[start + i] = source.data[source_start + i];
+            a.initialized[start + i] = source.initialized[source_start + i];
+            i += 1;
+        }
+    } else if (q.op == 7) {
+        var i: u64 = start;
+        while (i < end) {
+            a.data[i] = q.flag as u8;
+            a.initialized[i] = 1;
+            i += 1;
+        }
+    } else {
+        return ir_mem_fail(r, 200, 0, 0);
+    }
+    a.fragments = new_fragments;
+    a.fragment_capacity = capacity;
+    a.fragment_count = count;
+    state.fragments = total;
+    state.work += r.work;
+    return 0;
+}

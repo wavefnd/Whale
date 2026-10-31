@@ -1,0 +1,195 @@
+// SPDX-License-Identifier: MPL-2.0
+// Caller-owned IR records and execution storage; no native address is a value ID.
+struct IrRuntimeValue {
+    kind: u64;
+    ty: u64;
+    literal: u64;
+    low: u64;
+    high: u64;
+    flag: u64;
+    pointer: IrMemPointer;
+    signature: u64;
+    target_kind: u64;
+    target: u64;
+    origin: u64;
+}
+
+struct IrRuntimeSlot {
+    generation: u64;
+    value: IrRuntimeValue;
+}
+
+struct IrRuntimeFrame {
+    function: u64;
+    block: u64;
+    predecessor: u64;
+    instruction: u64;
+    value_base: u64;
+    value_count: u64;
+    generation: u64;
+    allocation_start: u64;
+    return_slot: u64;
+    call_site: u64;
+}
+
+struct IrRuntimeFunction {
+    id: u64;
+    signature: u64;
+    entry: u64;
+    first_block: u64;
+    block_count: u64;
+    first_parameter: u64;
+    parameter_count: u64;
+    value_count: u64;
+    first_value_type: u64;
+    has_body: u64;
+    linkage: u64;
+}
+
+struct IrRuntimeBlock {
+    id: u64;
+    function: u64;
+    first: u64;
+    count: u64;
+}
+
+struct IrRuntimeInstruction {
+    op: u64;
+    sub: u64;
+    ty: u64;
+    other: u64;
+    dst: u64;
+    a: u64;
+    b: u64;
+    c: u64;
+    align: u64;
+    size: u64;
+    natural: u64;
+    first: u64;
+    count: u64;
+    low: u64;
+    high: u64;
+    literal: u64;
+    signature: u64;
+    flags: u64;
+    global: u64;
+    plan_first: u64;
+    plan_count: u64;
+}
+
+struct IrRuntimeGlobal {
+    id: u64;
+    ty: u64;
+    size: u64;
+    align: u64;
+    natural: u64;
+    readonly: u64;
+    initialized: u64;
+    value: IrRuntimeValue;
+}
+
+struct IrRuntimeEvent {
+    kind: u64;
+    ty: u64;
+    size: u64;
+    natural: u64;
+    align: u64;
+    flag: u64;
+    owner: u64;
+    first: u64;
+    count: u64;
+    frame_capacity: u64;
+    value_capacity: u64;
+    phi_capacity: u64;
+    left: IrRuntimeValue;
+    right: IrRuntimeValue;
+}
+
+struct IrRuntimeResult {
+    status: u64;
+    error: u64;
+    site: u64;
+    detail: u64;
+    extra: u64;
+    global: u64;
+    steps: u64;
+    value: IrRuntimeValue;
+    event: IrRuntimeEvent;
+}
+
+struct IrRuntimeDriver {
+    types: ptr<IrVerifyType>;
+    type_count: u64;
+    type_edges: ptr<u64>;
+    type_edge_count: u64;
+    functions: ptr<IrRuntimeFunction>;
+    function_count: u64;
+    blocks: ptr<IrRuntimeBlock>;
+    block_count: u64;
+    instructions: ptr<IrRuntimeInstruction>;
+    instruction_count: u64;
+    operands: ptr<u64>;
+    operand_count: u64;
+    value_types: ptr<u64>;
+    value_type_count: u64;
+    globals: ptr<IrRuntimeGlobal>;
+    global_count: u64;
+    global_values: ptr<IrRuntimeValue>;
+    arguments: ptr<IrRuntimeValue>;
+    argument_count: u64;
+    scalar_arguments: u64;
+    entry_id: u64;
+    storage: ptr<IrStorage>;
+    layout_nodes: ptr<IrTypeNode>;
+    layouts: ptr<IrTypeLayout>;
+    layout_offsets: ptr<u64>;
+    plans: ptr<IrMemGep>;
+    plan_capacity: u64;
+    plan_count: u64;
+    ordinals: ptr<u64>;
+    function_table: ptr<u64>;
+    function_table_capacity: u64;
+    prepared: ptr<u8>;
+    pending_previous: ptr<u64>;
+    pending_next: ptr<u64>;
+    pending_flags: ptr<u8>;
+    callable_flags: ptr<u8>;
+    callable_targets: ptr<u64>;
+    callable_count: u64;
+    indirect_signatures: ptr<u64>;
+    indirect_sites: ptr<u64>;
+    indirect_count: u64;
+    indirect_capacity: u64;
+    pending_head: u64;
+    frames: ptr<IrRuntimeFrame>;
+    frame_capacity: u64;
+    frame_count: u64;
+    slots: ptr<IrRuntimeSlot>;
+    slot_capacity: u64;
+    slot_count: u64;
+    phis: ptr<IrRuntimeValue>;
+    phi_capacity: u64;
+    phase: u64;
+    cursor: u64;
+    global_phase: u64;
+    entry: u64;
+    pending: u64;
+    pending_destination: u64;
+    pending_type: u64;
+    pending_flag: u64;
+    pending_target: u64;
+    pending_site: u64;
+    pending_value: IrRuntimeValue;
+    resume: u64;
+    resume_value: IrRuntimeValue;
+    memory_allocations: u64;
+    frames_created: u64;
+    steps: u64;
+    work: u64;
+    max_steps: u64;
+    max_depth: u64;
+    max_frames: u64;
+    max_values: u64;
+    max_work: u64;
+    result: ptr<IrRuntimeResult>;
+}

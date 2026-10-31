@@ -95,17 +95,20 @@ jobs:
               -Wl,--no-whole-archive -o "$RUNNER_TEMP/wave-ir-o$optimization.so"
             ir_python="$(command -v python3)"
             for component in layout lexer header type literal expression instruction source \
-                builder body printer verifier ssa ast_limits lower_type lowering hir cfg shape; do
+                builder body printer verifier ssa ast_limits lower_type lowering hir cfg shape \
+                integer float memory runtime passes; do
               ir_cases=10000
               if [ "$component" = literal ]; then ir_cases=100000; fi
               if [ "$component" = builder ]; then ir_cases=30000; fi
+              if [ "$component" = integer ]; then ir_cases=100000; fi
+              if [ "$component" = runtime ] || [ "$component" = passes ]; then ir_cases=2000; fi
               timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$ir_python" \
                 "tools/check_wave_ir_$component.py" \
                 --library "$RUNNER_TEMP/wave-ir-o$optimization.so" --cases "$ir_cases"
             done
+            WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o$optimization" \
+              cargo test -p ir --all-features --locked --offline
           done
-          WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o2" \
-            cargo test -p ir --all-features --locked --offline
       - name: Reproduce the pinned typed HIR fixture
         run: |
           python3 tools/check_wave_hir_fixture.py --wave-source .asmobj-bootstrap-source \

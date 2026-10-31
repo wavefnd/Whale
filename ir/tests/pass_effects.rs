@@ -242,3 +242,36 @@ fn volatile_function_pointer_loads_retain_the_callable_signature() {
     let m = parse_module(source).unwrap();
     assert_eq!(interpret(&m, FunctionId(0), &[]).unwrap().value, Some(ConstValue::U(42)));
 }
+
+struct ReverseValueTable(bool);
+
+impl Pass for ReverseValueTable {
+    fn name(&self) -> &str {
+        "reverse-value-table"
+    }
+
+    fn run(&mut self, module: &mut Module) -> Result<PassChange, String> {
+        module.functions[0].value_types.reverse();
+        Ok(PassChange {
+            changed: self.0,
+            invalidates: if self.0 { Invalidates::ALL } else { Invalidates::default() },
+        })
+    }
+}
+
+#[test]
+fn exact_pass_identity_includes_unprinted_value_table_order() {
+    let mut module = module(false);
+    let original = module.clone();
+    let text = print_module(&module);
+    let mut state = AnalysisState::default();
+    assert_eq!(
+        run_pass(&mut module, &mut ReverseValueTable(false), &mut state).unwrap_err().stage,
+        PassStage::Contract
+    );
+    assert_eq!(module, original);
+    assert!(run_pass(&mut module, &mut ReverseValueTable(true), &mut state).unwrap().changed);
+    assert_eq!(print_module(&module), text);
+    assert_ne!(module, original);
+    assert_eq!(state.epoch(AnalysisKind::Values), 1);
+}

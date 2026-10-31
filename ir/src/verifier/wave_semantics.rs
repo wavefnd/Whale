@@ -10,7 +10,7 @@ use crate::{
 const MISSING: u64 = u64::MAX;
 
 #[repr(C)]
-pub(super) struct Node {
+pub(crate) struct Node {
     kind: u64,
     child: u64,
     first: u64,
@@ -98,15 +98,15 @@ unsafe extern "C" {
 }
 
 #[derive(Default)]
-pub(super) struct Input {
-    pub(super) nodes: Vec<Node>,
-    pub(super) edges: Vec<u64>,
+pub(crate) struct Input {
+    pub(crate) nodes: Vec<Node>,
+    pub(crate) edges: Vec<u64>,
     operands: Vec<Operand>,
 }
 
 impl Input {
     // This only serializes syntax. Wave decides all type equality/category rules.
-    pub(super) fn ty(&mut self, ty: &Type) -> u64 {
+    pub(crate) fn ty(&mut self, ty: &Type) -> u64 {
         let mut node = Node { kind: 0, child: 0, first: 0, count: 0, extra: 0 };
         node.kind = match ty {
             Type::Void => 0,

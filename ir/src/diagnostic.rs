@@ -104,6 +104,7 @@ impl ToDiagnostic for InterpreterError {
         let code = match self.root_cause() {
             Self::Diagnostic { .. } => "ir.run.diagnostic",
             Self::Verification(..) => "ir.run.verification",
+            Self::Backend { .. } => "ir.run.backend",
             Self::UnknownFunction(..) => "ir.run.unknown-function",
             Self::UnsupportedGlobal(..) => "ir.run.unsupported-global",
             Self::GlobalMemory { .. } => "ir.run.global-memory",
@@ -119,6 +120,7 @@ impl ToDiagnostic for InterpreterError {
         };
         let mut d = Diagnostic::new("ir", "run", code, self.to_string());
         let site = match self.root_cause() {
+            Self::Backend { site, .. } => *site,
             Self::UnsupportedInstruction { site, .. }
             | Self::StepLimit { site, .. }
             | Self::MemoryLimit { site, .. }

@@ -16,7 +16,7 @@ mod wave_cfg;
 mod wave_shape;
 
 #[cfg(whale_wave_ir)]
-mod wave_semantics;
+pub(crate) mod wave_semantics;
 
 #[cfg(whale_wave_ir)]
 mod wave_ssa;

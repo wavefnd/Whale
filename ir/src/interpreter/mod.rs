@@ -8,15 +8,20 @@ mod scalar;
 
 mod memory;
 
+#[cfg(whale_wave_ir)]
+mod runtime_wave;
+
 pub use memory::{MemoryLimits, MemoryResource, MemoryTrap};
 
 use crate::*;
 
-use std::{
-    collections::{HashMap, HashSet},
-    fmt,
-    sync::Arc,
-};
+#[cfg(not(whale_wave_ir))]
+use std::collections::HashMap;
+
+use std::{fmt, sync::Arc};
+
+#[cfg(not(whale_wave_ir))]
+use std::collections::HashSet;
 
 /// Limits verification as well as executed instructions and terminators.
 #[derive(Clone, Copy, Debug)]
@@ -178,6 +183,10 @@ pub enum InterpreterError {
         diagnostic: Box<RuntimeDiagnostic>,
     },
     Verification(Box<VerifyError>),
+    Backend {
+        site: Option<ExecutionSite>,
+        reason: &'static str,
+    },
     UnknownFunction(FunctionId),
     UnsupportedGlobal(crate::GlobalId),
     GlobalMemory {
@@ -224,6 +233,7 @@ impl fmt::Display for InterpreterError {
         match self {
             Self::Diagnostic { cause, diagnostic } => { cause.root_cause().fmt(f)?; diagnostic.fmt(f) },
             Self::Verification(e) => write!(f, "IR verification failed: {e:?}"),
+            Self::Backend { site, reason } => { write!(f, "IR Wave backend error: {reason}")?; if let Some(site) = site { write!(f, " at {site}")?; } Ok(()) },
             Self::UnsupportedGlobal(id) => write!(f, "unsupported interpreter global storage @g{}", id.0),
             Self::GlobalMemory { global, reason } => write!(f, "global storage @g{}: {reason}", global.0),
             Self::GlobalMemoryLimit { global, resource, limit } => write!(f, "global storage @g{} memory {resource:?} limit {limit}", global.0),
@@ -267,6 +277,7 @@ impl InterpreterError {
     fn runtime_site(&self) -> Option<ExecutionSite> {
         match self.root_cause() {
             Self::Trap(trap) => Some(trap.site),
+            Self::Backend { site, .. } => *site,
             Self::StepLimit { site, .. }
             | Self::MemoryLimit { site, .. }
             | Self::CallLimit { site, .. } => Some(*site),
@@ -438,6 +449,7 @@ impl Value {
         }
     }
 
+    #[cfg(any(test, not(whale_wave_ir)))]
     fn pointer(&self) -> memory::Pointer {
         match self {
             Self::Pointer(p) => *p,
@@ -445,6 +457,7 @@ impl Value {
         }
     }
 
+    #[cfg(not(whale_wave_ir))]
     fn boolean(&self) -> bool {
         match self.scalar() {
             ConstValue::Bool(v) => *v,
@@ -457,6 +470,7 @@ fn scalar_type(ty: &Type) -> bool {
     *ty == Type::Bool || integer::shape(ty).is_some() || scalar::float_type(ty)
 }
 
+#[cfg(not(whale_wave_ir))]
 fn value_type(ty: &Type) -> bool {
     scalar_type(ty)
         || matches!(ty, Type::Ptr(_) | Type::FnPtr(_))
@@ -500,6 +514,7 @@ fn destination(inst: &Instruction) -> Option<ValueId> {
     }
 }
 
+#[cfg(not(whale_wave_ir))]
 fn supported(inst: &Instruction) -> Result<(), &'static str> {
     use Instruction::*;
     let unsupported = match inst {
@@ -576,6 +591,7 @@ fn supported(inst: &Instruction) -> Result<(), &'static str> {
     Err(unsupported)
 }
 
+#[cfg(not(whale_wave_ir))]
 fn allocation_type(root: &Type) -> bool {
     let mut pending = vec![root];
     while let Some(ty) = pending.pop() {
@@ -591,8 +607,26 @@ fn allocation_type(root: &Type) -> bool {
     true
 }
 
+#[cfg(not(whale_wave_ir))]
+fn integer_failure(
+    error: integer::IntegerError,
+    site: ExecutionSite,
+    steps: u64,
+) -> InterpreterError {
+    match error {
+        integer::IntegerError::Trap(reason) => {
+            InterpreterError::Trap(InterpreterTrap { site, reason, steps })
+        },
+        integer::IntegerError::Backend(reason) => {
+            InterpreterError::Backend { site: Some(site), reason }
+        },
+    }
+}
+
+#[cfg(not(whale_wave_ir))]
 fn memory_failure(fault: memory::Fault, site: ExecutionSite, steps: u64) -> InterpreterError {
     match fault {
+        memory::Fault::Backend(reason) => InterpreterError::Backend { site: Some(site), reason },
         memory::Fault::Trap(reason) => InterpreterError::Trap(InterpreterTrap {
             site,
             reason: TrapReason::Memory(reason),
@@ -604,6 +638,7 @@ fn memory_failure(fault: memory::Fault, site: ExecutionSite, steps: u64) -> Inte
     }
 }
 
+#[cfg(not(whale_wave_ir))]
 fn gep_plan(
     value_types: &HashMap<ValueId, &Type>,
     ordinals: &HashMap<ValueId, usize>,
@@ -636,6 +671,7 @@ fn gep_plan(
     plan
 }
 
+#[cfg(not(whale_wave_ir))]
 fn pointer_compare(
     memory: &memory::Memory,
     pred: &ICmpPred,
@@ -657,6 +693,7 @@ fn pointer_compare(
     })
 }
 
+#[cfg(not(whale_wave_ir))]
 fn cmp_pred(op: CmpOp) -> ICmpPred {
     use CmpOp::*;
     match op {
@@ -729,6 +766,7 @@ impl Arguments<'_, '_> {
         }
     }
 
+    #[cfg(not(whale_wave_ir))]
     fn value(&self, index: usize) -> Value {
         match self {
             Self::Scalars(values) => Value::Scalar(values[index].clone()),
@@ -736,6 +774,7 @@ impl Arguments<'_, '_> {
         }
     }
 
+    #[cfg(not(whale_wave_ir))]
     fn valid_type(&self, index: usize, expected: &Type) -> bool {
         match self {
             Self::Scalars(_) => true,
@@ -759,6 +798,7 @@ impl Arguments<'_, '_> {
     }
 }
 
+#[cfg(not(whale_wave_ir))]
 struct Prepared<'a> {
     fun: &'a Function,
     value_capacity: usize,
@@ -770,15 +810,22 @@ struct Prepared<'a> {
 
 struct Frame {
     function: FunctionId,
+    #[cfg(not(whale_wave_ir))]
     values: HashMap<ValueId, Value>,
+    #[cfg(not(whale_wave_ir))]
     current: BlockId,
+    #[cfg(not(whale_wave_ir))]
     predecessor: Option<BlockId>,
+    #[cfg(not(whale_wave_ir))]
     instruction: usize,
+    #[cfg(not(whale_wave_ir))]
     allocation_start: usize,
+    #[cfg(not(whale_wave_ir))]
     return_destination: Option<ValueId>,
     call_site: Option<ExecutionSite>,
 }
 
+#[cfg(not(whale_wave_ir))]
 fn callable_signature(signature: &FunctionSignature) -> bool {
     signature.convention == CallingConvention::Whale
         && !signature.variadic
@@ -786,10 +833,12 @@ fn callable_signature(signature: &FunctionSignature) -> bool {
         && (signature.ret == Type::Void || call_value_type(&signature.ret))
 }
 
+#[cfg(not(whale_wave_ir))]
 fn call_value_type(ty: &Type) -> bool {
     scalar_type(ty) || matches!(ty, Type::Ptr(_) | Type::FnPtr(_))
 }
 
+#[cfg(not(whale_wave_ir))]
 fn intern_signature<'a>(
     signatures: &mut HashMap<&'a FunctionSignature, Arc<FunctionSignature>>,
     signature: &'a FunctionSignature,
@@ -797,6 +846,7 @@ fn intern_signature<'a>(
     signatures.entry(signature).or_insert_with(|| Arc::new(signature.clone())).clone()
 }
 
+#[cfg(not(whale_wave_ir))]
 fn frame_values(
     fun: &Function,
     arguments: impl IntoIterator<Item = Value>,
@@ -943,6 +993,17 @@ fn runtime_failure(
     }
 }
 
+#[cfg(whale_wave_ir)]
+fn run_inner<'module>(
+    module: &'module Module,
+    function: FunctionId,
+    arguments: Arguments<'_, '_>,
+    options: InterpreterOptions,
+) -> Result<RuntimeInterpreterResult<'module>, InterpreterError> {
+    runtime_wave::run(module, function, arguments, options)
+}
+
+#[cfg(not(whale_wave_ir))]
 fn run_inner<'module>(
     module: &'module Module,
     function: FunctionId,
@@ -1200,6 +1261,7 @@ fn run_inner<'module>(
     let mut global_pointers = HashMap::new();
     for global in &module.global_storage {
         let failure = |fault| match fault {
+            memory::Fault::Backend(reason) => InterpreterError::Backend { site: None, reason },
             memory::Fault::Trap(reason) => {
                 InterpreterError::GlobalMemory { global: global.id, reason }
             },
@@ -1448,20 +1510,17 @@ fn run_inner<'module>(
                         ConstValue::F(value) => {
                             ConstValue::F(crate::float::arithmetic::negate(*value))
                         },
-                        value => integer::pack(
-                            ty,
-                            0u128.wrapping_sub(integer::raw(value, integer::shape(ty).unwrap().0)),
-                        ),
+                        value => integer::try_unary(true, ty, value)
+                            .map_err(|e| integer_failure(e, at, steps))?,
                     }),
                     Instruction::Bin { op, ty, lhs, rhs, .. } => Value::Scalar(
-                        integer::bin(op, ty, scalar(lhs), scalar(rhs)).map_err(|reason| {
-                            InterpreterError::Trap(InterpreterTrap { site: at, reason, steps })
-                        })?,
+                        integer::try_bin(op, ty, scalar(lhs), scalar(rhs))
+                            .map_err(|e| integer_failure(e, at, steps))?,
                     ),
-                    Instruction::Not { ty, src, .. } => Value::Scalar(integer::pack(
-                        ty,
-                        !integer::raw(scalar(src), integer::shape(ty).unwrap().0),
-                    )),
+                    Instruction::Not { ty, src, .. } => Value::Scalar(
+                        integer::try_unary(false, ty, scalar(src))
+                            .map_err(|e| integer_failure(e, at, steps))?,
+                    ),
                     Instruction::Cmp { op, ty, lhs, rhs, .. } => {
                         let result = if scalar::float_type(ty) {
                             scalar::compare(
@@ -1478,7 +1537,8 @@ fn run_inner<'module>(
                             )
                             .map_err(|e| memory_failure(e, at, steps))?
                         } else {
-                            integer::compare(&cmp_pred(*op), ty, scalar(lhs), scalar(rhs))
+                            integer::try_compare(&cmp_pred(*op), ty, scalar(lhs), scalar(rhs))
+                                .map_err(|e| integer_failure(e, at, steps))?
                         };
                         Value::Scalar(ConstValue::Bool(result))
                     },
@@ -1487,7 +1547,8 @@ fn run_inner<'module>(
                             pointer_compare(&memory, pred, get(lhs).pointer(), get(rhs).pointer())
                                 .map_err(|e| memory_failure(e, at, steps))?
                         } else {
-                            integer::compare(pred, ty, scalar(lhs), scalar(rhs))
+                            integer::try_compare(pred, ty, scalar(lhs), scalar(rhs))
+                                .map_err(|e| integer_failure(e, at, steps))?
                         };
                         Value::Scalar(ConstValue::Bool(result))
                     },
@@ -1514,15 +1575,8 @@ fn run_inner<'module>(
                                 })?,
                         ),
                         CastOp::CheckedInt => Value::Scalar(
-                            integer::checked_cast(src_ty, dst_ty, scalar(src)).map_err(
-                                |reason| {
-                                    InterpreterError::Trap(InterpreterTrap {
-                                        site: at,
-                                        reason,
-                                        steps,
-                                    })
-                                },
-                            )?,
+                            integer::try_checked_cast(src_ty, dst_ty, scalar(src))
+                                .map_err(|e| integer_failure(e, at, steps))?,
                         ),
                         CastOp::IntToPtr => {
                             Value::Pointer(memory::Pointer::raw(
@@ -1537,7 +1591,10 @@ fn run_inner<'module>(
                         CastOp::Bitcast => {
                             Value::Scalar(scalar::pack(dst_ty, scalar::raw(src_ty, scalar(src))))
                         },
-                        _ => Value::Scalar(integer::cast(op, src_ty, dst_ty, scalar(src))),
+                        _ => Value::Scalar(
+                            integer::try_cast(op, src_ty, dst_ty, scalar(src))
+                                .map_err(|e| integer_failure(e, at, steps))?,
+                        ),
                     },
                     Instruction::Alloca { align, .. } => {
                         let (size, natural) = sizes[&(current, index)];
@@ -1600,7 +1657,8 @@ fn run_inner<'module>(
                         )
                     },
                     Instruction::Checked { op, ty, lhs, rhs, .. } => {
-                        let (v, overflow) = integer::checked(op, ty, scalar(lhs), scalar(rhs));
+                        let (v, overflow) = integer::try_checked(op, ty, scalar(lhs), scalar(rhs))
+                            .map_err(|e| integer_failure(e, at, steps))?;
                         Value::Checked(v, overflow)
                     },
                     Instruction::Extract { tuple, index, .. } => match get(tuple) {
