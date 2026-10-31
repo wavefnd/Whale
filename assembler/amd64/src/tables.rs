@@ -128,7 +128,8 @@ pub const CONDITION_CODES: &[(&str, u8)] = &[
     ("jnle", 15),
 ];
 
-pub fn condition_code(mnemonic: &str) -> Option<u8> {
+#[cfg(any(not(whale_wave_amd64), test))]
+pub(crate) fn condition_code_reference(mnemonic: &str) -> Option<u8> {
     CONDITION_CODES.iter().find(|(name, _)| *name == mnemonic).map(|(_, code)| *code)
 }
 
@@ -152,6 +153,123 @@ pub const REGISTERS_XMM: &[(&str, u8)] = &[
     ("xmm15", 15),
 ];
 
-pub fn xmm_register_code(name: &str) -> Option<u8> {
+#[cfg(any(not(whale_wave_amd64), test))]
+pub(crate) fn xmm_register_code_reference(name: &str) -> Option<u8> {
     REGISTERS_XMM.iter().find(|(register, _)| *register == name).map(|(_, code)| *code)
+}
+
+/// AMD64 condition code, preserving the exact case-sensitive public contract.
+pub fn condition_code(mnemonic: &str) -> Option<u8> {
+    #[cfg(whale_wave_amd64)]
+    {
+        native::condition(mnemonic)
+    }
+    #[cfg(not(whale_wave_amd64))]
+    {
+        condition_code_reference(mnemonic)
+    }
+}
+
+/// Legacy scalar SSE register code.
+pub fn xmm_register_code(name: &str) -> Option<u8> {
+    #[cfg(whale_wave_amd64)]
+    {
+        native::xmm(name)
+    }
+    #[cfg(not(whale_wave_amd64))]
+    {
+        xmm_register_code_reference(name)
+    }
+}
+
+#[cfg(whale_wave_amd64)]
+mod native {
+    use crate::ast_model::Name;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct Register {
+        kind: u64,
+        code: u64,
+        width: u64,
+        high8: u64,
+        rex8: u64,
+    }
+
+    unsafe extern "C" {
+        fn whale_amd64_register(name: *const Name, fold: u64, output: *mut Register) -> i32;
+
+        fn whale_amd64_condition(name: *const Name, output: *mut u64) -> i32;
+    }
+
+    pub(super) fn xmm(text: &str) -> Option<u8> {
+        let name = Name { bytes: text.as_ptr(), count: text.len() as u64 };
+        let mut output = Register::default();
+        match unsafe { whale_amd64_register(&name, 0, &mut output) } {
+            0 if output.kind == 1
+                && output.code < 16
+                && output.width == 128
+                && output.high8 == 0
+                && output.rex8 == 0 =>
+            {
+                Some(output.code as u8)
+            },
+            0 if output.kind == 0
+                && output.code < 16
+                && matches!(output.width, 8 | 16 | 32 | 64)
+                && output.high8 <= 1
+                && output.rex8 <= 1
+                && (output.high8 == 0
+                    || (output.width == 8
+                        && (4..8).contains(&output.code)
+                        && output.rex8 == 0))
+                && (output.rex8 == 0
+                    || (output.width == 8
+                        && (4..8).contains(&output.code)
+                        && output.high8 == 0)) =>
+            {
+                None
+            },
+            1 => None,
+            _ => panic!("AMD64 register classification transport"),
+        }
+    }
+
+    pub(super) fn condition(text: &str) -> Option<u8> {
+        let name = Name { bytes: text.as_ptr(), count: text.len() as u64 };
+        let mut output = 0;
+        match unsafe { whale_amd64_condition(&name, &mut output) } {
+            0 if output < 16 => Some(output as u8),
+            1 => None,
+            _ => panic!("AMD64 condition classification transport"),
+        }
+    }
+}
+
+#[cfg(all(test, whale_wave_amd64))]
+mod native_tests {
+    use super::*;
+
+    #[test]
+    fn public_native_classifiers_match_independent_reference_tables() {
+        for (name, _) in REGISTERS_64
+            .iter()
+            .chain(REGISTERS_32)
+            .chain(REGISTERS_16)
+            .chain(REGISTERS_8)
+            .chain(REGISTERS_XMM)
+        {
+            assert_eq!(xmm_register_code(name), xmm_register_code_reference(name));
+            assert_eq!(xmm_register_code(&name.to_ascii_uppercase()), None);
+        }
+        for (name, expected) in CONDITION_CODES {
+            assert_eq!(condition_code(name), Some(*expected));
+            assert_eq!(condition_code(name), condition_code_reference(name));
+            assert_eq!(condition_code(&name.to_ascii_uppercase()), None);
+        }
+        for name in ["", "xmm16", "xmm01", "r16", "j", "jn", "cmove", "seto", "라벨"] {
+            assert_eq!(condition_code(name), condition_code_reference(name));
+            assert_eq!(xmm_register_code(name), xmm_register_code_reference(name));
+        }
+    }
 }

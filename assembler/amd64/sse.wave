@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: MPL-2.0
+// Legacy scalar SSE; no packed or AVX encoding is implied.
+fun amd_scalar_sse(w: ptr<AmdWriter>, operation: u64, a: ptr<AmdOperand>,
+    b: ptr<AmdOperand>) -> bool {
+    var width: u64 = 32;
+    var prefix: u64 = 243;
+    if ((operation & 1) != 0) {
+        width = 64;
+        prefix = 242;
+    }
+    var opcode: u64 = 16;
+    if (operation >= 36 && operation <= 37) {
+        opcode = 88;
+    } else if (operation >= 38 && operation <= 39) {
+        opcode = 92;
+    } else if (operation >= 40 && operation <= 41) {
+        opcode = 89;
+    } else if (operation >= 42) {
+        opcode = 94;
+    }
+    if (a.kind == 4) {
+        if (operation > 35) {
+            return amd_fail(w.result, 37);
+        }
+        if (b.kind != 0 || b.width != 128) {
+            return amd_fail(w.result, 38);
+        }
+        return amd_mem_width(w, a, width) && amd_emit(w, prefix, 1)
+            && amd_memory(w, 17, 1, b, a, 0, 0);
+    }
+    if (a.kind != 0 || a.width != 128) {
+        return amd_fail(w.result, 38);
+    }
+    if (b.kind == 0 && b.width == 128) {
+        return amd_emit(w, prefix, 1)
+            && amd_rex(w, 0, (a.code >= 8) as u64, 0, (b.code >= 8) as u64, 0)
+            && amd_emit(w, 15, 1) && amd_emit(w, opcode, 1)
+            && amd_modrm(w, 3, a.code, b.code);
+    }
+    if (b.kind == 4) {
+        return amd_mem_width(w, b, width) && amd_emit(w, prefix, 1)
+            && amd_memory(w, opcode, 1, a, b, 0, 0);
+    }
+    return amd_fail(w.result, 39);
+}

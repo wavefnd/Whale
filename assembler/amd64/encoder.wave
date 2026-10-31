@@ -1,0 +1,386 @@
+// SPDX-License-Identifier: MPL-2.0
+// Typed AST adaptation and complete integer/scalar-SSE instruction dispatch.
+fun amd_operand(p: ptr<AmdEncodeInput>, scope: u64, raw: ptr<AsmOperand>,
+    output: ptr<AmdOperand>, result: ptr<AmdEncodeResult>) -> bool {
+    output.kind = raw.kind;
+    output.code = 0;
+    output.width = 0;
+    output.flags = 0;
+    output.low = raw.low;
+    output.high = raw.high;
+    output.mode = raw.mode;
+    output.memwidth = raw.width;
+    output.base = raw.base;
+    output.index = raw.index;
+    output.scale = raw.scale;
+    output.disp = raw.disp as i64;
+    output.symbol = 18446744073709551615;
+    if (raw.kind == 0) {
+        if (!amd_register(p, raw.name, output)) {
+            return amd_fail(result, 5);
+        }
+    } else if (raw.kind == 2 || raw.kind == 3) {
+        var expression: AsmExpr;
+        expression.kind = 1;
+        expression.name = raw.name;
+        expression.low = raw.low;
+        expression.high = raw.high;
+        if (raw.kind == 2) {
+            expression.low = 0;
+            expression.high = 0;
+        }
+        var resolved: AsmExpr;
+        if (!amd_expression(p, scope, &expression, &resolved, result)) {
+            return false;
+        }
+        output.low = resolved.low;
+        output.high = resolved.high;
+        if (resolved.kind == 0) {
+            output.kind = 1;
+        } else {
+            output.symbol = resolved.name;
+        }
+    } else if (raw.kind == 4 && raw.symbol != 18446744073709551615) {
+        var expression: AsmExpr;
+        expression.kind = 1;
+        expression.name = raw.symbol;
+        expression.low = raw.disp;
+        expression.high = 0;
+        if ((raw.disp as i64) < 0) {
+            expression.high = 18446744073709551615;
+        }
+        var resolved: AsmExpr;
+        if (!amd_expression(p, scope, &expression, &resolved, result)) {
+            return false;
+        }
+        if (resolved.kind == 0) {
+            if (!amd_signed64(resolved.low, resolved.high)) {
+                return amd_fail(result, 43);
+            }
+            output.disp = resolved.low as i64;
+        } else {
+            output.symbol = resolved.name;
+        }
+    } else if (raw.kind > 4) {
+        return amd_fail(result, 3);
+    }
+    return true;
+}
+
+fun amd_encode_instruction(w: ptr<AmdWriter>, node: u64, iteration: u64) -> bool {
+    var item: AsmItem = w.p.items[node];
+    var operation: u64 = amd_mnemonic(w.p, item.name);
+    if (operation == 255) {
+        w.result.argument = item.name;
+        return amd_fail(w.result, 44);
+    }
+    var count: u64 = 2;
+    if ((operation >= 13 && operation <= 16) || (operation >= 26 && operation <= 28)) {
+        count = 0;
+    } else if ((operation >= 8 && operation <= 12) || (operation >= 19 && operation <= 22)
+        || (operation >= 64 && operation <= 95)) {
+        count = 1;
+    }
+    if (operation == 7 && item.count == 3) {
+        count = 3;
+    }
+    if (item.count != count) {
+        w.result.argument = count;
+        return amd_fail(w.result, 45);
+    }
+    var a: AmdOperand;
+    var b: AmdOperand;
+    var c: AmdOperand;
+    a.kind = 255;
+    b.kind = 255;
+    c.kind = 255;
+    if (count > 0 && !amd_operand(w.p, w.p.nodes[node].scope,
+        &w.p.operands[item.first], &a, w.result)) {
+        return false;
+    }
+    if (count > 1 && !amd_operand(w.p, w.p.nodes[node].scope,
+        &w.p.operands[item.first + 1], &b, w.result)) {
+        return false;
+    }
+    if (count > 2 && !amd_operand(w.p, w.p.nodes[node].scope,
+        &w.p.operands[item.first + 2], &c, w.result)) {
+        return false;
+    }
+    if (operation == 0) {
+        return amd_mov(w, &a, &b);
+    }
+    if (operation >= 1 && operation <= 6) {
+        var opcode: u64 = 0;
+        var extension: u64 = 0;
+        if (operation == 2) {
+            opcode = 40;
+            extension = 5;
+        } else if (operation == 3) {
+            opcode = 32;
+            extension = 4;
+        } else if (operation == 4) {
+            opcode = 8;
+            extension = 1;
+        } else if (operation == 5) {
+            opcode = 48;
+            extension = 6;
+        } else if (operation == 6) {
+            opcode = 56;
+            extension = 7;
+        }
+        return amd_binary(w, &a, &b, opcode, extension);
+    }
+    if (operation == 7) {
+        return amd_imul(w, &a, &b, &c, count);
+    }
+    if (operation == 8 || operation == 9) {
+        if (operation == 8 && a.kind == 1) {
+            var tail: u64 = 4;
+            var opcode: u64 = 104;
+            if (amd_fits(a.low, a.high, 8, true)) {
+                tail = 1;
+                opcode = 106;
+            } else if (!amd_fits(a.low, a.high, 32, true)) {
+                return amd_fail(w.result, 46);
+            }
+            return amd_emit(w, opcode, 1) && amd_emit(w, a.low, tail);
+        }
+        if (a.kind != 0 || (a.width != 16 && a.width != 64)) {
+            return amd_fail(w.result, 47);
+        }
+        var opcode: u64 = 80;
+        if (operation == 9) {
+            opcode = 88;
+        }
+        return amd_prefix(w, a.width) && amd_rex(w, 0, 0, 0, (a.code >= 8) as u64, 0)
+            && amd_emit(w, opcode + (a.code & 7), 1);
+    }
+    if (operation == 10 || operation == 11 || operation == 12
+        || (operation >= 64 && operation <= 79)) {
+        if ((operation == 10 || operation == 11) && (a.kind == 0 || a.kind == 4)) {
+            var extension: u64 = 4;
+            if (operation == 11) {
+                extension = 2;
+            }
+            return amd_group(w, &a, 64, 0, 255, 0, extension);
+        }
+        return amd_direct_branch(w, operation, &a, node, iteration);
+    }
+    if (operation == 13) {
+        return amd_emit(w, 195, 1);
+    }
+    if (operation == 14) {
+        return amd_emit(w, 144, 1);
+    }
+    if (operation == 15) {
+        return amd_emit(w, 1295, 2);
+    }
+    if (operation == 16) {
+        return amd_emit(w, 204, 1);
+    }
+    if (operation == 17) {
+        if (a.kind != 0 || (a.width != 32 && a.width != 64) || b.kind != 4) {
+            return amd_fail(w.result, 48);
+        }
+        return amd_reg_mem(w, 141, 0, &a, &b);
+    }
+    if (operation == 18 || operation == 32 || operation == 33) {
+        var opcode: u64 = 132;
+        if (operation == 32) {
+            opcode = 16;
+        } else if (operation == 33) {
+            opcode = 24;
+        }
+        if (a.width != 8) {
+            opcode += 1;
+        }
+        return amd_register_pair(w, opcode, &a, &b);
+    }
+    if (operation >= 19 && operation <= 22) {
+        if (a.kind != 0 || a.width == 128) {
+            return amd_fail(w.result, 5);
+        }
+        var extension: u64 = operation - 17;
+        if (operation >= 21) {
+            extension = operation - 15;
+        }
+        var opcode: u64 = 247;
+        if (a.width == 8) {
+            opcode = 246;
+        }
+        return amd_group(w, &a, a.width, a.width, opcode, 0, extension);
+    }
+    if (operation >= 23 && operation <= 25) {
+        return amd_shift(w, operation, &a, &b);
+    }
+    if (operation >= 26 && operation <= 28) {
+        if (operation == 26 && !amd_emit(w, 102, 1)) {
+            return false;
+        }
+        if (operation == 28 && !amd_emit(w, 72, 1)) {
+            return false;
+        }
+        return amd_emit(w, 153, 1);
+    }
+    if (operation >= 29 && operation <= 31) {
+        return amd_extension(w, operation, &a, &b);
+    }
+    if (operation >= 34 && operation <= 43) {
+        return amd_scalar_sse(w, operation, &a, &b);
+    }
+    if (operation >= 80 && operation <= 95) {
+        return amd_group(w, &a, 8, 8, 144 + operation - 80, 1, 0);
+    }
+    if (operation >= 96 && operation <= 111) {
+        if (a.kind != 0 || b.kind != 0 || a.width != b.width
+            || (a.width != 16 && a.width != 32 && a.width != 64)) {
+            return amd_fail(w.result, 49);
+        }
+        return amd_prefix(w, a.width)
+            && amd_rex(w, a.width, (a.code >= 8) as u64, 0, (b.code >= 8) as u64, 0)
+            && amd_emit(w, 15, 1) && amd_emit(w, 64 + operation - 96, 1)
+            && amd_modrm(w, 3, a.code, b.code);
+    }
+    return amd_fail(w.result, 44);
+}
+
+fun amd_result_reset(result: ptr<AmdEncodeResult>) {
+    result.status = 0;
+    result.error = 0;
+    result.node = 0;
+    result.previous = 18446744073709551615;
+    result.argument = 18446744073709551615;
+    result.section_count = 0;
+    result.symbol_count = 0;
+    result.output_symbols = 0;
+    result.relocation_count = 0;
+    result.bytes = 0;
+    result.iterations = 0;
+    result.work = 0;
+}
+
+fun amd_input_valid(p: ptr<AmdEncodeInput>, result: ptr<AmdEncodeResult>) -> bool {
+    if (p == null || p.item_count == 18446744073709551615
+        || p.name_count == 18446744073709551615
+        || p.section_capacity < p.item_count + 1 || p.symbol_capacity < p.name_count + 1
+        || p.table_capacity < 2 || p.symbol_capacity > p.table_capacity / 2
+        || (p.table_capacity & (p.table_capacity - 1)) != 0
+        || !asm_span_valid(p.names as ptr<u8>, p.name_count, 16)
+        || !asm_span_valid(p.items as ptr<u8>, p.item_count, 80)
+        || !asm_span_valid(p.operands as ptr<u8>, p.operand_count, 88)
+        || !asm_span_valid(p.values as ptr<u8>, p.value_count, 56)
+        || !asm_span_valid(p.sections as ptr<u8>, p.section_capacity, 48)
+        || !asm_span_valid(p.symbols as ptr<u8>, p.symbol_capacity, 184)
+        || !asm_span_valid(p.table as ptr<u8>, p.table_capacity, 8)
+        || !asm_span_valid(p.nodes as ptr<u8>, p.item_count, 64)
+        || !asm_span_valid(p.queue as ptr<u8>, p.symbol_capacity, 8)
+        || !asm_span_valid(p.relocations as ptr<u8>, p.relocation_capacity, 48)
+        || !asm_span_valid(p.bytes, p.byte_capacity, 1)) {
+        return amd_fail(result, 3);
+    }
+    var index: u64 = 0;
+    var item: AsmItem;
+    while (index < p.name_count) {
+        if (!amd_charge(p, result)) {
+            return false;
+        }
+        if (!asm_span_valid(p.names[index].bytes, p.names[index].count, 1)) {
+            return amd_fail(result, 3);
+        }
+        index += 1;
+    }
+    index = 0;
+    while (index < p.item_count) {
+        if (!amd_charge(p, result)) {
+            return false;
+        }
+        item = p.items[index];
+        if (item.kind > 8 || item.name >= p.name_count) {
+            return amd_fail(result, 3);
+        }
+        if (item.kind == 0 && (item.first > p.operand_count
+            || item.count > p.operand_count - item.first)) {
+            return amd_fail(result, 3);
+        }
+        if (item.kind == 2 && (item.first > p.value_count || item.count > p.value_count - item.first)) {
+            return amd_fail(result, 3);
+        }
+        index += 1;
+    }
+    return true;
+}
+
+export(c) fun whale_amd64_encode(p: ptr<AmdEncodeInput>, emission: u64,
+    result: ptr<AmdEncodeResult>) -> i32 {
+    if (result == null) {
+        return 1;
+    }
+    if (emission == 0) {
+        amd_result_reset(result);
+    }
+    if (emission > 1 || !amd_input_valid(p, result)) {
+        amd_fail(result, 3);
+        return 1;
+    }
+    var writer: AmdWriter;
+    writer.p = p;
+    writer.result = result;
+    writer.section = 0;
+    writer.count = 0;
+    writer.materialized = 0;
+    writer.measuring = 1 - emission;
+    if (!amd_layout(&writer, emission)) {
+        if (result.status == 0) {
+            amd_fail(result, 3);
+        }
+        return result.status as i32;
+    }
+    return 0;
+}
+
+export(c) fun whale_amd64_address(names: ptr<AsmName>, name_count: u64,
+    raw: ptr<AsmOperand>, mode: u64, output: ptr<AmdAddress>, result: ptr<AmdEncodeResult>) -> i32 {
+    if (raw == null || output == null || result == null
+        || !asm_span_valid(names as ptr<u8>, name_count, 16)) {
+        return 1;
+    }
+    amd_result_reset(result);
+    var p: AmdEncodeInput;
+    p.names = names;
+    p.name_count = name_count;
+    var mem: AmdOperand;
+    mem.mode = raw.mode;
+    mem.memwidth = raw.width;
+    mem.base = raw.base;
+    mem.index = raw.index;
+    mem.scale = raw.scale;
+    mem.disp = raw.disp as i64;
+    mem.symbol = raw.symbol;
+    var at: u64 = 0;
+    while (at < name_count) {
+        if (!asm_span_valid(names[at].bytes, names[at].count, 1)) {
+            return 1;
+        }
+        at += 1;
+    }
+    if (!amd_address(&p, &mem, mode, false, output, result)) {
+        return result.status as i32;
+    }
+    return 0;
+}
+
+export(c) fun whale_amd64_condition(name: ptr<AsmName>, output: ptr<u64>) -> i32 {
+    if (name == null || output == null || !asm_span_valid(name.bytes, name.count, 1)) {
+        return 2;
+    }
+    output[0] = 0;
+    var p: AmdEncodeInput;
+    p.names = name;
+    p.name_count = 1;
+    var operation: u64 = amd_mnemonic(&p, 0);
+    if (operation >= 64 && operation <= 79) {
+        output[0] = operation - 64;
+        return 0;
+    }
+    return 1;
+}

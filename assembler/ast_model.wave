@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: MPL-2.0
+// Borrowed structural AST records shared by AMD64 parsing and encoding.
+struct AsmName {
+    bytes: ptr<u8>;
+    count: u64;
+}
+
+struct AsmExpr {
+    kind: u64;
+    name: u64;
+    low: u64;
+    high: u64;
+}
+
+struct AsmOperand {
+    kind: u64;
+    name: u64;
+    low: u64;
+    high: u64;
+    mode: u64;
+    width: u64;
+    base: u64;
+    index: u64;
+    scale: u64;
+    disp: u64;
+    symbol: u64;
+}
+
+struct AsmItem {
+    kind: u64;
+    name: u64;
+    aux: u64;
+    flags: u64;
+    expression: AsmExpr;
+    first: u64;
+    count: u64;
+}
+
+struct AsmDirectiveValue {
+    kind: u64;
+    expression: AsmExpr;
+    bytes: ptr<u8>;
+    count: u64;
+}

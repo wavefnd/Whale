@@ -1,0 +1,206 @@
+// SPDX-License-Identifier: MPL-2.0
+// Single-symbol, checked signed-128 expressions; no host numeric callbacks.
+fun amd64_parse_fail(p: ptr<AsmParser>, error: u64, index: u64) -> bool {
+    p.result.status = 1;
+    p.result.error = error;
+    p.result.index = index;
+    return false;
+}
+
+fun amd64_parse_backend(p: ptr<AsmParser>) -> bool {
+    p.result.status = 2;
+    p.result.index = p.position;
+    return false;
+}
+
+fun amd64_parse_charge(p: ptr<AsmParser>, count: u64) -> bool {
+    if (count > p.packet.max_work - p.result.work) {
+        p.result.status = 3;
+        p.result.index = p.position;
+        return false;
+    }
+    p.result.work += count;
+    return true;
+}
+
+fun amd64_token_kind(p: ptr<AsmParser>, at: u64) -> u64 {
+    if (at >= p.packet.count) {
+        return 18446744073709551615;
+    }
+    return p.packet.tokens[at].kind;
+}
+
+fun amd64_token_is(p: ptr<AsmParser>, at: u64, key: u64, count: u64) -> bool {
+    return at < p.packet.count && p.packet.tokens[at].kind == 0
+        && amd64_name_is(&p.packet.tokens[at].text, key, count, 1);
+}
+
+fun amd64_parse_name(p: ptr<AsmParser>, token: u64, lower: bool, output: ptr<u64>) -> bool {
+    if (token >= p.packet.count || p.packet.tokens[token].kind != 0) {
+        return amd64_parse_backend(p);
+    }
+    var name: AsmName = p.packet.tokens[token].text;
+    var first: u64 = p.result.bytes;
+    if (lower) {
+        if (!amd64_parse_charge(p, name.count) || name.count > 18446744073709551615 - first) {
+            return false;
+        }
+        if (p.packet.mode != 0) {
+            if (first > p.output.byte_capacity || name.count > p.output.byte_capacity - first) {
+                return amd64_parse_backend(p);
+            }
+            var index: u64 = 0;
+            while (index < name.count) {
+                p.output.bytes[first + index] = amd64_lower_byte(name.bytes[index]);
+                index += 1;
+            }
+            name.bytes = &p.output.bytes[first];
+        }
+        p.result.bytes += name.count;
+    }
+    output[0] = p.result.names;
+    if (p.packet.mode != 0) {
+        if (p.result.names >= p.output.name_capacity) {
+            return amd64_parse_backend(p);
+        }
+        p.output.names[p.result.names] = name;
+    }
+    p.result.names += 1;
+    return true;
+}
+
+fun amd64_expr_clear(expression: ptr<AsmExpr>) {
+    expression.kind = 0;
+    expression.name = 18446744073709551615;
+    expression.low = 0;
+    expression.high = 0;
+}
+
+fun amd64_expr_add(p: ptr<AsmParser>, left: ptr<AsmExpr>, right: ptr<AsmExpr>, at: u64) -> bool {
+    if (left.kind != 0 && right.kind != 0) {
+        return amd64_parse_fail(p, 36, at);
+    }
+    var a: AsmWide;
+    var b: AsmWide;
+    var sum: AsmWide;
+    a.low = left.low;
+    a.high = left.high;
+    b.low = right.low;
+    b.high = right.high;
+    if (!asm_number_add_checked(&a, &b, &sum)) {
+        if (left.kind != 0 || right.kind != 0) {
+            return amd64_parse_fail(p, 35, at);
+        }
+        return amd64_parse_fail(p, 28, at);
+    }
+    if (right.kind != 0) {
+        left.kind = right.kind;
+        left.name = right.name;
+    }
+    left.low = sum.low;
+    left.high = sum.high;
+    return true;
+}
+
+// Stop mode0: newline; mode1: comma or newline.
+fun amd64_parse_expression(p: ptr<AsmParser>, stop: u64, output: ptr<AsmExpr>) -> bool {
+    var have: bool = false;
+    var expect_term: bool = true;
+    var negative: bool = false;
+    amd64_expr_clear(output);
+    while (p.position < p.packet.count) {
+        var token: ptr<AsmParseToken> = &p.packet.tokens[p.position];
+        if (token.kind == 11 || (stop == 1 && token.kind == 3)) {
+            break;
+        }
+        if (!amd64_parse_charge(p, 1)) {
+            return false;
+        }
+        if (expect_term) {
+            if (token.kind == 7) {
+                p.position += 1;
+            } else if (token.kind == 8) {
+                negative = !negative;
+                p.position += 1;
+            } else if (token.kind == 1 || token.kind == 0) {
+                var term: AsmExpr;
+                amd64_expr_clear(&term);
+                if (token.kind == 1) {
+                    term.low = token.low;
+                    term.high = token.high;
+                    if (negative) {
+                        var value: AsmWide;
+                        var negated: AsmWide;
+                        value.low = term.low;
+                        value.high = term.high;
+                        if (!asm_number_neg_checked(&value, &negated)) {
+                            return amd64_parse_fail(p, 28, p.position);
+                        }
+                        term.low = negated.low;
+                        term.high = negated.high;
+                    }
+                } else {
+                    if (negative) {
+                        return amd64_parse_fail(p, 29, p.position);
+                    }
+                    term.kind = 1;
+                    if (!amd64_parse_name(p, p.position, false, &term.name)) {
+                        return false;
+                    }
+                }
+                if (!have) {
+                    output[0] = term;
+                    have = true;
+                } else if (!amd64_expr_add(p, output, &term, p.position)) {
+                    return false;
+                }
+                p.position += 1;
+                negative = false;
+                expect_term = false;
+            } else {
+                return amd64_parse_fail(p, 30, p.position);
+            }
+        } else {
+            if (token.kind != 7 && token.kind != 8) {
+                return amd64_parse_fail(p, 31, p.position);
+            }
+            negative = token.kind == 8;
+            expect_term = true;
+            p.position += 1;
+        }
+    }
+    if (expect_term && have) {
+        return amd64_parse_fail(p, 32, p.position);
+    }
+    if (!have) {
+        return amd64_parse_fail(p, 33, p.position);
+    }
+    if (output.kind == 0) {
+        var negative_value: bool = (output.high >> 63) != 0;
+        var valid: bool = output.high == 0;
+        if (negative_value) {
+            valid = output.high == 18446744073709551615 && output.low >= 9223372036854775808;
+        }
+        if (!valid) {
+            var at: u64 = p.position;
+            if (at != 0) {
+                at -= 1;
+            }
+            return amd64_parse_fail(p, 34, at);
+        }
+    }
+    return true;
+}
+
+fun amd64_finish_statement(p: ptr<AsmParser>) -> bool {
+    if (p.position < p.packet.count && amd64_token_kind(p, p.position) != 11) {
+        return amd64_parse_fail(p, 7, p.position);
+    }
+    while (amd64_token_kind(p, p.position) == 11) {
+        if (!amd64_parse_charge(p, 1)) {
+            return false;
+        }
+        p.position += 1;
+    }
+    return true;
+}

@@ -17,8 +17,8 @@ executable does not need the Wave compiler at runtime.
 
 | Sources | Responsibility |
 | --- | --- |
-| `assembler/<architecture>/` | Rust registers, operands, parser and encoder for that ISA |
-| `assembler/src/` | Shared Rust assembly types and helpers |
+| `assembler/<architecture>/` | ISA registers, operands, grammar and encoding, with explicit Rust data bridges |
+| `assembler/*.wave`, `assembler/src/` | Shared Wave source, numeric and output helpers; Rust assembly data |
 | `assembler/asmobj/` | Complete Wave assembly-to-object module |
 | `toolchain/`, `backend-api/` | Rust composition, backend interfaces and external data calls to `asmobj` |
 | `ir/`, `target-spec/` | Wave IR model, text, verification, numeric semantics, passes and execution; Rust data transport and target contracts |

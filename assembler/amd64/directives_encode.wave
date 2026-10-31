@@ -1,0 +1,230 @@
+// SPDX-License-Identifier: MPL-2.0
+// Sparse storage and checked data directives share the final section writer.
+fun amd_directive_number(w: ptr<AmdWriter>, node: u64, value: ptr<AsmDirectiveValue>,
+    output: ptr<AsmExpr>) -> bool {
+    if (value.kind != 0) {
+        return amd_namespace_fail(w.result, 151, 0, 18446744073709551615);
+    }
+    return amd_evaluated_expression(w.p, w.p.nodes[node].scope, &value.expression, output, w.result);
+}
+
+fun amd_reservation(w: ptr<AmdWriter>, node: u64, unit: u64,
+    output: ptr<u64>) -> bool {
+    var item: ptr<AsmItem> = &w.p.items[node];
+    if (item.count != 1) {
+        return amd_namespace_fail(w.result, 152, 0, 18446744073709551615);
+    }
+    var value: ptr<AsmDirectiveValue> = &w.p.values[item.first];
+    if (value.kind != 0) {
+        return amd_namespace_fail(w.result, 153, 0, 18446744073709551615);
+    }
+    var number: AsmExpr;
+    if (!amd_evaluated_expression(w.p, w.p.nodes[node].scope, &value.expression, &number, w.result)) {
+        return false;
+    }
+    if (number.kind != 0) {
+        return amd_namespace_fail(w.result, 154, number.name, 18446744073709551615);
+    }
+    if (number.high >= 9223372036854775808) {
+        return amd_namespace_fail(w.result, 155, 0, 18446744073709551615);
+    }
+    if (number.high != 0 || number.low > 18446744073709551615 / unit) {
+        return amd_namespace_fail(w.result, 156, 0, 18446744073709551615);
+    }
+    output[0] = number.low * unit;
+    return true;
+}
+
+fun amd_directive(w: ptr<AmdWriter>, node: u64) -> bool {
+    var alignment: AsmExpr;
+    var growth: AsmOutputGrowth;
+    var padded: u64;
+    var fill: u64;
+    var value: ptr<AsmDirectiveValue>;
+    var extra: u64;
+    var at: u64;
+    var expression: AsmExpr;
+    var kind: u64;
+    var item: ptr<AsmItem> = &w.p.items[node];
+    var bss: bool = w.p.sections[w.section].kind == 3;
+    if (amd_word(w.p.names, w.p.name_count, item.name, 474181364833, 5)) {
+        if (item.count != 1) {
+            return amd_namespace_fail(w.result, 157, 0, 18446744073709551615);
+        }
+        if (w.p.values[item.first].kind != 0) {
+            return amd_namespace_fail(w.result, 158, 0, 18446744073709551615);
+        }
+
+        if (!amd_evaluated_expression(w.p, w.p.nodes[node].scope,
+            &w.p.values[item.first].expression, &alignment, w.result)) {
+            return false;
+        }
+        if (alignment.kind != 0) {
+            return amd_namespace_fail(w.result, 159, 0, 18446744073709551615);
+        }
+        if (alignment.high != 0 || !asm_power_two(alignment.low)) {
+            return amd_namespace_fail(w.result, 160, 0, 18446744073709551615);
+        }
+
+        var status: i32 = asm_output_align(w.materialized, w.count, alignment.low,
+            w.p.max_output, bss as u64, &growth);
+        if (status == 1) {
+            return amd_namespace_fail(w.result, 161, 0, 18446744073709551615);
+        }
+        if (status != 0) {
+            return amd_fail(w.result, 2);
+        }
+        padded = growth.section;
+        if (alignment.low > w.p.sections[w.section].align) {
+            w.p.sections[w.section].align = alignment.low;
+        }
+        if (bss) {
+            w.count = padded;
+            return true;
+        }
+        fill = 0;
+        if (w.p.sections[w.section].kind == 0) {
+            fill = 144;
+        }
+        return amd_fill(w, padded - w.count, fill);
+    }
+    var unit: u64 = 0;
+    if (amd_word(w.p.names, w.p.name_count, item.name, 1651729778, 4)) {
+        unit = 1;
+    } else if (amd_word(w.p.names, w.p.name_count, item.name, 2004051314, 4)) {
+        unit = 2;
+    } else if (amd_word(w.p.names, w.p.name_count, item.name, 1685284210, 4)) {
+        unit = 4;
+    } else if (amd_word(w.p.names, w.p.name_count, item.name, 1903388018, 4)) {
+        unit = 8;
+    }
+    var size: u64 = 0;
+    if (unit != 0) {
+        if (!amd_reservation(w, node, unit, &size)) {
+            return false;
+        }
+        if (bss) {
+
+            if (asm_output_grow(w.materialized, w.count, size, w.p.max_output, 1, &growth) != 0) {
+                return amd_namespace_fail(w.result, 162, 0, 18446744073709551615);
+            }
+            w.count = growth.section;
+            return true;
+        }
+        return amd_fill(w, size, 0);
+    }
+    var width: u64 = 0;
+    if (amd_word(w.p.names, w.p.name_count, item.name, 25188, 2)) {
+        width = 1;
+    } else if (amd_word(w.p.names, w.p.name_count, item.name, 30564, 2)) {
+        width = 2;
+    } else if (amd_word(w.p.names, w.p.name_count, item.name, 25700, 2)) {
+        width = 4;
+    } else if (amd_word(w.p.names, w.p.name_count, item.name, 29028, 2)) {
+        width = 8;
+    } else {
+        return amd_namespace_fail(w.result, 163, item.name, 18446744073709551615);
+    }
+    var index: u64 = 0;
+    while (index < item.count) {
+        if (!amd_charge(w.p, w.result)) {
+            return false;
+        }
+        value = &w.p.values[item.first + index];
+        extra = width;
+        if (value.kind == 1) {
+            if (width != 1) {
+                var error: u64 = 164;
+                if (width == 4) {
+                    error = 169;
+                } else if (width == 8) {
+                    error = 170;
+                }
+                return amd_namespace_fail(w.result, error, 0, 18446744073709551615);
+            }
+            extra = value.count;
+        } else if (value.kind != 0) {
+            return amd_fail(w.result, 3);
+        }
+        if (extra > 18446744073709551615 - size) {
+            return amd_namespace_fail(w.result, 165, 0, 18446744073709551615);
+        }
+        size += extra;
+        index += 1;
+    }
+
+    var status: i32 = asm_output_grow(w.materialized, w.count, size,
+        w.p.max_output, bss as u64, &growth);
+    if (status != 0) {
+        if (bss) {
+            return amd_namespace_fail(w.result, 162, 0, 18446744073709551615);
+        }
+        return amd_fail(w.result, 2);
+    }
+    index = 0;
+    while (index < item.count) {
+        if (!amd_charge(w.p, w.result)) {
+            return false;
+        }
+        value = &w.p.values[item.first + index];
+        if (value.kind == 1) {
+            at = 0;
+            while (at < value.count) {
+                if (!amd_charge(w.p, w.result)) {
+                    return false;
+                }
+                if (bss) {
+                    if (value.bytes[at] != 0) {
+                        return amd_namespace_fail(w.result, 166, 0, 18446744073709551615);
+                    }
+                } else if (!amd_emit(w, value.bytes[at] as u64, 1)) {
+                    return false;
+                }
+                at += 1;
+            }
+        } else {
+
+            if (!amd_evaluated_expression(w.p, w.p.nodes[node].scope, &value.expression,
+                &expression, w.result)) {
+                return false;
+            }
+            if (bss) {
+                if (expression.kind != 0 || expression.low != 0 || expression.high != 0) {
+                    return amd_namespace_fail(w.result, 166, 0, 18446744073709551615);
+                }
+            } else if (expression.kind == 0) {
+                if (!amd_fits(expression.low, expression.high, width * 8, false)) {
+                    var error: u64 = 167;
+                    if (width == 2) {
+                        error = 171;
+                    } else if (width == 4) {
+                        error = 172;
+                    } else if (width == 8) {
+                        error = 173;
+                    }
+                    return amd_namespace_fail(w.result, error, 0, 18446744073709551615);
+                }
+                if (!amd_emit(w, expression.low, width)) {
+                    return false;
+                }
+            } else {
+                if (width != 4 && width != 8) {
+                    return amd_namespace_fail(w.result, 168, 0, 18446744073709551615);
+                }
+                kind = 0;
+                if (width == 4) {
+                    kind = 1;
+                }
+                if (!amd_relocation(w, expression.name, kind, expression.low, w.count)
+                    || !amd_emit(w, 0, width)) {
+                    return false;
+                }
+            }
+        }
+        index += 1;
+    }
+    if (bss) {
+        w.count += size;
+    }
+    return true;
+}

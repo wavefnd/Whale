@@ -44,7 +44,7 @@ jobs:
       - name: Install pinned compiler prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y wget software-properties-common ninja-build
+          sudo apt-get install --no-install-recommends -y wget software-properties-common ninja-build nasm
           wget --tries=3 --timeout=30 https://apt.llvm.org/llvm.sh -O "$RUNNER_TEMP/llvm.sh"
           sudo bash "$RUNNER_TEMP/llvm.sh" 21
           sudo apt-get install --no-install-recommends -y llvm-21-dev lld-21
@@ -109,6 +109,41 @@ jobs:
             WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o$optimization" \
               cargo test -p ir --all-features --locked --offline
           done
+      - name: Run shared and AMD64 Wave assemblers at O0 and O2
+        run: |
+          for optimization in 0 2; do
+            for module in common amd64; do
+              python3 tools/build_wave_assembler.py --module "$module" \
+                --wave-source .asmobj-bootstrap-source \
+                --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
+                --out-dir "$RUNNER_TEMP/assembler-$module-o$optimization" \
+                --opt-level "$optimization"
+            done
+            export WHALE_WAVE_ASSEMBLER_DIR="$RUNNER_TEMP/assembler-common-o$optimization"
+            export WHALE_WAVE_AMD64_DIR="$RUNNER_TEMP/assembler-amd64-o$optimization"
+            export WHALE_ASMOBJ_DIR="$GITHUB_WORKSPACE/.ci-asmobj/x86_64-unknown-linux-gnu"
+            export WHALE_WAVE_IR_DIR="$RUNNER_TEMP/wave-ir-o2"
+            cc -shared -Wl,--whole-archive "$WHALE_WAVE_ASSEMBLER_DIR/libwhale_wave_assembler.a" \
+              -Wl,--no-whole-archive -o "$RUNNER_TEMP/assembler-common-o$optimization.so"
+            assembler_python="$(command -v python3)"
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_assembler.py \
+              --library "$RUNNER_TEMP/assembler-common-o$optimization.so" --cases 10000
+            cc -shared -Wl,--whole-archive "$WHALE_WAVE_AMD64_DIR/libwhale_wave_amd64.a" \
+              "$WHALE_WAVE_ASSEMBLER_DIR/libwhale_wave_assembler.a" \
+              -Wl,--no-whole-archive -o "$RUNNER_TEMP/assembler-amd64-o$optimization.so"
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_amd64_parser.py \
+              --library "$RUNNER_TEMP/assembler-amd64-o$optimization.so" --cases 20000
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_amd64_layout.py \
+              --library "$RUNNER_TEMP/assembler-amd64-o$optimization.so" --cases 2000
+            cargo test -p assembler -p amd64 --locked --offline
+            cargo build -p whale --all-features --locked --offline
+            timeout 180s python3 tools/fuzz_limits.py --memory-mib 512 -- "$assembler_python" \
+              tools/check_wave_amd64_cli.py --binary target/debug/whale \
+              --output-dir ".ci-artifacts/amd64-o$optimization" --cases 2000
+          done
       - name: Reproduce the pinned typed HIR fixture
         run: |
           python3 tools/check_wave_hir_fixture.py --wave-source .asmobj-bootstrap-source \
@@ -159,6 +194,15 @@ jobs:
             '-Dhost-runner=["/bin/true"]'
           meson introspect --tests "$RUNNER_TEMP/whale-cross-runner" | \
             python3 -c 'import json,sys; tests={t["name"]:t for t in json.load(sys.stdin)}; assert set(tests)=={"build-helper","cli-smoke"}; assert "--runner-arg=/bin/true" in tests["cli-smoke"]["cmd"]'
+      - name: Retain independent AMD64 oracle evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: amd64-oracles-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .ci-artifacts/amd64-*/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
       - name: Retain target-specific archives and provenance
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

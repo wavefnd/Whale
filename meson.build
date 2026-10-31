@@ -37,7 +37,14 @@ elif not fs.is_absolute(wave_cache)
 endif
 asmobj_directory = get_option('asmobj-dir')
 wave_bootstrap = []
-if asmobj_directory == '' or (wave_source != '' and get_option('wave-ir-dir') == '')
+needs_wave_bootstrap = asmobj_directory == ''
+if wave_source != ''
+  needs_wave_bootstrap = needs_wave_bootstrap or get_option('wave-ir-dir') == '' or get_option('wave-assembler-dir') == ''
+  if get_option('asm-amd64')
+    needs_wave_bootstrap = needs_wave_bootstrap or get_option('wave-amd64-dir') == ''
+  endif
+endif
+if needs_wave_bootstrap
   if wave_source == '' or not fs.is_absolute(wave_source) or not fs.is_dir(wave_source)
     error('Supply -Dwave-source=/absolute/Wave or -Dasmobj-dir=/absolute/built/module.')
   endif
@@ -53,7 +60,7 @@ if asmobj_directory == '' or (wave_source != '' and get_option('wave-ir-dir') ==
     command: [python, bridge, bootstrap_arguments],
     depend_files: files('tools/wave_bootstrap.py', 'tools/meson_cargo.py'), console: true)
 endif
-subdir('assembler/asmobj')
+subdir('assembler')
 subdir('ir')
 
 profile = 'dev'
@@ -89,6 +96,12 @@ build_arguments += ['--asmobj-dir', asmobj_directory]
 if wave_ir_directory != ''
   build_arguments += ['--wave-ir-dir', wave_ir_directory]
 endif
+if wave_assembler_directory != ''
+  build_arguments += ['--wave-assembler-dir', wave_assembler_directory]
+endif
+if wave_amd64_directory != ''
+  build_arguments += ['--wave-amd64-dir', wave_amd64_directory]
+endif
 foreach feature : selected_features
   build_arguments += ['--feature', feature]
 endforeach
@@ -98,7 +111,7 @@ whale = custom_target('whale-cli',
   command: [python, bridge, build_arguments],
   depend_files: files('Cargo.toml', 'Cargo.lock', 'tools/meson_cargo.py'),
   depfile: 'whale-cargo.d',
-  depends: asmobj_dependencies + wave_ir_dependencies,
+  depends: asmobj_dependencies + wave_ir_dependencies + wave_assembler_all_dependencies,
   build_by_default: true,
   console: true,
   install: true,

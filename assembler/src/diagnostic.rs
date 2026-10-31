@@ -16,6 +16,7 @@ fn source(name: &str, span: SourceSpan) -> Context {
 impl ToDiagnostic for AsmError {
     fn diagnostic(&self) -> Diagnostic {
         let (phase, code) = match self {
+            Self::Backend(_) => ("backend", "assembler.backend"),
             Self::LexerError(_) => ("lex", "assembler.lex"),
             Self::ParserError(_) => ("parse", "assembler.parse"),
             Self::EncodeError(_) => ("encode", "assembler.encode"),

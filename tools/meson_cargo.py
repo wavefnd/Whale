@@ -36,10 +36,13 @@ def validate_features(features):
 
 
 def cargo_environment(target_dir, asmobj_directory, profile, optimization, debug_info,
-                      wave_ir_directory=None):
+                      wave_ir_directory=None, wave_assembler_directory=None,
+                      wave_amd64_directory=None):
     environment = os.environ.copy()
     environment.pop("WHALE_ASMOBJ_DIR", None)
     environment.pop("WHALE_WAVE_IR_DIR", None)
+    environment.pop("WHALE_WAVE_ASSEMBLER_DIR", None)
+    environment.pop("WHALE_WAVE_AMD64_DIR", None)
     environment.pop("CARGO_BUILD_TARGET", None)
     environment["CARGO_TARGET_DIR"] = str(target_dir)
     environment["CARGO_INCREMENTAL"] = "0"
@@ -50,6 +53,10 @@ def cargo_environment(target_dir, asmobj_directory, profile, optimization, debug
         environment["WHALE_ASMOBJ_DIR"] = str(asmobj_directory)
     if wave_ir_directory:
         environment["WHALE_WAVE_IR_DIR"] = str(wave_ir_directory)
+    if wave_assembler_directory:
+        environment["WHALE_WAVE_ASSEMBLER_DIR"] = str(wave_assembler_directory)
+    if wave_amd64_directory:
+        environment["WHALE_WAVE_AMD64_DIR"] = str(wave_amd64_directory)
     return environment
 
 
@@ -158,6 +165,12 @@ def source_dependencies(source, features):
     dependencies.add(source / "assembler/asmobj")
     dependencies.update((source / "assembler/asmobj").glob("*.wave"))
     dependencies.update((source / "ir").glob("*.wave"))
+    dependencies.update((source / "assembler").glob("*.wave"))
+    if (source / "assembler/build_support.rs").is_file():
+        dependencies.add(source / "assembler/build_support.rs")
+    for arch in ASSEMBLERS:
+        if "asm-" + arch in features:
+            dependencies.update((source / "assembler" / arch).glob("*.wave"))
     return dependencies
 
 
@@ -185,11 +198,19 @@ def build(arguments):
     asmobj_directory = arguments.asmobj_dir.resolve() if arguments.asmobj_dir else None
     wave_ir_directory = arguments.wave_ir_dir.resolve() if arguments.wave_ir_dir else None
     features = validate_features(arguments.feature)
+    shared_path = getattr(arguments, "wave_assembler_dir", None)
+    amd64_path = getattr(arguments, "wave_amd64_dir", None)
+    wave_assembler_directory = shared_path.resolve() if shared_path else None
+    wave_amd64_directory = amd64_path.resolve() if amd64_path else None
+    if wave_amd64_directory and "asm-amd64" not in features:
+        raise BuildError("a Wave AMD64 archive requires the AMD64 product output")
+    if wave_amd64_directory and not wave_assembler_directory:
+        raise BuildError("the Wave AMD64 archive requires the shared Wave assembler archive")
     if target_dir in [source, source / "target"]:
         raise BuildError("Meson requires its own private Cargo target directory")
     environment = cargo_environment(target_dir, asmobj_directory, arguments.profile,
                                     arguments.opt_level, arguments.debug_info,
-                                    wave_ir_directory)
+                                    wave_ir_directory, wave_assembler_directory, wave_amd64_directory)
     target = arguments.host_target or native_target(arguments.cargo, source, environment)
     if not TRIPLE.fullmatch(target):
         raise BuildError("cargo host target must be a Rust target triple")
@@ -210,6 +231,11 @@ def build(arguments):
     if wave_ir_directory:
         archive = "whale_wave_ir.lib" if "msvc" in target else "libwhale_wave_ir.a"
         dependencies.update(wave_ir_directory / name for name in [archive, "wave-ir.meta", "provenance.json"])
+    for name, directory in [("assembler", wave_assembler_directory), ("amd64", wave_amd64_directory)]:
+        if directory:
+            archive = f"whale_wave_{name}.lib" if "msvc" in target else f"libwhale_wave_{name}.a"
+            dependencies.update(directory / file for file in
+                                [archive, f"wave-{name}.meta", "provenance.json"])
     contents = make_escape(output) + ": " + " ".join(make_escape(path) for path in sorted(dependencies)) + "\n"
     candidate = None
     candidate_depfile = None
@@ -314,6 +340,8 @@ def main(argv=None):
     compile_parser.add_argument("--feature", action="append", default=[])
     compile_parser.add_argument("--asmobj-dir", type=Path)
     compile_parser.add_argument("--wave-ir-dir", type=Path)
+    compile_parser.add_argument("--wave-assembler-dir", type=Path)
+    compile_parser.add_argument("--wave-amd64-dir", type=Path)
     smoke_parser = commands.add_parser("smoke")
     smoke_parser.add_argument("--binary", type=Path, required=True)
     smoke_parser.add_argument("--feature", action="append", default=[])

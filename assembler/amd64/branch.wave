@@ -1,0 +1,93 @@
+// SPDX-License-Identifier: MPL-2.0
+// Layout-aware direct transfers; local LOOP is resolved after convergence.
+fun amd_relative(target: u64, source: u64, length: u64, width: u64,
+    displacement: ptr<u64>) -> bool {
+    if (length > 18446744073709551615 - source) {
+        return false;
+    }
+    var origin: u64 = source + length;
+    var maximum: u64 = 127;
+    if (width == 32) {
+        maximum = 2147483647;
+    }
+    if (target >= origin) {
+        var difference: u64 = target - origin;
+        if (difference > maximum) {
+            return false;
+        }
+        displacement[0] = difference;
+    } else {
+        var difference: u64 = origin - target;
+        if (difference > maximum + 1) {
+            return false;
+        }
+        displacement[0] = 0 - difference;
+    }
+    return true;
+}
+
+fun amd_direct_branch(w: ptr<AmdWriter>, operation: u64, operand: ptr<AmdOperand>,
+    node_index: u64, iteration: u64) -> bool {
+    if (operand.kind != 2 && operand.kind != 3) {
+        return amd_fail(w.result, 40);
+    }
+    if (operand.low != 0 || operand.high != 0) {
+        return amd_fail(w.result, 41);
+    }
+    var symbol: u64 = operand.symbol;
+    if (symbol >= w.result.symbol_count) {
+        return amd_fail(w.result, 3);
+    }
+    if (operation == 12) {
+        return amd_emit(w, 226, 1)
+            && amd_relocation(w, symbol, 5, 18446744073709551615, w.count)
+            && amd_emit(w, 0, 1);
+    }
+    var near: u64 = 233;
+    var short: u64 = 235;
+    var length: u64 = 5;
+    var two: u64 = 0;
+    if (operation == 11) {
+        near = 232;
+        short = 0;
+    } else if (operation >= 64 && operation <= 79) {
+        near = 128 + operation - 64;
+        short = 112 + operation - 64;
+        length = 6;
+        two = 1;
+    }
+    var target_section: u64 = w.p.symbols[symbol].section;
+    var target: u64 = w.p.symbols[symbol].offset;
+    var source: u64 = w.count;
+    if (iteration != 0) {
+        target_section = w.p.symbols[symbol].previous_section;
+        target = w.p.symbols[symbol].previous_offset;
+        source = w.p.nodes[node_index].previous_offset;
+    }
+    if ((w.p.symbols[symbol].flags & 4) != 0 && target_section == w.section) {
+        var displacement: u64 = 0;
+        if (short != 0 && w.p.nodes[node_index].force_near == 0) {
+            var short_target: u64 = target;
+            var previous: u64 = w.p.nodes[node_index].previous_length;
+            if (target > source && previous > 2) {
+                short_target -= previous - 2;
+            }
+            if (amd_relative(short_target, source, 2, 8, &displacement)) {
+                return amd_emit(w, short, 1) && amd_emit(w, displacement, 1);
+            }
+        }
+        if (!amd_relative(target, source, length, 32, &displacement)) {
+            w.result.argument = symbol;
+            return amd_fail(w.result, 42);
+        }
+        if (two != 0 && !amd_emit(w, 15, 1)) {
+            return false;
+        }
+        return amd_emit(w, near, 1) && amd_emit(w, displacement, 4);
+    }
+    if (two != 0 && !amd_emit(w, 15, 1)) {
+        return false;
+    }
+    return amd_emit(w, near, 1) && amd_relocation(w, symbol, 4, 18446744073709551612, w.count)
+        && amd_emit(w, 0, 4);
+}

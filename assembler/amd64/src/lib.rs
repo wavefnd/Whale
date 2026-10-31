@@ -10,6 +10,9 @@ pub mod encoder;
 
 pub mod encoding;
 
+#[cfg(whale_wave_amd64)]
+mod ast_model;
+
 pub mod parser;
 
 pub mod tables;

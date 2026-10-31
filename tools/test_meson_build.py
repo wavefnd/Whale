@@ -33,10 +33,14 @@ class CommandTests(unittest.TestCase):
 
     def test_ambient_wave_and_cargo_target_cannot_change_selection(self):
         with patch.dict(os.environ, {"WHALE_ASMOBJ_DIR": "old", "WHALE_WAVE_IR_DIR": "old",
+                                          "WHALE_WAVE_ASSEMBLER_DIR": "old",
+                                          "WHALE_WAVE_AMD64_DIR": "old",
                                           "CARGO_BUILD_TARGET": "old"}):
             environment = cargo_environment("private", None, "dev", "2", "2")
         self.assertNotIn("WHALE_ASMOBJ_DIR", environment)
         self.assertNotIn("WHALE_WAVE_IR_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_ASSEMBLER_DIR", environment)
+        self.assertNotIn("WHALE_WAVE_AMD64_DIR", environment)
         self.assertNotIn("CARGO_BUILD_TARGET", environment)
         self.assertEqual(environment["CARGO_TARGET_DIR"], "private")
         self.assertEqual(environment["CARGO_PROFILE_DEV_OPT_LEVEL"], "2")
@@ -44,6 +48,9 @@ class CommandTests(unittest.TestCase):
         selected = cargo_environment("private", "asmobj", "dev", "2", "2", "wave-ir")
         self.assertEqual(selected["WHALE_ASMOBJ_DIR"], "asmobj")
         self.assertEqual(selected["WHALE_WAVE_IR_DIR"], "wave-ir")
+        selected = cargo_environment("private", "asmobj", "dev", "2", "2", "ir", "common", "amd64")
+        self.assertEqual(selected["WHALE_WAVE_ASSEMBLER_DIR"], "common")
+        self.assertEqual(selected["WHALE_WAVE_AMD64_DIR"], "amd64")
 
     def test_wave_is_explicit_and_unknown_features_fail(self):
         self.assertEqual(validate_features(["asm-amd64", "asm-amd64"]), ["asm-amd64"])
@@ -120,11 +127,19 @@ class DependencyTests(unittest.TestCase):
             (source / "ir/model.wave").write_text("// type graph")
             (source / "toolchain/src/assembly_object.rs").write_text("// ffi boundary")
             (source / "Cargo.toml").write_text("manifest")
+            (source / "assembler/model.wave").write_text("shared model")
+            (source / "assembler/build_support.rs").write_text("guard")
+            (source / "assembler/amd64/encoder.wave").write_text("disabled")
+            (source / "assembler/aarch64/encoder.wave").write_text("selected")
             dependencies = source_dependencies(source, ["asm-aarch64"])
             self.assertNotIn(source, dependencies)
             self.assertIn(source / "assembler/aarch64/src", dependencies)
             self.assertIn(source / "assembler/aarch64/src/lib.rs", dependencies)
             self.assertNotIn(source / "assembler/amd64/src/lib.rs", dependencies)
+            self.assertNotIn(source / "assembler/amd64/encoder.wave", dependencies)
+            self.assertIn(source / "assembler/aarch64/encoder.wave", dependencies)
+            self.assertIn(source / "assembler/model.wave", dependencies)
+            self.assertIn(source / "assembler/build_support.rs", dependencies)
             self.assertIn(source / "Cargo.toml", dependencies)
             self.assertIn(source / "toolchain/src/assembly_object.rs", dependencies)
             self.assertIn(source / "ir/model.wave", dependencies)

@@ -12,9 +12,20 @@ impl REX {
     }
 
     pub fn encode(&self) -> u8 {
-        0x40 | ((self.w as u8) << 3)
-            | ((self.r as u8) << 2)
-            | ((self.x as u8) << 1)
-            | (self.b as u8)
+        #[cfg(whale_wave_amd64)]
+        return crate::encoder::wave::bits(
+            1,
+            u64::from(self.w),
+            u64::from(self.r),
+            u64::from(self.x),
+            u64::from(self.b),
+        );
+        #[cfg(not(whale_wave_amd64))]
+        {
+            0x40 | ((self.w as u8) << 3)
+                | ((self.r as u8) << 2)
+                | ((self.x as u8) << 1)
+                | (self.b as u8)
+        }
     }
 }

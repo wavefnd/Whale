@@ -1,0 +1,393 @@
+// SPDX-License-Identifier: MPL-2.0
+// Canonical scoped names and nonrecursive constant dependency evaluation.
+fun amd_namespace_fail(result: ptr<AmdEncodeResult>, error: u64,
+    argument: u64, previous: u64) -> bool {
+    result.error = error;
+    result.argument = argument;
+    result.previous = previous;
+    result.status = 1;
+    return false;
+}
+
+fun amd_name_length(p: ptr<AmdEncodeInput>, prefix: u64, name: u64) -> u64 {
+    var count: u64 = p.names[name].count;
+    if (prefix != 18446744073709551615) {
+        count += p.names[prefix].count;
+    }
+    return count;
+}
+
+fun amd_name_octet(p: ptr<AmdEncodeInput>, prefix: u64, name: u64, at: u64) -> u8 {
+    if (prefix != 18446744073709551615) {
+        if (at < p.names[prefix].count) {
+            return p.names[prefix].bytes[at];
+        }
+        at -= p.names[prefix].count;
+    }
+    return p.names[name].bytes[at];
+}
+
+fun amd_name_compare(p: ptr<AmdEncodeInput>, left: u64, right: u64,
+    result: ptr<AmdEncodeResult>) -> i32 {
+    var av: u8;
+    var bv: u8;
+    var a: ptr<AmdSymbol> = &p.symbols[left];
+    var b: ptr<AmdSymbol> = &p.symbols[right];
+    var al: u64 = amd_name_length(p, a.prefix, a.name);
+    var bl: u64 = amd_name_length(p, b.prefix, b.name);
+    var at: u64 = 0;
+    while (at < al && at < bl) {
+        if (!amd_charge(p, result)) {
+            return 0;
+        }
+        av = amd_name_octet(p, a.prefix, a.name, at);
+        bv = amd_name_octet(p, b.prefix, b.name, at);
+        if (av < bv) {
+            return -1;
+        }
+        if (av > bv) {
+            return 1;
+        }
+        at += 1;
+    }
+    if (al < bl) {
+        return -1;
+    }
+    if (al > bl) {
+        return 1;
+    }
+    return 0;
+}
+
+fun amd_intern(p: ptr<AmdEncodeInput>, prefix: u64, name: u64,
+    result: ptr<AmdEncodeResult>) -> u64 {
+    var existing: u64;
+    var index: u64;
+    var symbol: ptr<AmdSymbol>;
+    var equal: bool;
+    if (name >= p.name_count || (prefix != 18446744073709551615 && prefix >= p.name_count)) {
+        amd_fail(result, 3);
+        return p.symbol_capacity;
+    }
+    if (p.names[name].count == 0 || p.names[name].bytes[0] != 46) {
+        prefix = 18446744073709551615;
+    } else if (prefix == 18446744073709551615) {
+        amd_namespace_fail(result, 100, name, 18446744073709551615);
+        return p.symbol_capacity;
+    }
+    var length: u64 = amd_name_length(p, prefix, name);
+    var hash: u64 = 14695981039346656037;
+    var at: u64 = 0;
+    while (at < length) {
+        if (!amd_charge(p, result)) {
+            return p.symbol_capacity;
+        }
+        hash = (hash ^ (amd_name_octet(p, prefix, name, at) as u64)) * 1099511628211;
+        at += 1;
+    }
+    var slot: u64 = hash & (p.table_capacity - 1);
+    var attempts: u64 = 0;
+    while (attempts < p.table_capacity) {
+        if (!amd_charge(p, result)) {
+            return p.symbol_capacity;
+        }
+        existing = p.table[slot];
+        if (existing == 18446744073709551615) {
+            if (result.symbol_count >= p.symbol_capacity) {
+                amd_fail(result, 3);
+                return p.symbol_capacity;
+            }
+            index = result.symbol_count;
+            symbol = &p.symbols[index];
+            symbol.prefix = prefix;
+            symbol.name = name;
+            symbol.flags = 0;
+            symbol.label_site = 18446744073709551615;
+            symbol.extern_site = 18446744073709551615;
+            symbol.global_site = 18446744073709551615;
+            symbol.constant_site = 18446744073709551615;
+            symbol.metadata_site = 18446744073709551615;
+            symbol.section = 18446744073709551615;
+            symbol.offset = 0;
+            symbol.previous_section = 18446744073709551615;
+            symbol.previous_offset = 0;
+            symbol.low = 0;
+            symbol.high = 0;
+            symbol.dependency = 18446744073709551615;
+            symbol.add_low = 0;
+            symbol.add_high = 0;
+            symbol.symbol_kind = 0;
+            symbol.size = 0;
+            symbol.visibility = 0;
+            symbol.order = 18446744073709551615;
+            symbol.users = 18446744073709551615;
+            symbol.next = 18446744073709551615;
+            p.table[slot] = index;
+            result.symbol_count += 1;
+            return index;
+        }
+        if (existing >= result.symbol_count) {
+            amd_fail(result, 3);
+            return p.symbol_capacity;
+        }
+        symbol = &p.symbols[existing];
+        equal = amd_name_length(p, symbol.prefix, symbol.name) == length;
+        at = 0;
+        while (equal && at < length) {
+            if (!amd_charge(p, result)) {
+                return p.symbol_capacity;
+            }
+            equal = amd_name_octet(p, prefix, name, at)
+                == amd_name_octet(p, symbol.prefix, symbol.name, at);
+            at += 1;
+        }
+        if (equal) {
+            return existing;
+        }
+        slot = (slot + 1) & (p.table_capacity - 1);
+        attempts += 1;
+    }
+    amd_fail(result, 3);
+    return p.symbol_capacity;
+}
+
+fun amd_expression_add(a_low: u64, a_high: u64, b_low: u64, b_high: u64,
+    output: ptr<AsmWide>) -> bool {
+    var a: AsmWide;
+    var b: AsmWide;
+    a.low = a_low;
+    a.high = a_high;
+    b.low = b_low;
+    b.high = b_high;
+    if (!asm_number_add_checked(&a, &b, output)) {
+        return false;
+    }
+    return output.high == 0 || (output.high == 18446744073709551615
+        && output.low >= 9223372036854775808);
+}
+
+fun amd_expression(p: ptr<AmdEncodeInput>, scope: u64, expression: ptr<AsmExpr>,
+    output: ptr<AsmExpr>, result: ptr<AmdEncodeResult>) -> bool {
+    var value: AsmWide;
+    output[0] = expression[0];
+    if (expression.kind == 0) {
+        return true;
+    }
+    if (expression.kind != 1) {
+        return amd_fail(result, 3);
+    }
+    var symbol: u64 = amd_intern(p, scope, expression.name, result);
+    if (symbol >= p.symbol_capacity) {
+        return false;
+    }
+    output.name = symbol;
+    if ((p.symbols[symbol].flags & 32) != 0) {
+
+        if (!amd_expression_add(p.symbols[symbol].low, p.symbols[symbol].high,
+            expression.low, expression.high, &value)) {
+            return amd_namespace_fail(result, 104, symbol, 18446744073709551615);
+        }
+        output.kind = 0;
+        output.low = value.low;
+        output.high = value.high;
+        return true;
+    }
+    return true;
+}
+
+fun amd_evaluated_expression(p: ptr<AmdEncodeInput>, scope: u64,
+    expression: ptr<AsmExpr>, output: ptr<AsmExpr>, result: ptr<AmdEncodeResult>) -> bool {
+    if (!amd_expression(p, scope, expression, output, result)) {
+        return false;
+    }
+    if (output.kind == 1 && !amd_signed64(output.low, output.high)) {
+        return amd_namespace_fail(result, 106, output.name, 18446744073709551615);
+    }
+    return true;
+}
+
+fun amd_constants(p: ptr<AmdEncodeInput>, result: ptr<AmdEncodeResult>) -> bool {
+    var item: ptr<AsmItem>;
+    var node: ptr<AmdNode>;
+    var symbol: u64;
+    var entry: ptr<AmdSymbol>;
+    var previous: u64;
+    var primary: u64;
+    var dependency: u64;
+    var dependency_entry: ptr<AmdSymbol>;
+    var value: AsmWide;
+    var user: u64;
+    result.symbol_count = 0;
+    var at: u64 = 0;
+    while (at < p.table_capacity) {
+        if (!amd_charge(p, result)) {
+            return false;
+        }
+        p.table[at] = 18446744073709551615;
+        at += 1;
+    }
+    var scope: u64 = 18446744073709551615;
+    var index: u64 = 0;
+    while (index < p.item_count) {
+        result.node = index;
+        result.previous = 18446744073709551615;
+        if (!amd_charge(p, result)) {
+            return false;
+        }
+        item = &p.items[index];
+        node = &p.nodes[index];
+        node.scope = scope;
+        node.symbol = 18446744073709551615;
+        node.section = 0;
+        node.offset = 0;
+        node.length = 0;
+        node.previous_offset = 0;
+        node.previous_length = 0;
+        node.force_near = 0;
+        if (item.kind == 3 || item.kind == 7 || item.kind == 8) {
+            symbol = amd_intern(p, scope, item.name, result);
+            if (symbol >= p.symbol_capacity) {
+                return false;
+            }
+            node.symbol = symbol;
+            entry = &p.symbols[symbol];
+            if (item.kind == 3) {
+                entry.flags = entry.flags | 128;
+                if (entry.label_site == 18446744073709551615) {
+                    entry.label_site = index;
+                }
+                if (p.names[item.name].count == 0 || p.names[item.name].bytes[0] != 46) {
+                    scope = item.name;
+                }
+            } else if (item.kind == 7) {
+                entry.flags = entry.flags | 256;
+                if (entry.extern_site == 18446744073709551615) {
+                    entry.extern_site = index;
+                }
+            } else {
+                if ((entry.flags & 8) != 0) {
+                    return amd_namespace_fail(result, 101, symbol, entry.constant_site);
+                }
+                entry.flags = entry.flags | 8;
+                entry.constant_site = index;
+                entry.low = item.expression.low;
+                entry.high = item.expression.high;
+                if (item.expression.kind == 1) {
+                    dependency = amd_intern(p, node.scope,
+                        item.expression.name, result);
+                    if (dependency >= p.symbol_capacity) {
+                        return false;
+                    }
+                    entry.dependency = dependency;
+                    entry.add_low = item.expression.low;
+                    entry.add_high = item.expression.high;
+                } else if (item.expression.kind != 0) {
+                    return amd_fail(result, 3);
+                }
+            }
+        }
+        index += 1;
+    }
+    index = 0;
+    while (index < p.item_count) {
+        item = &p.items[index];
+        if (item.kind == 8) {
+            result.node = index;
+            symbol = p.nodes[index].symbol;
+            entry = &p.symbols[symbol];
+            if ((entry.flags & 384) != 0) {
+                previous = entry.label_site;
+                if (entry.extern_site < previous) {
+                    previous = entry.extern_site;
+                }
+                primary = index;
+                if (previous > index) {
+                    primary = previous;
+                    previous = index;
+                }
+                result.node = primary;
+                return amd_namespace_fail(result, 102, symbol, previous);
+            }
+            if (entry.dependency != 18446744073709551615
+                && (p.symbols[entry.dependency].flags & 8) == 0) {
+                return amd_namespace_fail(result, 103, entry.dependency,
+                    18446744073709551615);
+            }
+        }
+        if (!amd_charge(p, result)) {
+            return false;
+        }
+        index += 1;
+    }
+    // Reverse insertion preserves each dependency's source-order user list.
+    index = p.item_count;
+    while (index > 0) {
+        index -= 1;
+        if (!amd_charge(p, result)) {
+            return false;
+        }
+        if (p.items[index].kind == 8) {
+            symbol = p.nodes[index].symbol;
+            dependency = p.symbols[symbol].dependency;
+            if (dependency != 18446744073709551615) {
+                p.symbols[symbol].next = p.symbols[dependency].users;
+                p.symbols[dependency].users = symbol;
+            }
+        }
+    }
+    var head: u64 = 0;
+    var tail: u64 = 0;
+    index = 0;
+    while (index < p.item_count) {
+        if (p.items[index].kind == 8) {
+            symbol = p.nodes[index].symbol;
+            if (p.symbols[symbol].dependency == 18446744073709551615) {
+                p.queue[tail] = symbol;
+                tail += 1;
+            }
+        }
+        index += 1;
+    }
+    while (head < tail) {
+        if (!amd_charge(p, result)) {
+            return false;
+        }
+        symbol = p.queue[head];
+        head += 1;
+        entry = &p.symbols[symbol];
+        result.node = entry.constant_site;
+        if (entry.dependency != 18446744073709551615) {
+            dependency_entry = &p.symbols[entry.dependency];
+
+            if (!amd_expression_add(dependency_entry.low, dependency_entry.high,
+                entry.add_low, entry.add_high, &value)) {
+                return amd_namespace_fail(result, 104, entry.dependency,
+                    18446744073709551615);
+            }
+            entry.low = value.low;
+            entry.high = value.high;
+        }
+        entry.flags = entry.flags | 32;
+        user = entry.users;
+        while (user != 18446744073709551615) {
+            if (!amd_charge(p, result) || tail >= p.symbol_capacity) {
+                return false;
+            }
+            p.queue[tail] = user;
+            tail += 1;
+            user = p.symbols[user].next;
+        }
+    }
+    index = 0;
+    while (index < p.item_count) {
+        if (p.items[index].kind == 8) {
+            symbol = p.nodes[index].symbol;
+            if ((p.symbols[symbol].flags & 32) == 0) {
+                result.node = index;
+                return amd_namespace_fail(result, 105, symbol, 18446744073709551615);
+            }
+        }
+        index += 1;
+    }
+    return true;
+}
