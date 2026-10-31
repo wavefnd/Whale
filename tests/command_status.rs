@@ -5,7 +5,8 @@ fn invalid_link_arguments_report_failure() {
     let output =
         Command::new(env!("CARGO_BIN_EXE_whale")).args(["link", "missing.o"]).output().unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("missing output"));
+    let expected = if cfg!(feature = "native-linker") { "missing output" } else { "not included" };
+    assert!(String::from_utf8_lossy(&output.stderr).contains(expected));
 }
 
 #[test]

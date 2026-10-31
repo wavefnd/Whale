@@ -27,7 +27,7 @@ pub fn run(args: Vec<String>) {
         return;
     }
     let command = &args[0];
-    if !matches!(command.as_str(), "lower" | "verify" | "print" | "run") {
+    if !matches!(command.as_str(), "lower" | "verify" | "print" | "run" | "emit" | "fold") {
         fail(format!("unsupported IR command: {command}"));
     }
     #[cfg(not(feature = "socket-cli"))]
@@ -43,14 +43,13 @@ pub fn run(args: Vec<String>) {
     let mut max_output = None;
     let mut input = None;
     let mut output = None;
-    #[cfg(feature = "socket-cli")]
     let mut target = None;
     #[cfg(feature = "socket-cli")]
     let mut do_verify = true;
     let mut args = args.iter().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--max-output" if matches!(command.as_str(), "lower" | "print") => {
+            "--max-output" if matches!(command.as_str(), "lower" | "print" | "emit" | "fold") => {
                 if max_output.is_some() {
                     fail("duplicate --max-output option");
                 }
@@ -64,7 +63,7 @@ pub fn run(args: Vec<String>) {
                         .unwrap_or_else(|| fail("--max-output requires a decimal byte count")),
                 );
             },
-            "-o" if matches!(command.as_str(), "lower" | "print") => {
+            "-o" if matches!(command.as_str(), "lower" | "print" | "emit" | "fold") => {
                 if output.is_some() {
                     fail("duplicate -o option");
                 }
@@ -115,8 +114,7 @@ pub fn run(args: Vec<String>) {
                         .unwrap_or_else(|| fail("--max-memory requires a decimal u64 byte count")),
                 );
             },
-            #[cfg(feature = "socket-cli")]
-            "--target" if command == "lower" => {
+            "--target" if matches!(command.as_str(), "lower" | "emit") => {
                 if target.is_some() {
                     fail("duplicate --target option");
                 }
@@ -131,12 +129,25 @@ pub fn run(args: Vec<String>) {
     if command == "run" && function.is_none() {
         fail("run requires --function @fN");
     }
+    if command == "emit" {
+        let selected = target.map(String::as_str).unwrap_or("whale-bytecode-v1");
+        if crate::builtins::registry().backend(selected).is_none() {
+            fail(format!(
+                "unsupported IR emission target {selected:?}; available: whale-bytecode-v1"
+            ));
+        }
+        if output.is_none() {
+            fail("emit requires -o <output.wbc>");
+        }
+    }
     let input = input.unwrap_or_else(|| fail("missing input file"));
     #[cfg(feature = "socket-cli")]
     let lower_target = if command == "lower" {
         Some(
-            ir::Target::lookup(target.map(String::as_str).unwrap_or("x86_64-whale-linux"))
-                .unwrap_or_else(|e| fail(e)),
+            target_spec::TargetSpec::lookup_builtin(
+                target.map(String::as_str).unwrap_or("x86_64-whale-linux"),
+            )
+            .unwrap_or_else(|e| fail(e)),
         )
     } else {
         None
@@ -151,13 +162,13 @@ pub fn run(args: Vec<String>) {
         Ok(source)
     })()
     .unwrap_or_else(|e| fail(format!("failed to read {input}: {e}")));
-    let module = if command == "lower" {
+    let mut module = if command == "lower" {
         #[cfg(feature = "socket-cli")]
         {
             let target = lower_target.expect("lower target checked before reading input");
             let program = interchange::decode(&source)
                 .unwrap_or_else(|e| fail(format!("Failed to parse socket JSON: {e}")));
-            let module = lower_o0(&program, target.name(), target.data_layout())
+            let module = lower_o0(&program, &target.id, target.storage.data)
                 .unwrap_or_else(|e| fail(format!("lower_o0 failed: {e}")));
             if do_verify {
                 ir::verify_module(&module)
@@ -170,6 +181,23 @@ pub fn run(args: Vec<String>) {
     } else {
         parse_module(&source).unwrap_or_else(|e| fail(format!("{input}:{e}")))
     };
+    if command == "fold" {
+        ir::pass::run_pass(
+            &mut module,
+            &mut ir::pass::IntegerConstantFold::default(),
+            &mut ir::pass::AnalysisState::default(),
+        )
+        .unwrap_or_else(|error| fail(error));
+    }
+    if command == "emit" {
+        let target = target.map(String::as_str).unwrap_or("whale-bytecode-v1");
+        if target != module.target {
+            fail(format!("input target {:?} differs from --target {target:?}", module.target));
+        }
+        let output = output.unwrap_or_else(|| fail("emit requires -o <output.wbc>"));
+        super::bytecode::emit(&module, input, output, max_output);
+        return;
+    }
     if command == "verify" {
         stdout(format!("Verified IR {input}\n"));
         return;
@@ -220,11 +248,13 @@ fn print_help() {
         "Usage: whale ir <command> [options]", "\n",
         "  verify <input.wir>             Read and verify format 3/4/5/6/7/8 typed IR", "\n",
         "  print <input.wir> [-o <path>] [--max-output <bytes>]", "\n",
+        "  fold <input.wir> [-o <path>] [--max-output <bytes>]", "\n",
+        "  emit <input.wir> --target whale-bytecode-v1 -o <output.wbc> [--max-output <bytes>]", "\n",
         "  run <input.wir> --function @fN [--arg <literal> ...] [--max-steps <u64>] [--max-memory <u64>]", "\n",
         "    Execute integer/bool/float values, control flow and tracked stack memory; default 1000000 steps, 64 MiB storage.", "\n",
         "  lower <socket.json> [-o <path>] [--max-output <bytes>] (requires socket-cli)", "\n",
         "  Canonical output streams within a 64 MiB default limit; failed file writes preserve existing output.", "\n",
-        "  lower options: --target x86_64-whale-linux, --no-verify", "\n",
+        "  lower options: --target x86_64-whale-linux|whale-bytecode-v1, --no-verify", "\n",
         "  AST envelope: reads format_version 2/3/4/5, writes 5; semantics_version: 1, features: [], program: AST", "\n",
         "  Typed IR reads format_version 3/4/5/6/7/8, writes 8; semantics_version 1. Legacy undef is invalid.", "\n",
         "  Integer literals are decimal; floats use exact-width 0x storage bits.", "\n",
@@ -271,7 +301,7 @@ fn execute(
     }
 }
 
-fn scalar_argument(ty: &ir::Type, literal: &str) -> Option<ir::ConstValue> {
+pub(super) fn scalar_argument(ty: &ir::Type, literal: &str) -> Option<ir::ConstValue> {
     let decimal = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     match ty {
         ir::Type::F16 => ir::FloatBits::parse(16, literal).ok().map(ir::ConstValue::F),

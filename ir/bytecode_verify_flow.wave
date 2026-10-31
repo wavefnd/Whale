@@ -1,0 +1,296 @@
+// SPDX-License-Identifier: MPL-2.0
+// All definition, predecessor and dominator facts are derived here, never read
+// from the file. The shared Wave CFG and SSA cores consume only these facts.
+fun ir_bytecode_unique(table: ptr<IrSourceSlot>, capacity: u64, kind: u64,
+    a: u64, b: u64, c: u64, context: ptr<IrBytecodeVerifier>) -> bool {
+    var result: ptr<IrBytecodeResult> = context.result;
+    var at: u64 = ir_source_slot(table, capacity, kind, a, b, c,
+        &result.work, context.limits.max_work);
+    if (at == capacity) { return ir_bytecode_fail(result, 3, 1, result.table, result.index); }
+    if (table[at].kind != 0) { return ir_bytecode_fail(result, 1, 60, result.table, result.index); }
+    ir_source_put(table, at, kind, a, b, c, 0, 0);
+    return true;
+}
+
+fun ir_bytecode_has_destination(inst: ptr<IrRuntimeInstruction>) -> bool {
+    var op: u64 = inst.op;
+    return op == 0 || (op >= 2 && op <= 19) || op == 21 || op == 24
+        || op == 27 || op == 28 || (op == 29 && inst.dst != 18446744073709551615);
+}
+
+fun ir_bytecode_target(function: ptr<IrRuntimeFunction>, target: u64,
+    context: ptr<IrBytecodeVerifier>) -> bool {
+    if (target < function.first_block || target - function.first_block >= function.block_count) {
+        return ir_bytecode_fail(context.result, 1, 61, 5, context.result.index);
+    }
+    return true;
+}
+
+fun ir_bytecode_successor(function: ptr<IrRuntimeFunction>, target: u64, block: u64,
+    edges: ptr<u64>, edge_count: ptr<u64>, seen: ptr<u64>,
+    context: ptr<IrBytecodeVerifier>) -> bool {
+    if (!ir_bytecode_charge(context.result, context.limits, 1)
+        || !ir_bytecode_target(function, target, context)) { return false; }
+    var local: u64 = target - function.first_block;
+    if (seen[local] != block) {
+        seen[local] = block;
+        edges[edge_count[0]] = local;
+        edge_count[0] += 1;
+    }
+    return true;
+}
+
+fun ir_bytecode_cfg_status(context: ptr<IrBytecodeVerifier>, cfg: ptr<IrCfgResult>) -> bool {
+    if (!ir_bytecode_charge(context.result, context.limits, cfg.work)) { return false; }
+    if (cfg.status == 3) {
+        return ir_bytecode_fail(context.result, 3, 1, 4, cfg.index);
+    }
+    if (cfg.status != 0) {
+        return ir_bytecode_fail(context.result, 1, 62, 4, cfg.index);
+    }
+    return true;
+}
+
+fun ir_bytecode_function_flow(context: ptr<IrBytecodeVerifier>, function_index: u64,
+    identities: ptr<IrSourceSlot>, identity_capacity: u64) -> bool {
+    var p: ptr<IrBytecodeProgram> = context.program;
+    var limits: ptr<IrBytecodeLimits> = context.limits;
+    var result: ptr<IrBytecodeResult> = context.result;
+    var function: ptr<IrRuntimeFunction> = &p.functions[function_index];
+    var saved: u64 = context.scratch.used;
+    var n: u64 = function.block_count;
+    var first_instruction: u64 = p.blocks[function.first_block].first;
+    var last_block: ptr<IrRuntimeBlock> = &p.blocks[function.first_block + n - 1];
+    var instruction_count: u64 = last_block.first + last_block.count - first_instruction;
+    var edge_capacity: u64 = n * 2 + p.operand_count;
+    var successors: ptr<IrCfgBlock> = ir_bytecode_take(context.scratch, n * 2, result) as ptr<IrCfgBlock>;
+    var edges: ptr<u64> = ir_bytecode_take(context.scratch, edge_capacity, result);
+    var predecessor_blocks: ptr<IrCfgBlock> = ir_bytecode_take(context.scratch, n * 2, result) as ptr<IrCfgBlock>;
+    var predecessors: ptr<u64> = ir_bytecode_take(context.scratch, edge_capacity, result);
+    var seen: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var cursors: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var stack_block: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var stack_next: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var order: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var temporary: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var rank: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var idom: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var temporary_idom: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var heads: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var next: ptr<u64> = ir_bytecode_take(context.scratch, n, result);
+    var blocks: ptr<IrSsaBlock> = ir_bytecode_take(context.scratch, n * 9, result) as ptr<IrSsaBlock>;
+    var instructions: ptr<IrSsaInstruction> = ir_bytecode_take(context.scratch,
+        instruction_count * 5, result) as ptr<IrSsaInstruction>;
+    var use_capacity: u64 = instruction_count * 3 + p.operand_count;
+    var uses: ptr<IrSsaUse> = ir_bytecode_take(context.scratch,
+        use_capacity * 6, result) as ptr<IrSsaUse>;
+    var phi_capacity: u64 = 2;
+    while (phi_capacity / 2 < n) { phi_capacity *= 2; }
+    var phi_table: ptr<IrSsaPredecessor> = ir_bytecode_take(context.scratch,
+        phi_capacity * 2, result) as ptr<IrSsaPredecessor>;
+    if (result.status != 0) { return false; }
+    var b: u64 = 0;
+    while (b < n) {
+        if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+        seen[b] = 18446744073709551615;
+        predecessor_blocks[b].count = 0;
+        heads[b] = 18446744073709551615;
+        next[b] = 18446744073709551615;
+        b += 1;
+    }
+    var edge_count: u64 = 0;
+    b = 0;
+    while (b < n) {
+        var block: ptr<IrRuntimeBlock> = &p.blocks[function.first_block + b];
+        var terminal: ptr<IrRuntimeInstruction> = &p.instructions[block.first + block.count - 1];
+        result.index = block.first + block.count - 1;
+        successors[b].first = edge_count;
+        if (terminal.op == 31) {
+            if (!ir_bytecode_successor(function, terminal.a, b, edges, &edge_count, seen, context)) { return false; }
+        } else if (terminal.op == 32) {
+            if (!ir_bytecode_successor(function, terminal.b, b, edges, &edge_count, seen, context)
+                || !ir_bytecode_successor(function, terminal.c, b, edges, &edge_count, seen, context)) { return false; }
+        } else if (terminal.op == 33) {
+            if (terminal.first > p.operand_count
+                || terminal.count > (p.operand_count - terminal.first) / 3) {
+                return ir_bytecode_fail(result, 1, 41, 5, result.index);
+            }
+            if (!ir_bytecode_successor(function, terminal.b, b, edges, &edge_count, seen, context)) { return false; }
+            var i: u64 = 0;
+            var kind: u64 = p.types[terminal.ty].kind;
+            var literal: u64 = 1;
+            if (ir_verify_unsigned(kind)) { literal = 2; }
+            if (kind == 1) { literal = 3; }
+            while (i < terminal.count) {
+                var at: u64 = terminal.first + i * 3;
+                var low: u64 = p.operands[at];
+                var high: u64 = p.operands[at + 1];
+                if (!ir_verify_literal(kind, literal, low, high)) {
+                    return ir_bytecode_fail(result, 1, 46, 5, result.index);
+                }
+                if (!ir_bytecode_unique(identities, identity_capacity, 8, result.index,
+                    low, high, context)) { return false; }
+                if (!ir_bytecode_successor(function, p.operands[at + 2], b,
+                    edges, &edge_count, seen, context)) { return false; }
+                i += 1;
+            }
+        }
+        successors[b].count = edge_count - successors[b].first;
+        var i: u64 = successors[b].first;
+        while (i < edge_count) {
+            if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+            predecessor_blocks[edges[i]].count += 1;
+            i += 1;
+        }
+        b += 1;
+    }
+    var prefix: u64 = 0;
+    b = 0;
+    while (b < n) {
+        if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+        predecessor_blocks[b].first = prefix;
+        cursors[b] = prefix;
+        prefix += predecessor_blocks[b].count;
+        b += 1;
+    }
+    b = 0;
+    while (b < n) {
+        var i: u64 = 0;
+        while (i < successors[b].count) {
+            if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+            var target: u64 = edges[successors[b].first + i];
+            predecessors[cursors[target]] = b;
+            cursors[target] += 1;
+            i += 1;
+        }
+        b += 1;
+    }
+    var cfg: IrCfgResult;
+    var entry: u64 = function.entry - function.first_block;
+    whale_ir_cfg_rpo(successors, n, edges, edge_count, entry, limits.max_work - result.work,
+        seen as ptr<u8>, n * 8, stack_block, stack_next, n, temporary, n, order, n, &cfg);
+    if (!ir_bytecode_cfg_status(context, &cfg)) { return false; }
+    var order_count: u64 = cfg.count;
+    whale_ir_cfg_idom(predecessor_blocks, n, predecessors, edge_count, order, order_count,
+        entry, limits.max_work - result.work, rank, n, temporary_idom, n, idom, n, &cfg);
+    if (!ir_bytecode_cfg_status(context, &cfg)) { return false; }
+    b = 0;
+    while (b < n) {
+        if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+        blocks[b].reachable = 0;
+        blocks[b].start = 0;
+        blocks[b].end = 0;
+        if (idom[b] != 18446744073709551615) {
+            blocks[b].reachable = 1;
+            if (b != entry) {
+                next[b] = heads[idom[b]];
+                heads[idom[b]] = b;
+            }
+        }
+        b += 1;
+    }
+    var depth: u64 = 1;
+    var clock: u64 = 1;
+    stack_block[0] = entry;
+    stack_next[0] = heads[entry];
+    blocks[entry].start = clock;
+    while (depth != 0) {
+        if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+        var top: u64 = depth - 1;
+        var child: u64 = stack_next[top];
+        if (child == 18446744073709551615) {
+            clock += 1;
+            blocks[stack_block[top]].end = clock;
+            depth -= 1;
+        } else {
+            stack_next[top] = next[child];
+            clock += 1;
+            blocks[child].start = clock;
+            stack_block[depth] = child;
+            stack_next[depth] = heads[child];
+            depth += 1;
+        }
+    }
+    var use_count: u64 = 0;
+    b = 0;
+    while (b < n) {
+        var block: ptr<IrRuntimeBlock> = &p.blocks[function.first_block + b];
+        blocks[b].id = block.id;
+        blocks[b].first = block.first - first_instruction;
+        blocks[b].count = block.count - 1;
+        blocks[b].pred_first = predecessor_blocks[b].first;
+        blocks[b].pred_count = predecessor_blocks[b].count;
+        blocks[b].terminator_use = 18446744073709551615;
+        var position: u64 = 0;
+        while (position < block.count) {
+            result.index = block.first + position;
+            var inst: ptr<IrRuntimeInstruction> = &p.instructions[result.index];
+            if (!ir_bytecode_charge(result, limits, 1)
+                || !ir_bytecode_instruction(context, function, inst)) { return false; }
+            var count: u64 = ir_bytecode_operands(context, function, inst);
+            if (result.status != 0) { return false; }
+            var item: ptr<IrSsaInstruction> = &instructions[result.index - first_instruction];
+            item.phi = 0;
+            if (inst.op == 15) { item.phi = 1; }
+            item.dst = inst.dst;
+            item.ty = inst.ty;
+            item.first = use_count;
+            item.count = count;
+            if (count > use_capacity - use_count) { return ir_bytecode_fail(result, 4, 3, 5, result.index); }
+            var i: u64 = 0;
+            while (i < count) {
+                if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+                var slot: u64 = 0;
+                // Operand.value is the original identity; find the corresponding
+                // dense slot from the already validated instruction spelling.
+                if (inst.op == 15) { slot = p.operands[inst.first + i * 2]; }
+                else if (inst.op == 24) {
+                    slot = inst.a;
+                    if (i != 0) { slot = p.operands[inst.first + i - 1]; }
+                } else if (inst.op == 29) {
+                    slot = inst.a;
+                    if (inst.flags == 0) { slot = p.operands[inst.first + i]; }
+                    else if (i != 0) { slot = p.operands[inst.first + i - 1]; }
+                } else if (inst.op == 20 || inst.op == 22) {
+                    slot = inst.b;
+                    if (i == 1) { slot = inst.a; }
+                } else {
+                    slot = inst.a;
+                    if (i == 1) { slot = inst.b; }
+                    if (i == 2) { slot = inst.c; }
+                }
+                var definition: ptr<IrBytecodeDefinition> = &context.definitions[function.first_value_type + slot];
+                var usage: ptr<IrSsaUse> = &uses[use_count];
+                usage.value = p.value_ids[function.first_value_type + slot];
+                usage.ty = p.value_types[function.first_value_type + slot];
+                usage.pred = 18446744073709551615;
+                if (inst.op == 15) {
+                    var predecessor: u64 = p.operands[inst.first + i * 2 + 1];
+                    if (!ir_bytecode_target(function, predecessor, context)) { return false; }
+                    usage.pred = predecessor - function.first_block;
+                }
+                usage.def_block = definition.block;
+                usage.def_position = definition.position;
+                usage.defined = definition.defined;
+                use_count += 1;
+                i += 1;
+            }
+            if (position + 1 == block.count && count != 0) {
+                blocks[b].terminator_use = item.first;
+            }
+            position += 1;
+        }
+        b += 1;
+    }
+    var ssa: IrSsaResult;
+    whale_ir_verify_ssa(p.types, p.type_count, p.edges, p.edge_count, blocks, n, entry,
+        instructions, instruction_count, uses, use_count, predecessors, edge_count,
+        phi_table, phi_capacity, limits.max_work - result.work, &ssa);
+    if (!ir_bytecode_charge(result, limits, ssa.work)) { return false; }
+    if (ssa.status == 8) { return ir_bytecode_fail(result, 3, 1, 5, ssa.instruction + first_instruction); }
+    if (ssa.status != 0) {
+        return ir_bytecode_fail(result, 1, 70 + ssa.status, 5, ssa.instruction + first_instruction);
+    }
+    context.scratch.used = saved;
+    return true;
+}

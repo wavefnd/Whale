@@ -593,7 +593,7 @@ fun ir_runtime_initialize(p: ptr<IrRuntimeDriver>) -> bool {
         }
         p.result.global = i;
         var global: ptr<IrRuntimeGlobal> = &p.globals[i];
-        if (!ir_runtime_call_value(p.types[global.ty].kind)) {
+        if (global.initialized != 0 && !ir_runtime_call_value(p.types[global.ty].kind)) {
             return ir_runtime_error(p, 17, 18446744073709551615, i, 0);
         }
         if (!ir_runtime_layout(p, global.ty)) {

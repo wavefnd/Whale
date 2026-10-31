@@ -15,7 +15,7 @@ const ALLOCATION: &str = "unable to allocate Wave interpreter transport";
 
 type Result<T> = std::result::Result<T, InterpreterError>;
 
-trait WireDefault {
+pub(crate) trait WireDefault {
     fn wire_default() -> Self;
 }
 
@@ -41,7 +41,7 @@ macro_rules! record {
     ($name:ident { $($field:ident: $ty:ty),* $(,)? }) => {
         #[repr(C)]
         #[derive(Clone, Copy)]
-        struct $name { $($field: $ty),* }
+        pub(crate) struct $name { $(pub(crate) $field: $ty),* }
 
         impl Default for $name {
             fn default() -> Self { Self { $($field: <$ty as WireDefault>::wire_default()),* } }
@@ -257,6 +257,23 @@ record!(RawDriver {
 
 unsafe extern "C" {
     fn whale_ir_runtime_step(driver: *mut RawDriver) -> i32;
+
+    fn whale_ir_bytecode_runtime_step(
+        program: *mut std::ffi::c_void,
+        driver: *mut RawDriver,
+        scratch: *mut u64,
+        capacity: u64,
+        limits: *const crate::bytecode::BytecodeLimits,
+        admission: *mut std::ffi::c_void,
+    ) -> i32;
+}
+
+pub(crate) struct RuntimeAdmission {
+    pub(crate) program: *mut std::ffi::c_void,
+    pub(crate) scratch: *mut u64,
+    pub(crate) capacity: u64,
+    pub(crate) limits: crate::bytecode::BytecodeLimits,
+    pub(crate) result: *mut std::ffi::c_void,
 }
 
 fn backend(site: Option<ExecutionSite>) -> InterpreterError {
@@ -336,31 +353,34 @@ enum TypeView<'a> {
     Signature(&'a FunctionSignature),
 }
 
-struct Program<'a> {
-    module: &'a Module,
-    types: Vec<RawType>,
+pub(crate) struct Program<'a> {
+    module: Option<&'a Module>,
+    pub(crate) sources: SourceMetadata,
+    pub(crate) types: Vec<RawType>,
     type_views: Vec<TypeView<'a>>,
     type_ids: HashMap<&'a Type, u64>,
     signature_ids: HashMap<&'a FunctionSignature, u64>,
     signature_arcs: HashMap<u64, Arc<FunctionSignature>>,
     cached_types: HashMap<u64, Type>,
-    edges: Vec<u64>,
-    functions: Vec<RawFunction>,
-    blocks: Vec<RawBlock>,
-    instructions: Vec<RawInstruction>,
-    operands: Vec<u64>,
-    value_types: Vec<u64>,
-    globals: Vec<RawGlobal>,
-    sites: Vec<ExecutionSite>,
-    reasons: Vec<&'a str>,
+    pub(crate) edges: Vec<u64>,
+    pub(crate) functions: Vec<RawFunction>,
+    pub(crate) blocks: Vec<RawBlock>,
+    pub(crate) instructions: Vec<RawInstruction>,
+    pub(crate) operands: Vec<u64>,
+    pub(crate) value_types: Vec<u64>,
+    pub(crate) value_ids: Vec<u64>,
+    pub(crate) globals: Vec<RawGlobal>,
+    pub(crate) sites: Vec<ExecutionSite>,
+    pub(crate) reasons: Vec<std::borrow::Cow<'a, str>>,
     declaration_ids: HashMap<FunctionId, u64>,
     global_ids: HashMap<GlobalId, u64>,
 }
 
 impl<'a> Program<'a> {
-    fn new(module: &'a Module) -> Result<Self> {
+    pub(crate) fn new(module: Option<&'a Module>) -> Result<Self> {
         Ok(Self {
             module,
+            sources: SourceMetadata::default(),
             types: Vec::new(),
             type_views: Vec::new(),
             type_ids: HashMap::new(),
@@ -373,6 +393,7 @@ impl<'a> Program<'a> {
             instructions: Vec::new(),
             operands: Vec::new(),
             value_types: Vec::new(),
+            value_ids: Vec::new(),
             globals: Vec::new(),
             sites: Vec::new(),
             reasons: Vec::new(),
@@ -477,7 +498,10 @@ impl<'a> Program<'a> {
         Ok(id)
     }
 
-    fn type_model(&self, id: u64) -> Result<Type> {
+    pub(crate) fn type_model(&self, id: u64) -> Result<Type> {
+        if let Some(ty) = self.cached_types.get(&id) {
+            return Ok(ty.clone());
+        }
         match self.type_views.get(usize::try_from(id).map_err(|_| backend(None))?) {
             Some(TypeView::Type(ty)) => Ok((*ty).clone()),
             Some(TypeView::Signature(signature)) => Ok(Type::FnPtr(Box::new((*signature).clone()))),
@@ -496,6 +520,9 @@ impl<'a> Program<'a> {
     }
 
     fn type_ref(&self, id: u64) -> Result<&Type> {
+        if let Some(ty) = self.cached_types.get(&id) {
+            return Ok(ty);
+        }
         match self.type_views.get(id as usize) {
             Some(TypeView::Type(ty)) => Ok(ty),
             Some(TypeView::Signature(_)) => self.cached_types.get(&id).ok_or_else(|| backend(None)),
@@ -507,10 +534,10 @@ impl<'a> Program<'a> {
         if let Some(signature) = self.signature_arcs.get(&id) {
             return Ok(signature.clone());
         }
-        let Some(TypeView::Signature(signature)) = self.type_views.get(id as usize) else {
-            return Err(backend(None));
+        let signature = match self.type_ref(id)? {
+            Type::FnPtr(signature) => Arc::new((**signature).clone()),
+            _ => return Err(backend(None)),
         };
-        let signature = Arc::new((*signature).clone());
         map_reserve(&mut self.signature_arcs, 1)?;
         self.signature_arcs.insert(id, signature.clone());
         Ok(signature)
@@ -534,11 +561,14 @@ impl<'a> Program<'a> {
             },
             Value::FunctionPointer(pointer) => {
                 raw.kind = 4;
-                raw.signature = self
-                    .signature_ids
-                    .get(&*pointer.signature)
-                    .copied()
-                    .ok_or_else(|| backend(None))?;
+                raw.signature = if self.types.get(ty as usize).is_some_and(|node| node.kind == 18) {
+                    ty
+                } else {
+                    self.signature_ids
+                        .get(&*pointer.signature)
+                        .copied()
+                        .ok_or_else(|| backend(None))?
+                };
                 (raw.target_kind, raw.target) = match pointer.target {
                     FunctionTarget::Null => (0, 0),
                     FunctionTarget::Defined(id) => (1, u64::from(id.0)),
@@ -575,7 +605,9 @@ impl<'a> Program<'a> {
                     1 if raw.origin == 1 => {
                         let id = FunctionId(u32::try_from(raw.target).map_err(|_| backend(None))?);
                         let index = *self.declaration_ids.get(&id).ok_or_else(|| backend(None))?;
-                        if self.module.declarations[index as usize].signature != *signature {
+                        if self.type_ref(self.functions[index as usize].signature)?
+                            != self.type_ref(raw.signature)?
+                        {
                             return Err(backend(None));
                         }
                         FunctionTarget::Defined(id)
@@ -589,21 +621,22 @@ impl<'a> Program<'a> {
         }
     }
 
-    fn marshal(&mut self) -> Result<()> {
-        map_reserve(&mut self.declaration_ids, self.module.declarations.len())?;
-        for (index, declaration) in self.module.declarations.iter().enumerate() {
+    pub(crate) fn marshal(&mut self) -> Result<()> {
+        let module = self.module.ok_or_else(|| backend(None))?;
+        map_reserve(&mut self.declaration_ids, module.declarations.len())?;
+        for (index, declaration) in module.declarations.iter().enumerate() {
             self.declaration_ids.insert(declaration.id, index as u64);
         }
-        map_reserve(&mut self.global_ids, self.module.global_storage.len())?;
-        for (index, global) in self.module.global_storage.iter().enumerate() {
+        map_reserve(&mut self.global_ids, module.global_storage.len())?;
+        for (index, global) in module.global_storage.iter().enumerate() {
             self.global_ids.insert(global.id, index as u64);
         }
         let mut bodies = HashMap::new();
-        map_reserve(&mut bodies, self.module.functions.len())?;
-        for function in &self.module.functions {
+        map_reserve(&mut bodies, module.functions.len())?;
+        for function in &module.functions {
             bodies.insert(function.id, function);
         }
-        for (index, declaration) in self.module.declarations.iter().enumerate() {
+        for (index, declaration) in module.declarations.iter().enumerate() {
             let signature = self.signature(&declaration.signature)?;
             let mut raw = RawFunction {
                 id: u64::from(declaration.id.0),
@@ -631,6 +664,7 @@ impl<'a> Program<'a> {
                     slots.insert(param.id, slot);
                     let type_id = self.ty(&param.ty)?;
                     push(&mut self.value_types, type_id)?;
+                    push(&mut self.value_ids, u64::from(param.id.0))?;
                     push(&mut self.operands, slot)?;
                 }
                 for block in &function.blocks {
@@ -641,6 +675,7 @@ impl<'a> Program<'a> {
                             let ty = annotations.get(&dst).ok_or_else(|| backend(None))?;
                             let type_id = self.ty(ty)?;
                             push(&mut self.value_types, type_id)?;
+                            push(&mut self.value_ids, u64::from(dst.0))?;
                         }
                     }
                 }
@@ -694,7 +729,7 @@ impl<'a> Program<'a> {
             }
             push(&mut self.functions, raw)?;
         }
-        for global in &self.module.global_storage {
+        for global in &module.global_storage {
             let ty = self.ty(&global.ty)?;
             let mut native = RawGlobal {
                 id: u64::from(global.id.0),
@@ -919,7 +954,7 @@ impl<'a> Program<'a> {
             Instruction::TrapIf { cond, reason } => {
                 raw.op = 30;
                 raw.a = slot(cond)?;
-                raw.global = push(&mut self.reasons, reason)?;
+                raw.global = push(&mut self.reasons, std::borrow::Cow::Borrowed(reason))?;
             },
         }
         Ok(raw)
@@ -971,7 +1006,7 @@ impl<'a> Program<'a> {
             },
             Terminator::Trap { reason } => {
                 raw.op = 35;
-                raw.global = push(&mut self.reasons, reason)?;
+                raw.global = push(&mut self.reasons, std::borrow::Cow::Borrowed(reason))?;
             },
         }
         Ok(raw)
@@ -1140,7 +1175,219 @@ fn checked_code(op: &CheckedOp) -> u64 {
 }
 
 impl Program<'_> {
-    fn site(&self, index: u64, entry: FunctionId) -> Result<ExecutionSite> {
+    pub(crate) fn callable_value(&self, function: FunctionId) -> Result<RuntimeValue<'static>> {
+        let body =
+            self.function_record(function).ok_or(InterpreterError::UnknownFunction(function))?;
+        let Type::FnPtr(signature) = self.type_model(body.signature)? else {
+            return Err(backend(None));
+        };
+        Ok(RuntimeValue {
+            ty: Type::FnPtr(signature.clone()),
+            value: Value::FunctionPointer(FunctionPointer {
+                signature: Arc::new(*signature),
+                target: FunctionTarget::Defined(function),
+            }),
+            callable_module: None,
+        })
+    }
+
+    fn append_argument_type(&mut self, ty: &Type) -> Result<u64> {
+        let mut node = RawType::default();
+        node.kind = match ty {
+            Type::Void => 0,
+            Type::Bool => 1,
+            Type::I1 => 2,
+            Type::U1 => 3,
+            Type::I8 => 4,
+            Type::I16 => 5,
+            Type::I32 => 6,
+            Type::I64 => 7,
+            Type::I128 => 8,
+            Type::U8 => 9,
+            Type::U16 => 10,
+            Type::U32 => 11,
+            Type::U64 => 12,
+            Type::U128 => 13,
+            Type::F16 => 14,
+            Type::F32 => 15,
+            Type::F64 => 16,
+            Type::Ptr(child) => {
+                node.child = self.append_argument_type(child)?;
+                17
+            },
+            Type::Array(child, count) => {
+                node.child = self.append_argument_type(child)?;
+                node.count = *count;
+                19
+            },
+            Type::FnPtr(signature) => {
+                let mut children = Vec::new();
+                push(&mut children, self.append_argument_type(&signature.ret)?)?;
+                for param in &signature.params {
+                    push(&mut children, self.append_argument_type(param)?)?;
+                }
+                node.first = self.edges.len() as u64;
+                node.count = children.len() as u64;
+                node.extra = u64::from(signature.convention == CallingConvention::SysV64)
+                    | (u64::from(signature.variadic) << 1);
+                reserve(&mut self.edges, children.len())?;
+                self.edges.extend(children);
+                18
+            },
+            Type::Struct(fields) | Type::Tuple(fields) => {
+                let mut children = Vec::new();
+                for field in fields {
+                    push(&mut children, self.append_argument_type(field)?)?;
+                }
+                node.first = self.edges.len() as u64;
+                node.count = children.len() as u64;
+                reserve(&mut self.edges, children.len())?;
+                self.edges.extend(children);
+                if matches!(ty, Type::Struct(_)) {
+                    20
+                } else {
+                    21
+                }
+            },
+        };
+        push(&mut self.types, node)
+    }
+
+    pub(crate) fn prepare_argument_types(
+        &mut self,
+        arguments: &[(&RuntimeValue<'_>, bool)],
+    ) -> Result<Vec<u64>> {
+        let mut ids = Vec::new();
+        reserve(&mut ids, arguments.len())?;
+        for (value, _) in arguments {
+            ids.push(self.append_argument_type(value.ty())?);
+        }
+        Ok(ids)
+    }
+
+    pub(crate) fn rollback_argument_types(&mut self, types: usize, edges: usize) {
+        self.types.truncate(types);
+        self.edges.truncate(edges);
+        self.cached_types.retain(|id, _| *id < types as u64);
+        self.signature_arcs.retain(|id, _| *id < types as u64);
+    }
+
+    pub(crate) fn function_record(&self, id: FunctionId) -> Option<&RawFunction> {
+        let index = self.declaration_ids.get(&id)?;
+        self.functions.get(*index as usize)
+    }
+
+    pub(crate) fn typed_arguments(
+        &mut self,
+        arguments: &[(&RuntimeValue<'_>, bool)],
+        ids: &[u64],
+    ) -> Result<Vec<RawValue>> {
+        if arguments.len() != ids.len() {
+            return Err(backend(None));
+        }
+        let mut input = Vec::new();
+        reserve(&mut input, arguments.len())?;
+        for ((value, origin), ty) in arguments.iter().zip(ids) {
+            input.push(self.value(&value.value, *ty, *origin)?);
+        }
+        Ok(input)
+    }
+
+    /// Materialize verified structural type records for the typed memory adapter.
+    /// The loader has already bounded depth and expanded metadata size.
+    pub(crate) fn materialize_types(&mut self) -> Result<()> {
+        map_reserve(&mut self.cached_types, self.types.len())?;
+        map_reserve(&mut self.declaration_ids, self.functions.len())?;
+        for (index, function) in self.functions.iter().enumerate() {
+            self.declaration_ids.insert(FunctionId(function.id as u32), index as u64);
+        }
+        for (index, raw) in self.types.iter().enumerate() {
+            let child = |id: u64| self.cached_types.get(&id).cloned().ok_or_else(|| backend(None));
+            let fields = || -> Result<Vec<Type>> {
+                let first = usize::try_from(raw.first).map_err(|_| backend(None))?;
+                let count = usize::try_from(raw.count).map_err(|_| backend(None))?;
+                let end = first.checked_add(count).ok_or_else(|| backend(None))?;
+                let mut fields = Vec::new();
+                reserve(&mut fields, count)?;
+                for id in self.edges.get(first..end).ok_or_else(|| backend(None))? {
+                    fields.push(child(*id)?);
+                }
+                Ok(fields)
+            };
+            let ty = match raw.kind {
+                0 => Type::Void,
+                1 => Type::Bool,
+                2 => Type::I1,
+                3 => Type::U1,
+                4 => Type::I8,
+                5 => Type::I16,
+                6 => Type::I32,
+                7 => Type::I64,
+                8 => Type::I128,
+                9 => Type::U8,
+                10 => Type::U16,
+                11 => Type::U32,
+                12 => Type::U64,
+                13 => Type::U128,
+                14 => Type::F16,
+                15 => Type::F32,
+                16 => Type::F64,
+                17 => Type::Ptr(Box::new(child(raw.child)?)),
+                18 => {
+                    let mut parameters = fields()?;
+                    if parameters.is_empty() {
+                        return Err(backend(None));
+                    }
+                    let ret = parameters.remove(0);
+                    Type::FnPtr(Box::new(FunctionSignature {
+                        params: parameters,
+                        ret,
+                        convention: if raw.extra & 1 == 0 {
+                            CallingConvention::Whale
+                        } else {
+                            CallingConvention::SysV64
+                        },
+                        variadic: raw.extra & 2 != 0,
+                    }))
+                },
+                19 => Type::Array(Box::new(child(raw.child)?), raw.count),
+                20 => Type::Struct(fields()?),
+                21 => Type::Tuple(fields()?),
+                _ => return Err(backend(None)),
+            };
+            self.cached_types.insert(index as u64, ty);
+        }
+        Ok(())
+    }
+
+    fn execution_source(
+        &self,
+        site: ExecutionSite,
+        budget: &mut SourceDetailBudget,
+    ) -> Option<OriginalLocation> {
+        if let Some(module) = self.module {
+            return execution_source(module, site, budget);
+        }
+        let block = self.blocks.iter().find(|block| {
+            block.id == u64::from(site.block.0)
+                && self
+                    .functions
+                    .get(block.function as usize)
+                    .is_some_and(|f| f.id == u64::from(site.function.0))
+        })?;
+        let target = if site.instruction as u64 + 1 == block.count {
+            SourceTarget::Terminator { function: site.function, block: site.block }
+        } else {
+            SourceTarget::Instruction {
+                function: site.function,
+                block: site.block,
+                index: site.instruction,
+            }
+        };
+        budget.location_metadata(&self.sources, target)
+    }
+
+    pub(crate) fn site(&self, index: u64, entry: FunctionId) -> Result<ExecutionSite> {
         if index != MISSING {
             return self
                 .sites
@@ -1148,13 +1395,18 @@ impl Program<'_> {
                 .copied()
                 .ok_or_else(|| backend(None));
         }
-        let body = self
-            .module
+        let function = self
             .functions
             .iter()
-            .find(|function| function.id == entry)
+            .find(|body| body.id == u64::from(entry.0))
             .ok_or_else(|| backend(None))?;
-        Ok(ExecutionSite { function: entry, block: body.entry, instruction: 0, value: None })
+        let block = self.blocks.get(function.entry as usize).ok_or_else(|| backend(None))?;
+        Ok(ExecutionSite {
+            function: entry,
+            block: BlockId(block.id as u32),
+            instruction: 0,
+            value: None,
+        })
     }
 
     fn error(
@@ -1165,10 +1417,9 @@ impl Program<'_> {
     ) -> Result<InterpreterError> {
         let count = |value| usize::try_from(value).map_err(|_| backend(None));
         let function = |index: u64| {
-            self.module
-                .declarations
+            self.functions
                 .get(count(index)?)
-                .map(|decl| decl.id)
+                .map(|decl| FunctionId(decl.id as u32))
                 .ok_or_else(|| backend(None))
         };
         let at = || self.site(raw.site, entry);
@@ -1224,14 +1475,14 @@ impl Program<'_> {
             12 => return trap(TrapReason::InvalidConversion),
             13 => {
                 let reason = self.reasons.get(count(raw.detail)?).ok_or_else(|| backend(None))?;
-                return trap(TrapReason::Explicit((*reason).to_owned()));
+                return trap(TrapReason::Explicit(reason.to_string()));
             },
             14 => return trap(TrapReason::NullFunction),
             15 => return trap(TrapReason::InvalidFunctionPointer),
             16 => return trap(TrapReason::FunctionSignatureMismatch),
-            17 => InterpreterError::UnsupportedGlobal(
-                self.module.global_storage.get(count(raw.detail)?).ok_or_else(|| backend(None))?.id,
-            ),
+            17 => InterpreterError::UnsupportedGlobal(GlobalId(
+                self.globals.get(count(raw.detail)?).ok_or_else(|| backend(None))?.id as u32,
+            )),
             18 => {
                 InterpreterError::Verification(Box::new(VerifyError::ResourceLimit(LimitError {
                     resource: Resource::AnalysisWork,
@@ -1249,11 +1500,34 @@ impl Program<'_> {
         frames: &[RawFrame],
         trace_limit: usize,
     ) -> InterpreterError {
+        let mut budget = SourceDetailBudget::new();
+        let global = match &cause {
+            InterpreterError::GlobalMemory { global, .. }
+            | InterpreterError::GlobalMemoryLimit { global, .. }
+            | InterpreterError::UnsupportedGlobal(global) => Some(*global),
+            _ => None,
+        };
+        if let Some(global) = global {
+            let metadata = self.module.map_or(&self.sources, |module| &module.sources);
+            if let Some(original) = budget.location_metadata(metadata, SourceTarget::Global(global))
+            {
+                return InterpreterError::Diagnostic {
+                    cause: Box::new(cause),
+                    diagnostic: Box::new(RuntimeDiagnostic {
+                        site: None,
+                        global: Some(global),
+                        original: Some(original),
+                        calls: Vec::new(),
+                        omitted_call_frames: 0,
+                        omitted_source_details: budget.omitted,
+                    }),
+                };
+            }
+        }
         let Some(site) = cause.runtime_site() else {
             return cause;
         };
-        let mut budget = SourceDetailBudget::new();
-        let original = execution_source(self.module, site, &mut budget);
+        let original = self.execution_source(site, &mut budget);
         let caller_count = frames.len().saturating_sub(1);
         if original.is_none() && caller_count == 0 {
             return cause;
@@ -1265,7 +1539,7 @@ impl Program<'_> {
         }
         for child in frames.iter().skip(1).rev().take(retained) {
             let Some(callee) =
-                self.module.declarations.get(child.function as usize).map(|decl| decl.id)
+                self.functions.get(child.function as usize).map(|decl| FunctionId(decl.id as u32))
             else {
                 return backend(Some(site));
             };
@@ -1279,7 +1553,7 @@ impl Program<'_> {
                 caller: call_site.function,
                 callee,
                 site: call_site,
-                original: execution_source(self.module, call_site, &mut budget),
+                original: self.execution_source(call_site, &mut budget),
             });
         }
         calls.reverse();
@@ -1451,6 +1725,31 @@ fn grow<T: Default>(buffer: &mut Vec<T>, requested: u64, maximum: usize) -> Resu
     Ok(true)
 }
 
+pub(crate) fn scalar_arguments(
+    program: &Program<'_>,
+    function: FunctionId,
+    arguments: &[ConstValue],
+) -> Result<Vec<RawValue>> {
+    let signature = program
+        .function_record(function)
+        .and_then(|body| program.types.get(body.signature as usize));
+    let mut input = Vec::new();
+    reserve(&mut input, arguments.len())?;
+    for (index, argument) in arguments.iter().enumerate() {
+        let (literal, low, high) = literal(argument);
+        let ty = signature
+            .and_then(|signature| {
+                (index as u64 + 1 < signature.count)
+                    .then(|| program.edges.get(signature.first as usize + index + 1))
+                    .flatten()
+                    .copied()
+            })
+            .unwrap_or(MISSING);
+        input.push(RawValue { kind: 1, ty, literal, low, high, origin: 1, ..RawValue::default() });
+    }
+    Ok(input)
+}
+
 pub(super) fn run<'module>(
     module: &'module Module,
     function: FunctionId,
@@ -1459,7 +1758,7 @@ pub(super) fn run<'module>(
 ) -> Result<RuntimeInterpreterResult<'module>> {
     verify_module_with_limits(module, options.ir_limits)
         .map_err(|error| InterpreterError::Verification(Box::new(error)))?;
-    let mut program = Program::new(module)?;
+    let mut program = Program::new(Some(module))?;
     program.marshal()?;
     let mut input = Vec::new();
     reserve(&mut input, arguments.len())?;
@@ -1480,6 +1779,32 @@ pub(super) fn run<'module>(
             }
         },
     }
+    let result = execute(
+        &mut program,
+        function,
+        input,
+        matches!(arguments, Arguments::Scalars(_)),
+        options,
+        None,
+    )?;
+    Ok(RuntimeInterpreterResult {
+        value: result.value.map(|value| RuntimeValue {
+            callable_module: value.function_target().map(|_| module),
+            ty: value.ty,
+            value: value.value,
+        }),
+        steps: result.steps,
+    })
+}
+
+pub(crate) fn execute<'module>(
+    program: &mut Program<'module>,
+    function: FunctionId,
+    mut input: Vec<RawValue>,
+    scalar_arguments: bool,
+    options: InterpreterOptions,
+    admission: Option<RuntimeAdmission>,
+) -> Result<RuntimeInterpreterResult<'module>> {
     let type_count = program.types.len();
     let function_count = program.functions.len();
     let instruction_count = program.instructions.len();
@@ -1529,7 +1854,7 @@ pub(super) fn run<'module>(
         global_values: global_values.as_mut_ptr(),
         arguments: input.as_mut_ptr(),
         argument_count: input.len() as u64,
-        scalar_arguments: u64::from(matches!(arguments, Arguments::Scalars(_))),
+        scalar_arguments: u64::from(scalar_arguments),
         entry_id: u64::from(function.0),
         storage: &mut storage,
         layout_nodes: layout_nodes.as_mut_ptr(),
@@ -1563,7 +1888,19 @@ pub(super) fn run<'module>(
     loop {
         driver.memory_allocations = memory.allocation_count() as u64;
         // All spans are initialized, stable for this step, and exclusively borrowed.
-        let status = unsafe { whale_ir_runtime_step(&mut driver) };
+        let status = unsafe {
+            match &admission {
+                Some(admission) => whale_ir_bytecode_runtime_step(
+                    admission.program,
+                    &mut driver,
+                    admission.scratch,
+                    admission.capacity,
+                    &admission.limits,
+                    admission.result,
+                ),
+                None => whale_ir_runtime_step(&mut driver),
+            }
+        };
         if status != result.status as i32
             || result.status > 4
             || driver.steps < previous_steps
@@ -1596,7 +1933,8 @@ pub(super) fn run<'module>(
                             ..
                         })
                     )
-                    .then_some(module);
+                    .then_some(program.module)
+                    .flatten();
                     Some(RuntimeValue { ty, value, callable_module })
                 };
                 return Ok(RuntimeInterpreterResult { value, steps: result.steps });
@@ -1610,13 +1948,13 @@ pub(super) fn run<'module>(
                     let global = if result.global == MISSING {
                         None
                     } else {
-                        Some(
-                            module
-                                .global_storage
+                        Some(GlobalId(
+                            program
+                                .globals
                                 .get(result.global as usize)
                                 .ok_or_else(|| backend(None))?
-                                .id,
-                        )
+                                .id as u32,
+                        ))
                     };
                     let site = program.site(result.site, function).ok();
                     let cause = match (global, fault) {
@@ -1822,7 +2160,7 @@ mod tests {
         )
         .unwrap();
         verify_module(&module).unwrap();
-        let mut program = Program::new(&module).unwrap();
+        let mut program = Program::new(Some(&module)).unwrap();
         program.marshal().unwrap();
         assert_eq!(program.functions[0].id, u64::from(u32::MAX));
         assert_eq!(program.functions[0].value_count, 2);

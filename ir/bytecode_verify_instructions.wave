@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: MPL-2.0
+// The bytecode uses runtime opcode numbers; verifier operations have a separate
+// namespace. Every operand is validated before either core sees its index.
+fun ir_bytecode_operand(context: ptr<IrBytecodeVerifier>, function: ptr<IrRuntimeFunction>,
+    slot: u64, at: u64) -> bool {
+    var result: ptr<IrBytecodeResult> = context.result;
+    if (slot >= function.value_count || at >= context.operand_capacity) {
+        return ir_bytecode_fail(result, 1, 40, 5, result.index);
+    }
+    var index: u64 = function.first_value_type + slot;
+    var operand: ptr<IrVerifyOperand> = &context.operands[at];
+    var definition: ptr<IrBytecodeDefinition> = &context.definitions[index];
+    operand.value = context.program.value_ids[index];
+    operand.ty = context.program.value_types[index];
+    operand.literal = definition.literal;
+    operand.low = definition.low;
+    operand.high = definition.high;
+    return true;
+}
+
+fun ir_bytecode_operands(context: ptr<IrBytecodeVerifier>, function: ptr<IrRuntimeFunction>,
+    inst: ptr<IrRuntimeInstruction>) -> u64 {
+    var op: u64 = inst.op;
+    var count: u64 = 0;
+    if (op == 1 || op == 2 || op == 6 || (op >= 7 && op <= 16 && op != 15) || op == 17
+        || op == 19 || op == 21 || op == 24 || op == 25 || op == 26
+        || op == 30 || op == 32 || op == 33 || (op == 34 && inst.a != 18446744073709551615)
+        || (op == 29 && inst.flags == 1)) {
+        if (!ir_bytecode_operand(context, function, inst.a, count)) { return 0; }
+        count += 1;
+    }
+    if (op == 2 || op == 7 || (op >= 10 && op <= 13) || op == 17 || op == 25 || op == 26) {
+        if (!ir_bytecode_operand(context, function, inst.b, count)) { return 0; }
+        count += 1;
+    }
+    if (op == 13 || op == 25 || op == 26) {
+        if (!ir_bytecode_operand(context, function, inst.c, count)) { return 0; }
+        count += 1;
+    }
+    if (op == 20 || op == 22) {
+        if (!ir_bytecode_operand(context, function, inst.b, count)) { return 0; }
+        count += 1;
+        if (!ir_bytecode_operand(context, function, inst.a, count)) { return 0; }
+        count += 1;
+    }
+    if (op == 23) {
+        if (!ir_bytecode_operand(context, function, inst.a, count)) { return 0; }
+        count += 1;
+    }
+    if (op == 15 || op == 24 || op == 29) {
+        var stride: u64 = 1;
+        if (op == 15) { stride = 2; }
+        if (inst.first > context.program.operand_count
+            || inst.count > (context.program.operand_count - inst.first) / stride) {
+            ir_bytecode_fail(context.result, 1, 41, 5, context.result.index);
+            return 0;
+        }
+        var i: u64 = 0;
+        while (i < inst.count) {
+            if (!ir_bytecode_charge(context.result, context.limits, 1)) { return 0; }
+            if (!ir_bytecode_operand(context, function,
+                context.program.operands[inst.first + i * stride], count)) { return 0; }
+            count += 1;
+            i += 1;
+        }
+    }
+    return count;
+}
+
+fun ir_bytecode_kind(context: ptr<IrBytecodeVerifier>, kind: u64) -> u64 {
+    var i: u64 = 0;
+    while (i < context.program.type_count) {
+        if (!ir_bytecode_charge(context.result, context.limits, 1)) { return 0; }
+        if (context.program.types[i].kind == kind) { return i; }
+        i += 1;
+    }
+    ir_bytecode_fail(context.result, 1, 42, 5, context.result.index);
+    return 0;
+}
+
+fun ir_bytecode_destination(context: ptr<IrBytecodeVerifier>, function: ptr<IrRuntimeFunction>,
+    inst: ptr<IrRuntimeInstruction>) -> bool {
+    var op: u64 = inst.op;
+    if (inst.dst == 18446744073709551615) { return true; }
+    var actual: u64 = context.program.value_types[function.first_value_type + inst.dst];
+    var node: ptr<IrVerifyType> = &context.program.types[actual];
+    if (op == 0 || op == 18) {
+        if (node.kind != 17) { return ir_bytecode_fail(context.result, 1, 43, 5, context.result.index); }
+        return ir_bytecode_same(context.program, node.child, inst.ty, context.limits, context.result);
+    }
+    if (op == 2) {
+        if (node.kind == 8) { return true; }
+    } else if (op >= 10 && op <= 12) {
+        if (node.kind == 1) { return true; }
+    } else if (op == 17) {
+        if (node.kind != 21 || node.count != 2
+            || context.program.types[context.program.edges[node.first + 1]].kind != 1) {
+            return ir_bytecode_fail(context.result, 1, 43, 5, context.result.index);
+        }
+        return ir_bytecode_same(context.program, context.program.edges[node.first], inst.ty,
+            context.limits, context.result);
+    } else {
+        return ir_bytecode_same(context.program, actual, inst.ty, context.limits, context.result);
+    }
+    return ir_bytecode_fail(context.result, 1, 43, 5, context.result.index);
+}
+
+fun ir_bytecode_instruction(context: ptr<IrBytecodeVerifier>, function: ptr<IrRuntimeFunction>,
+    inst: ptr<IrRuntimeInstruction>) -> bool {
+    var program: ptr<IrBytecodeProgram> = context.program;
+    var limits: ptr<IrBytecodeLimits> = context.limits;
+    var result: ptr<IrBytecodeResult> = context.result;
+    var op: u64 = inst.op;
+    if (op > 35 || inst.ty >= program.type_count || inst.other >= program.type_count
+        || inst.align > 4294967295 || (op != 29 && inst.flags != 0)) {
+        return ir_bytecode_fail(result, 1, 44, 5, result.index);
+    }
+    if (!ir_bytecode_destination(context, function, inst)) { return false; }
+    var count: u64 = ir_bytecode_operands(context, function, inst);
+    if (result.status != 0) { return false; }
+    var operation: IrVerifyInstruction;
+    operation.op = 0;
+    operation.sub = 0;
+    operation.ty = inst.ty;
+    operation.other = inst.other;
+    operation.dst = 0;
+    operation.align = inst.align;
+    if (op == 0) {
+        if (inst.global >= program.global_count) { return ir_bytecode_fail(result, 1, 45, 5, result.index); }
+        return ir_bytecode_same(program, inst.ty, program.globals[inst.global].ty, limits, result);
+    }
+    if (op == 3 || op == 4) {
+        if (!ir_verify_literal(program.types[inst.ty].kind, inst.literal, inst.low, inst.high)) {
+            return ir_bytecode_fail(result, 1, 46, 5, result.index);
+        }
+        return true;
+    }
+    if (op == 5) { return true; }
+    if (op == 1) { operation.op = 5; }
+    if (op == 2) { operation.op = 6; }
+    if (op == 6) { operation.op = 8; }
+    if (op == 7) {
+        if (inst.sub > 17) { return ir_bytecode_fail(result, 1, 47, 5, result.index); }
+        operation.op = 4;
+        if (inst.sub == 4 || inst.sub == 6) { operation.sub = 1; }
+        if (inst.sub == 3 || inst.sub == 5) { operation.sub = 2; }
+        if (inst.sub >= 7 && inst.sub <= 11) { operation.sub = 3; }
+    }
+    if (op == 8) { operation.op = 1; }
+    if (op == 9) { operation.op = 7; }
+    if (op == 10 || op == 11) {
+        if ((op == 10 && inst.sub > 15) || (op == 11 && inst.sub > 9)) {
+            return ir_bytecode_fail(result, 1, 47, 5, result.index);
+        }
+        operation.op = 9;
+        if (op == 10) {
+            if (inst.sub >= 2 && inst.sub <= 5) { operation.sub = 1; }
+            if (inst.sub >= 6 && inst.sub <= 9) { operation.sub = 2; }
+            if (inst.sub >= 10) { operation.sub = 3; }
+        } else {
+            if (inst.sub >= 2 && inst.sub <= 5) { operation.sub = 2; }
+            if (inst.sub >= 6) { operation.sub = 1; }
+        }
+    }
+    if (op == 12) {
+        if (inst.sub > 15) { return ir_bytecode_fail(result, 1, 47, 5, result.index); }
+        operation.op = 10;
+    }
+    if (op == 13) { operation.op = 11; }
+    if (op == 14) {
+        if (inst.sub > 12) { return ir_bytecode_fail(result, 1, 47, 5, result.index); }
+        operation.op = 2;
+        operation.sub = inst.sub;
+        operation.ty = inst.other;
+        operation.other = inst.ty;
+    }
+    if (op == 15) {
+        if (!ir_bytecode_storable(program, inst.ty, limits, result)) { return false; }
+        var i: u64 = 0;
+        while (i < count) {
+            if (!ir_bytecode_same(program, inst.ty, context.operands[i].ty, limits, result)) { return false; }
+            i += 1;
+        }
+        return true;
+    }
+    if (op == 16) {
+        operation.op = 12;
+        operation.sub = inst.sub;
+    }
+    if (op == 17) {
+        if (inst.sub > 5) { return ir_bytecode_fail(result, 1, 47, 5, result.index); }
+        operation.op = 3;
+        if (inst.sub < 3) { operation.sub = 1; }
+    }
+    if (op == 18) { operation.op = 14; }
+    if (op == 19) { operation.op = 15; }
+    if (op == 20) { operation.op = 16; }
+    if (op == 21) { operation.op = 17; }
+    if (op == 22) { operation.op = 18; }
+    if (op == 23) { operation.op = 13; }
+    if (op >= 18 && op <= 23 && context.types[inst.ty].storable == 0) {
+        return ir_bytecode_fail(result, 1, 48, 5, result.index);
+    }
+    if (op == 24) { operation.op = 19; }
+    if (op == 25 || op == 26) {
+        operation.op = op - 5;
+        operation.ty = ir_bytecode_kind(context, 9);
+        operation.other = ir_bytecode_kind(context, 12);
+        if (result.status != 0) { return false; }
+    }
+    if (op == 27 || op == 28) {
+        if (inst.signature >= program.type_count || program.types[inst.signature].kind != 18) {
+            return ir_bytecode_fail(result, 1, 49, 5, result.index);
+        }
+        if (!ir_bytecode_same(program, inst.ty, inst.signature, limits, result)) { return false; }
+        if (op == 28) {
+            if (inst.a >= program.function_count) { return ir_bytecode_fail(result, 1, 49, 5, result.index); }
+            return ir_bytecode_same(program, inst.signature, program.functions[inst.a].signature, limits, result);
+        }
+        return true;
+    }
+    var operand_start: u64 = 0;
+    if (op == 29) {
+        if (inst.flags > 1 || inst.sub > 1) { return ir_bytecode_fail(result, 1, 49, 5, result.index); }
+        operation.op = 28;
+        operation.sub = inst.sub;
+        operation.other = inst.ty;
+        if (inst.dst != 18446744073709551615) { operation.dst = 1; }
+        if (inst.flags == 0) {
+            if (inst.a >= program.function_count) { return ir_bytecode_fail(result, 1, 49, 5, result.index); }
+            operation.ty = program.functions[inst.a].signature;
+        } else {
+            operation.ty = context.operands[0].ty;
+            operand_start = 1;
+            count -= 1;
+        }
+    }
+    if (op == 30 || op == 32) {
+        if (program.types[context.operands[0].ty].kind != 1) {
+            return ir_bytecode_fail(result, 1, 50, 5, result.index);
+        }
+    }
+    if (op == 30 || op == 35) {
+        if (inst.global >= program.text_count) { return ir_bytecode_fail(result, 1, 51, 5, result.index); }
+        return true;
+    }
+    if (op == 31 || op == 32) { return true; }
+    if (op == 33) {
+        var kind: u64 = program.types[inst.ty].kind;
+        if ((!ir_verify_integer(kind) && kind != 1)
+            || !ir_bytecode_same(program, context.operands[0].ty, inst.ty, limits, result)) {
+            if (result.status == 0) { ir_bytecode_fail(result, 1, 52, 5, result.index); }
+            return false;
+        }
+        return true;
+    }
+    if (op == 34) {
+        var ret: u64 = program.edges[program.types[function.signature].first];
+        if (!ir_bytecode_same(program, ret, inst.ty, limits, result)) { return false; }
+        if (program.types[ret].kind == 0) {
+            if (inst.a != 18446744073709551615) { return ir_bytecode_fail(result, 1, 53, 5, result.index); }
+            return true;
+        }
+        if (inst.a == 18446744073709551615) { return ir_bytecode_fail(result, 1, 53, 5, result.index); }
+        return ir_bytecode_same(program, ret, context.operands[0].ty, limits, result);
+    }
+    if (operation.op == 0) { return ir_bytecode_fail(result, 1, 54, 5, result.index); }
+    var semantic: IrVerifyResult;
+    ir_bytecode_semantic_init(&semantic);
+    var status: i32 = whale_ir_verify_semantics(program.types, program.type_count,
+        program.edges, program.edge_count, &operation, &context.operands[operand_start], count,
+        limits.max_work - result.work, &semantic);
+    if (!ir_bytecode_semantic(result, limits, &semantic, status == 0)) { return false; }
+    if (op == 14) {
+        operation.op = 30;
+        operation.ty = inst.other;
+        operation.other = inst.ty;
+        status = whale_ir_verify_semantics(program.types, program.type_count, program.edges,
+            program.edge_count, &operation, context.operands, count,
+            limits.max_work - result.work, &semantic);
+        if (!ir_bytecode_semantic(result, limits, &semantic, status == 0)) { return false; }
+    }
+    if (op == 24) {
+        var selected: u64 = program.types[context.operands[0].ty].child;
+        var i: u64 = 1;
+        while (i < count) {
+            if (!ir_bytecode_charge(result, limits, 1)) { return false; }
+            if (i == 1 || program.types[selected].kind == 19) {
+                if (i != 1) { selected = program.types[selected].child; }
+                if (context.types[selected].storable == 0) {
+                    return ir_bytecode_fail(result, 1, 48, 5, result.index);
+                }
+                if (context.types[selected].size == 0) {
+                    return ir_bytecode_fail(result, 5, 110, 5, result.index);
+                }
+            } else {
+                selected = program.edges[program.types[selected].first + context.operands[i].low];
+            }
+            i += 1;
+        }
+    }
+    return true;
+}

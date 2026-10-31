@@ -254,6 +254,9 @@ pub fn verify_module_with_stats(
     m: &Module,
     limits: crate::IrLimits,
 ) -> Result<VerificationStats, VerifyError> {
+    if m.target == "whale-bytecode-v1" {
+        return verify_module_for_target_with_stats(m, &target_spec::whale_bytecode_v1(), limits);
+    }
     let target = crate::Target::lookup(&m.target).map_err(VerifyError::Target)?;
     target.validate_layout(m.datalayout).map_err(VerifyError::Target)?;
     verify_module_for_target_with_stats(m, &target.specification(), limits)

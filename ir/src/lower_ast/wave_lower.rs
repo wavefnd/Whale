@@ -1808,7 +1808,13 @@ pub(super) fn lower(
             .ok_or(LowerError::ResourceLimit(AstLimitError::SourceWork))?,
         ..limits
     };
-    let target = Target::lookup(target).map_err(LowerError::Target)?;
+    let module_target = target;
+    let target = if target == "whale-bytecode-v1" {
+        // Select the shared storage contract explicitly; retain the requested output target.
+        Target::X86_64WhaleLinux
+    } else {
+        Target::lookup(target).map_err(LowerError::Target)?
+    };
     target.validate_layout(datalayout).map_err(LowerError::Target)?;
     let mut wire = Wire::new();
     let root = wire.program(program)?;
@@ -1822,7 +1828,9 @@ pub(super) fn lower(
         return Err(backend());
     }
     let constants = evaluate_requests(&wire, &output)?;
-    materialize(&wire, &output, target, datalayout, constants)
+    let mut module = materialize(&wire, &output, target, datalayout, constants)?;
+    module.target = module_target.to_owned();
+    Ok(module)
 }
 
 #[cfg(test)]

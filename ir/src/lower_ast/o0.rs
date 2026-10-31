@@ -41,7 +41,13 @@ pub fn lower_o0_with_limits(
     limits: super::AstLimits,
 ) -> Result<Module, LowerError> {
     super::limits::inspect_program(program, limits).map_err(LowerError::ResourceLimit)?;
-    let selected = crate::Target::lookup(target).map_err(LowerError::Target)?;
+    let module_target = target;
+    let selected = if target == "whale-bytecode-v1" {
+        // Both built-in contracts use the same tracked 64-bit storage layout.
+        crate::Target::X86_64WhaleLinux
+    } else {
+        crate::Target::lookup(target).map_err(LowerError::Target)?
+    };
     selected.validate_layout(datalayout).map_err(LowerError::Target)?;
     let target = selected;
     // Functions and globals have separate namespaces. Validate each before bodies.
@@ -60,7 +66,7 @@ pub fn lower_o0_with_limits(
             }
         }
     }
-    let mut mb = ModuleBuilder::new(target.name(), datalayout);
+    let mut mb = ModuleBuilder::new(module_target, datalayout);
     mb.set_source_work_limit(limits.max_source_work);
 
     for d in &program.declarations {

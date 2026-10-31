@@ -198,4 +198,4 @@ impl std::error::Error for TargetError {}
 
 pub mod extension;
 
-pub use extension::{MemoryModel, OutputKind, StorageLayout, TargetSpec};
+pub use extension::{whale_bytecode_v1, MemoryModel, OutputKind, StorageLayout, TargetSpec};

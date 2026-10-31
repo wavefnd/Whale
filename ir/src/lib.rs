@@ -2,6 +2,8 @@
 
 pub mod block;
 
+pub mod bytecode;
+
 pub mod builder;
 
 pub mod const_expr;

@@ -162,6 +162,10 @@ impl Budget {
 }
 
 pub(crate) fn check_module(m: &Module, limits: IrLimits) -> Result<(), LimitError> {
+    check_module_with_usage(m, limits).map(|_| ())
+}
+
+pub(crate) fn check_module_with_usage(m: &Module, limits: IrLimits) -> Result<usize, LimitError> {
     let mut b = Budget::new(limits)?;
     b.nodes(m.sources.files.len())?;
     b.nodes(m.sources.originals.len())?;
@@ -258,7 +262,7 @@ pub(crate) fn check_module(m: &Module, limits: IrLimits) -> Result<(), LimitErro
             }
         }
     }
-    Ok(())
+    Ok(limits.max_nodes - b.remaining)
 }
 
 /// Dispose of a rejected owned type without recursively dropping its tree.

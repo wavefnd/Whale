@@ -46,6 +46,15 @@ const SOURCES: &[&str] = &[
     "runtime_prepare.wave",
     "runtime_execute.wave",
     "runtime_driver.wave",
+    "bytecode_model.wave",
+    "bytecode_inventory.wave",
+    "bytecode_loader.wave",
+    "bytecode_verify_types.wave",
+    "bytecode_verify_instructions.wave",
+    "bytecode_verify_flow.wave",
+    "bytecode_verify.wave",
+    "bytecode_writer.wave",
+    "bytecode_runtime.wave",
     "entry.wave",
 ];
 
@@ -58,6 +67,7 @@ const ABI_SOURCES: &[&str] = &[
     "src/fold_integer_wave.rs",
     "src/constant_wave.rs",
     "src/interpreter/runtime_wave.rs",
+    "src/bytecode.rs",
     "src/verifier/wave_constants.rs",
     "src/source_wave.rs",
     "src/interpreter/memory_wave.rs",

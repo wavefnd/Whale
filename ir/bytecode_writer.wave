@@ -1,0 +1,162 @@
+// SPDX-License-Identifier: MPL-2.0
+// Canonical little-endian emission has no allocation or host callbacks. All
+// validation, capacity and work checks precede the first output byte.
+fun ir_bytecode_put_word(output: ptr<u8>, offset: u64, word: u64) {
+    var byte_index: u64 = 0;
+    while (byte_index < 8) {
+        output[offset + byte_index] = (word >> (byte_index * 8)) as u8;
+        byte_index += 1;
+    }
+}
+
+fun ir_bytecode_project_word(program: ptr<IrBytecodeProgram>, table: u64,
+    record: u64, field: u64) -> u64 {
+    if (table == 5) {
+        var native_field: u64 = field;
+        if (field >= 9) {
+            native_field += 2;
+        }
+        var instructions: ptr<u64> = program.instructions as ptr<u64>;
+        return instructions[record * 21 + native_field];
+    }
+    if (table == 8) {
+        var global: ptr<IrRuntimeGlobal> = &program.globals[record];
+        if (field == 0) {
+            return global.id;
+        }
+        if (field == 1) {
+            return global.ty;
+        }
+        if (field == 2) {
+            return global.align;
+        }
+        if (field == 3) {
+            return global.readonly;
+        }
+        if (field == 4) {
+            return global.initialized;
+        }
+        if (field == 5) {
+            return global.value.literal;
+        }
+        if (field == 6) {
+            return global.value.low;
+        }
+        return global.value.high;
+    }
+    var data: ptr<u64> = ir_bytecode_data(program, table) as ptr<u64>;
+    return data[record * (ir_bytecode_stride(table) / 8) + field];
+}
+
+fun ir_bytecode_encoded_size(program: ptr<IrBytecodeProgram>,
+    limits: ptr<IrBytecodeLimits>, result: ptr<IrBytecodeResult>,
+    required: ptr<u64>) -> bool {
+    var table: u64 = 1;
+    var count: u64 = 0;
+    var stride: u64 = 0;
+    var size: u64 = 576;
+    while (table <= 16) {
+        count = ir_bytecode_count(program, table);
+        stride = ir_bytecode_stride(table);
+        if (count > (18446744073709551615 - size) / stride) {
+            return ir_bytecode_fail(result, 1, 120, table, count);
+        }
+        size += count * stride;
+        if (size > limits.max_input_bytes) {
+            return ir_bytecode_fail(result, 1, 121, table, count);
+        }
+        table += 1;
+    }
+    required[0] = size;
+    return true;
+}
+
+fun ir_bytecode_publish(program: ptr<IrBytecodeProgram>, output: ptr<u8>,
+    size: u64) {
+    // "WHALEBC\0", format 1, IR semantics 1, tracked64 layout profile 1.
+    ir_bytecode_put_word(output, 0, 18931688839137367);
+    ir_bytecode_put_word(output, 8, 1);
+    ir_bytecode_put_word(output, 16, 1);
+    ir_bytecode_put_word(output, 24, 1);
+    ir_bytecode_put_word(output, 32, size);
+    ir_bytecode_put_word(output, 40, 16);
+    ir_bytecode_put_word(output, 48, 0);
+    ir_bytecode_put_word(output, 56, 576);
+    var table: u64 = 1;
+    var offset: u64 = 576;
+    var count: u64 = 0;
+    var stride: u64 = 0;
+    var record: u64 = 0;
+    var field: u64 = 0;
+    var directory: u64 = 64;
+    while (table <= 16) {
+        count = ir_bytecode_count(program, table);
+        stride = ir_bytecode_stride(table);
+        ir_bytecode_put_word(output, directory, table);
+        ir_bytecode_put_word(output, directory + 8, offset);
+        ir_bytecode_put_word(output, directory + 16, count);
+        ir_bytecode_put_word(output, directory + 24, stride);
+        if (table == 11) {
+            record = 0;
+            while (record < count) {
+                output[offset + record] = program.text_bytes[record];
+                record += 1;
+            }
+        } else {
+            record = 0;
+            while (record < count) {
+                field = 0;
+                while (field < stride / 8) {
+                    ir_bytecode_put_word(output, offset + record * stride + field * 8,
+                        ir_bytecode_project_word(program, table, record, field));
+                    field += 1;
+                }
+                record += 1;
+            }
+        }
+        offset += count * stride;
+        directory += 32;
+        table += 1;
+    }
+}
+
+export(c) fun whale_ir_bytecode_write(program: ptr<IrBytecodeProgram>, output: ptr<u8>,
+    capacity: u64, required: ptr<u64>, scratch: ptr<u64>, scratch_capacity: u64,
+    limits: ptr<IrBytecodeLimits>, result: ptr<IrBytecodeResult>) -> i32 {
+    if (result == null) {
+        return 4;
+    }
+    if (program == null || limits == null || required == null) {
+        ir_bytecode_result_init(result);
+        ir_bytecode_fail(result, 4, 3, 0, 0);
+        return 4;
+    }
+    required[0] = 0;
+    var status: i32 = whale_ir_bytecode_verify(program, scratch, scratch_capacity,
+        limits, result);
+    if (status != 0) {
+        return status;
+    }
+    if (!ir_bytecode_encoded_size(program, limits, result, required)) {
+        return result.status as i32;
+    }
+    if (output == null && capacity == 0) {
+        return 0;
+    }
+    if (capacity < required[0]) {
+        ir_bytecode_fail(result, 2, 122, 0, required[0]);
+        return 2;
+    }
+    if (!ir_span_valid(output, required[0], 1)) {
+        ir_bytecode_fail(result, 4, 3, 0, 0);
+        return 4;
+    }
+    // Admit the complete publish pass up front. After this charge, emission has
+    // no failure path and cannot leave a partially written rejected image.
+    var words: u64 = (required[0] - program.text_byte_count) / 8;
+    if (!ir_bytecode_charge(result, limits, words + program.text_byte_count)) {
+        return result.status as i32;
+    }
+    ir_bytecode_publish(program, output, required[0]);
+    return 0;
+}

@@ -20,6 +20,9 @@ endforeach
 if get_option('socket-cli')
   selected_features += ['socket-cli']
 endif
+if get_option('native-linker')
+  selected_features += ['native-linker']
+endif
 
 cargo_host_target = get_option('cargo-host-target')
 if meson.is_cross_build() and cargo_host_target == ''

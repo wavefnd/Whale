@@ -21,7 +21,7 @@ class BuildError(ValueError):
 
 
 ASSEMBLERS = ("amd64", "aarch64", "riscv64", "loongarch64")
-FEATURES = {"asm-" + arch for arch in ASSEMBLERS} | {"socket-cli"}
+FEATURES = {"asm-" + arch for arch in ASSEMBLERS} | {"socket-cli", "native-linker"}
 COMPONENTS = ("diagnostic", "assembler", "backend-api", "toolchain",
               "reverse", "target-spec", "object", "linker", "ir")
 TRIPLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]+\Z")

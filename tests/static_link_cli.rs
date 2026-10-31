@@ -1,4 +1,4 @@
-#![cfg(feature = "asm-amd64")]
+#![cfg(all(feature = "asm-amd64", feature = "native-linker"))]
 
 use std::{fs, path::Path, process::Command};
 

@@ -56,6 +56,15 @@ SOURCES = (
     'runtime_prepare.wave',
     'runtime_execute.wave',
     'runtime_driver.wave',
+    'bytecode_model.wave',
+    'bytecode_inventory.wave',
+    'bytecode_loader.wave',
+    'bytecode_verify_types.wave',
+    'bytecode_verify_instructions.wave',
+    'bytecode_verify_flow.wave',
+    'bytecode_verify.wave',
+    'bytecode_writer.wave',
+    'bytecode_runtime.wave',
     'entry.wave',
 )
 ABI_SOURCES = (
@@ -67,6 +76,7 @@ ABI_SOURCES = (
     'ir/src/fold_integer_wave.rs',
     'ir/src/constant_wave.rs',
     'ir/src/interpreter/runtime_wave.rs',
+    'ir/src/bytecode.rs',
     'ir/src/verifier/wave_constants.rs',
     'ir/src/source_wave.rs',
     'ir/src/interpreter/memory_wave.rs',

@@ -25,6 +25,14 @@ class ProductGraphTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "offline unavailable"):
                 check_product(".", set())
 
+    def test_linker_is_a_separate_product_selection(self):
+        result = type("Result", (), {"returncode": 0, "stdout": "whale v0.1.0\nlinker v0.1.0\n", "stderr": ""})()
+        with patch("check_product_graph.subprocess.run", return_value=result) as execute:
+            self.assertEqual(check_product(".", set(), native_linker=True), set())
+            self.assertIn("native-linker", execute.call_args.args[0])
+            with self.assertRaisesRegex(ValueError, "linker selection"):
+                check_product(".", set())
+
 
 if __name__ == "__main__":
     unittest.main()

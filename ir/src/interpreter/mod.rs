@@ -9,7 +9,7 @@ mod scalar;
 mod memory;
 
 #[cfg(whale_wave_ir)]
-mod runtime_wave;
+pub(crate) mod runtime_wave;
 
 pub use memory::{MemoryLimits, MemoryResource, MemoryTrap};
 
@@ -874,9 +874,17 @@ impl SourceDetailBudget {
     }
 
     fn location(&mut self, module: &Module, target: SourceTarget) -> Option<OriginalLocation> {
-        let original = module.sources.original(target)?;
+        self.location_metadata(&module.sources, target)
+    }
+
+    fn location_metadata(
+        &mut self,
+        metadata: &SourceMetadata,
+        target: SourceTarget,
+    ) -> Option<OriginalLocation> {
+        let original = metadata.original(target)?;
         let source = original.span.as_ref().and_then(|span| {
-            let file = module.sources.files.iter().find(|f| f.id == span.file)?;
+            let file = metadata.files.iter().find(|f| f.id == span.file)?;
             if file.name.len() > self.remaining {
                 self.omitted += 1;
                 return None;
