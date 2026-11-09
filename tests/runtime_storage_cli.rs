@@ -2,8 +2,8 @@ use std::{path::PathBuf, process::Command};
 
 #[test]
 fn documented_storage_fixture_executes_and_reports_runtime_faults_through_the_cli() {
-    let input =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ir/tests/fixtures/runtime-storage-v6.wir");
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("bindings/rust/ir/tests/fixtures/runtime-storage-v6.wir");
     for (function, expected) in [("@f1", "u32 12\n"), ("@f3", "u32 42\n"), ("@f7", "i128 16\n")] {
         let output = Command::new(env!("CARGO_BIN_EXE_whale"))
             .args(["ir", "run"])

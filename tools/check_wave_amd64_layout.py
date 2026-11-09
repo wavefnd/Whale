@@ -11,8 +11,8 @@ U = C.c_uint64
 NONE = (1 << 64) - 1
 ROOT = Path(__file__).resolve().parents[1]
 TYPES = {'u64': U, 'i64': C.c_int64, 'u8': C.c_uint8, 'bool': C.c_bool}
-for filename in ['assembler/model.wave', 'assembler/ast_model.wave',
-                 'assembler/amd64/encoder_model.wave']:
+for filename in ['assembler/src/model.wave', 'assembler/src/ast.wave',
+                 'assembler/amd64/src/encoder/model.wave']:
     for name, body in re.findall(r'struct (\w+)\s*\{([^}]+)\}', (ROOT / filename).read_text()):
         if name in TYPES:
             continue

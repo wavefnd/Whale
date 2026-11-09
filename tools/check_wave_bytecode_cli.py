@@ -47,7 +47,7 @@ def compare(binary, reference, artifacts):
 
         try:
             for name, cases in CASES.items():
-                source = (ROOT / "ir/tests/fixtures" / name).read_text()
+                source = (ROOT / "bindings/rust/ir/tests/fixtures" / name).read_text()
                 source = source.replace('"x86_64-whale-linux"', '"whale-bytecode-v1"')
                 text = directory / name
                 image = text.with_suffix(".wbc")

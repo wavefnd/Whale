@@ -16,7 +16,6 @@ import tomllib
 import zipfile
 
 from ci_smoke import text_section
-from wave_bootstrap import WAVE_REVISION
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = {
@@ -60,17 +59,23 @@ def validate_product(info, version, target, source, socket, require_wave=False):
             or set(modules) != {name for name, value in implementations.items() if value == "wave"}):
         raise ValueError("product module identities and archives disagree")
     provenance_fields = {"wave_revision", "target", "opt_level", "source_sha256", "abi_sha256",
-                         "archive_sha256", "compiler_sha256", "std_sha256", "bootstrap_rust_version",
-                         "required_llvm_major"}
+                         "archive_sha256", "compiler_sha256", "std_sha256", "compiler_version",
+                         "nightly_archive_sha256", "vex_version", "vex_sha256", "vex_provenance_sha256"}
     for module in modules.values():
         if (type(module) is not dict or set(module) != provenance_fields
-                or module["wave_revision"] != WAVE_REVISION or module["target"] != target
+                or type(module["wave_revision"]) is not str
+                or not re.fullmatch("[0-9a-f]{40}", module["wave_revision"]) or module["target"] != target
                 or module["opt_level"] not in ("0", "2")
-                or module["bootstrap_rust_version"] != "1.89.0"
-                or type(module["required_llvm_major"]) is not int or module["required_llvm_major"] != 21
+                or type(module["compiler_version"]) is not str
+                or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", module["compiler_version"])
+                or type(module["vex_version"]) is not str or not module["vex_version"].startswith("vex ")
                 or any(type(module[key]) is not str or not re.fullmatch("[0-9a-f]{64}", module[key])
-                       for key in ("source_sha256", "abi_sha256", "archive_sha256", "compiler_sha256", "std_sha256"))):
+                       for key in ("source_sha256", "abi_sha256", "archive_sha256", "compiler_sha256", "std_sha256",
+                                   "nightly_archive_sha256", "vex_sha256", "vex_provenance_sha256"))):
             raise ValueError("invalid Wave compiler/source/archive provenance")
+    if len({(m["wave_revision"], m["compiler_sha256"], m["std_sha256"], m["nightly_archive_sha256"], m["vex_sha256"])
+            for m in modules.values()}) > 1:
+        raise ValueError("Wave modules used different nightly/compiler/std/Vex snapshots")
     mode = ("wave" if all(value == "wave" for value in implementations.values()) else
             "rust-reference" if implementations["ir"] == "rust-reference" else "mixed")
     if info["product_mode"] != mode:

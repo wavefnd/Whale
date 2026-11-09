@@ -1,9 +1,8 @@
 # SPDX-License-Identifier: MPL-2.0
-project('Whale', version: '0.1.0', meson_version: '>=1.8.0',
+project('Whale', version: '0.1.0', meson_version: '>=1.8.5',
         default_options: ['buildtype=debug'])
 
-# Cargo compiles the current Rust components. Meson owns product selection,
-# dependency scheduling, the resulting executable, tests and installation.
+# Meson automates the product. Vex owns Wave packages; Cargo owns Rust bindings.
 python = import('python').find_installation('python3')
 cargo = find_program('cargo', native: true)
 rustc = find_program('rustc', native: true)
@@ -17,67 +16,60 @@ foreach arch : ['amd64', 'aarch64', 'riscv64', 'loongarch64']
     assembler_outputs += [arch]
   endif
 endforeach
-if get_option('socket-cli')
-  selected_features += ['socket-cli']
-endif
-if get_option('native-linker')
-  selected_features += ['native-linker']
-endif
-if get_option('rust-reference')
-  selected_features += ['rust-reference']
-endif
-
+foreach feature : ['socket-cli', 'native-linker', 'rust-reference']
+  if get_option(feature)
+    selected_features += [feature]
+  endif
+endforeach
 cargo_host_target = get_option('cargo-host-target')
 if meson.is_cross_build() and cargo_host_target == ''
-  error('Cross builds require -Dcargo-host-target=RUST_TRIPLE for the Whale executable host. Assembler output selections do not choose its host.')
+  error('Cross builds require -Dcargo-host-target=RUST_TRIPLE for the Whale executable host.')
 endif
-
-# asmobj is one complete Wave source module. Cargo only links it through the
-# data transport in toolchain; there is no Rust implementation or fallback.
-wave_source = get_option('wave-source')
-if not get_option('rust-reference') and wave_source == ''
-  required_modules = ['asmobj-dir', 'wave-ir-dir', 'wave-assembler-dir']
+module_target = cargo_host_target
+if module_target == ''
+  target_os = {'linux': 'unknown-linux-gnu', 'darwin': 'apple-darwin', 'windows': 'pc-windows-msvc', 'freebsd': 'unknown-freebsd'}
+  if not target_os.has_key(host_machine.system())
+    error('Set cargo-host-target for this executable host.')
+  endif
+  module_target = host_machine.cpu_family() + '-' + target_os[host_machine.system()]
+  if host_machine.cpu_family() == 'riscv64'
+    module_target = 'riscv64gc-' + target_os[host_machine.system()]
+  endif
+endif
+wave_profile = get_option('buildtype') in ['release', 'minsize', 'debugoptimized'] ? 'release' : 'dev'
+needs_vex = get_option('asmobj-dir') == ''
+if not get_option('rust-reference')
+  foreach option : ['wave-ir-dir', 'wave-assembler-dir']
+    needs_vex = needs_vex or get_option(option) == ''
+  endforeach
   foreach arch : assembler_outputs
-    required_modules += ['wave-' + arch + '-dir']
-  endforeach
-  foreach module : required_modules
-    if get_option(module) == ''
-      error('The default Wave product requires -Dwave-source=/absolute/Wave or every selected prebuilt module; missing -D' + module + '. Rust reference builds require explicit -Drust-reference=true.')
-    endif
+    needs_vex = needs_vex or get_option('wave-' + arch + '-dir') == ''
   endforeach
 endif
-wave_cache = get_option('wave-bootstrap-dir')
-if wave_cache == ''
-  wave_cache = meson.project_build_root() / 'wave-bootstrap'
-elif not fs.is_absolute(wave_cache)
-  error('-Dwave-bootstrap-dir must be absolute.')
-endif
-asmobj_directory = get_option('asmobj-dir')
-wave_bootstrap = []
-needs_wave_bootstrap = asmobj_directory == ''
-if wave_source != ''
-  needs_wave_bootstrap = needs_wave_bootstrap or get_option('wave-ir-dir') == '' or get_option('wave-assembler-dir') == ''
-  foreach arch : ['amd64', 'aarch64', 'riscv64', 'loongarch64']
-    if get_option('asm-' + arch)
-      needs_wave_bootstrap = needs_wave_bootstrap or get_option('wave-' + arch + '-dir') == ''
-    endif
-  endforeach
-endif
-if needs_wave_bootstrap
-  if wave_source == '' or not fs.is_absolute(wave_source) or not fs.is_dir(wave_source)
-    error('Supply -Dwave-source=/absolute/Wave or -Dasmobj-dir=/absolute/built/module.')
+wave_prepared = []
+if needs_vex
+  vex = find_program(get_option('vex'), native: true)
+  wave_cache = get_option('wave-cache-dir')
+  if wave_cache == ''
+    wave_cache = meson.project_build_root() / 'wave-nightly'
+  elif not fs.is_absolute(wave_cache)
+    error('-Dwave-cache-dir must be absolute.')
   endif
-  if build_machine.system() != 'linux' or build_machine.cpu_family() != 'x86_64'
-    error('Building the pinned Wave compiler currently requires a Linux x86_64 build machine; use a prebuilt asmobj module on other build machines.')
+  toolchain_arguments = ['--cache-dir', wave_cache, '--output', '@OUTPUT@']
+  if get_option('wave-offline')
+    toolchain_arguments += ['--offline']
   endif
-  bootstrap_arguments = ['bootstrap', '--wave-source', wave_source, '--cache-dir', wave_cache,
-                        '--rust-toolchain', get_option('wave-rust-toolchain'), '--output', '@OUTPUT@']
-  if get_option('wave-allow-network')
-    bootstrap_arguments += ['--allow-network']
-  endif
-  wave_bootstrap = custom_target('wave-bootstrap', output: 'wave-bootstrap-ready.json',
-    command: [python, bridge, bootstrap_arguments],
-    depend_files: files('tools/wave_bootstrap.py', 'tools/meson_cargo.py'), console: true)
+  wave_toolchain = custom_target('wave-toolchain', output: 'wave-toolchain.json',
+    command: [python, files('tools/wave_nightly.py'), toolchain_arguments],
+    depend_files: files('tools/wave_nightly.py'),
+    build_always_stale: true, console: true)
+  wave_state = meson.project_build_root() / 'vex-state'
+  wave_prepared = custom_target('wave-prepared', output: 'wave-ready.json',
+    command: [python, files('tools/vex_module.py'), '--prepare', '--vex', vex,
+              '--toolchain', wave_toolchain, '--build-dir', meson.project_build_root() / 'vex/prepare',
+              '--state-dir', wave_state, '--ready', '@OUTPUT@'],
+    depend_files: files('vex.ws', 'vex.lock', 'tools/wave_modules.py', 'tools/vex_module.py'),
+    build_always_stale: true, console: true)
 endif
 subdir('assembler')
 subdir('ir')

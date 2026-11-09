@@ -1,0 +1,59 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_ir::bytecode::model")::{
+    IrBytecodeCounts,
+    IrBytecodeLimits,
+    IrBytecodeResult,
+    ir_bytecode_fail,
+    ir_bytecode_native_stride,
+};
+
+pub fun ir_bytecode_sizes(counts: ptr<IrBytecodeCounts>, limits: ptr<IrBytecodeLimits>,
+    result: ptr<IrBytecodeResult>) -> bool {
+    var values: ptr<u64> = counts as ptr<u64>;
+    var total: u64 = 0;
+    var records: u64 = 0;
+    var table: u64 = 1;
+    while (table <= 16) {
+        var count: u64 = values[table - 1];
+        var stride: u64 = ir_bytecode_native_stride(table);
+        if (count > limits.max_decoded_bytes / stride
+            || count * stride > limits.max_decoded_bytes - total) {
+            return ir_bytecode_fail(result, 2, 2, table, count);
+        }
+        total += count * stride;
+        if (table != 11) {
+            if (records > limits.max_records || count > limits.max_records - records) {
+                return ir_bytecode_fail(result, 2, 3, table, count);
+            }
+            records += count;
+        }
+        table += 1;
+    }
+    // A linear bound for CFG, SSA, source indexes and initialized type scratch.
+    var words: u64 = 256;
+    table = 1;
+    while (table <= 16) {
+        var factor: u64 = 32;
+        if (table == 4) { factor = 96; }
+        if (table == 6) { factor = 48; }
+        if (table == 7) { factor = 32; }
+        if (table == 15) { factor = 0; }
+        if (table == 11) { factor = 0; }
+        var count: u64 = values[table - 1];
+        if (factor != 0 && count > (18446744073709551615 - words) / factor) {
+            return ir_bytecode_fail(result, 2, 4, table, count);
+        }
+        words += count * factor;
+        table += 1;
+    }
+    if (words > limits.max_workspace_bytes / 8
+        || total > limits.max_workspace_bytes - words * 8) {
+        return ir_bytecode_fail(result, 2, 4, 0, words);
+    }
+    result.decoded_bytes = total;
+    result.scratch_words = words;
+    // Probe/query excludes semantic metadata; full admission adds its retained
+    // and transient clone allowance before reporting a successful estimate.
+    result.estimated_workspace_bytes = total + words * 8;
+    return true;
+}

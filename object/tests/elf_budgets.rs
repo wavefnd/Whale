@@ -76,6 +76,7 @@ fn huge_name_budget_child() {
 #[test]
 fn huge_names_reject_before_copying_in_a_capped_child_process() {
     let output = std::process::Command::new("sh")
+        .env_clear()
         .arg("-c")
         .arg("ulimit -c 0; ulimit -v 51200; exec \"$@\"")
         .arg("elf-test")

@@ -1,5 +1,9 @@
 *.wave text eol=lf linguist-language=Wave
 *.rs text eol=lf
+*.toml text eol=lf
+vex.ws text eol=lf
+vex.lock text eol=lf
+vex.toolchain.lock text eol=lf
 *.ps1 linguist-vendored
 *.sh linguist-vendored
 Makefile linguist-vendored

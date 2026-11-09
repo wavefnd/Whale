@@ -147,7 +147,7 @@ def main():
             for record in cases(version):
                 label, instance, valid, lower, *decode = record
                 check(f"v{version}-{label}", instance, valid, lower, decode_ok=decode[0] if decode else None)
-        accepted_fixtures = sorted((root / "ir/tests/fixtures").glob("ast-v*.json"))
+        accepted_fixtures = sorted((root / "bindings/rust/ir/tests/fixtures").glob("ast-v*.json"))
         accepted_fixtures += sorted((root / "fuzz/corpus/ast").glob("located-v*.json"))
         for path in accepted_fixtures:
             check(path.name, json.loads(path.read_text(encoding="utf-8")), True, True)

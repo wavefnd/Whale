@@ -43,10 +43,10 @@ class LayerTests(unittest.TestCase):
                 destination = root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(path, destination)
-            manifest = root / "ir/Cargo.toml"
+            manifest = root / "bindings/rust/ir/Cargo.toml"
             with manifest.open("a") as stream:
                 stream.write('\n[target.\'cfg(windows)\'.dependencies]\n'
-                             'amd64 = { path = "../assembler/amd64", optional = true }\n')
+                             'amd64 = { path = "../amd64", optional = true }\n')
             with self.assertRaisesRegex(ValueError, "ir.*forbidden.*amd64"):
                 layers.audit(root)
 
@@ -61,8 +61,8 @@ class LayerTests(unittest.TestCase):
                 shutil.copyfile(source, destination)
             with (root / "Cargo.toml").open("a") as stream:
                 stream.write('\n[workspace.dependencies]\n'
-                             'forbidden = { package = "amd64", path = "assembler/amd64" }\n')
-            ir_manifest = root / "ir/Cargo.toml"
+                             'forbidden = { package = "amd64", path = "bindings/rust/amd64" }\n')
+            ir_manifest = root / "bindings/rust/ir/Cargo.toml"
             for declaration in [
                 '\n[dependencies]\nforbidden = { workspace = true, optional = true }\n',
                 '\n[build-dependencies]\nforbidden.workspace = true\n',

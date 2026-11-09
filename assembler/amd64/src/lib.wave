@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MPL-2.0
+// Explicit role modules; Vex compiles this package without source concatenation.
+import("./encoder/address.wave" as encoder_address);
+import("./encoder/branch.wave" as encoder_branch);
+import("./parser/directives.wave" as parser_directives);
+import("./encoder/directives_encode.wave" as encoder_directives_encode);
+import("./encoder/emit.wave" as encoder_emit);
+import("./encoder/encoder.wave" as encoder_encoder);
+import("./encoder/model.wave" as encoder_model);
+import("./parser/expressions.wave" as parser_expressions);
+import("./encoder/instruction.wave" as encoder_instruction);
+import("./encoder/integer.wave" as encoder_integer);
+import("./encoder/layout.wave" as encoder_layout);
+import("./encoder/namespace.wave" as encoder_namespace);
+import("./parser/operands.wave" as parser_operands);
+import("./parser/driver.wave" as parser_driver);
+import("./parser/model.wave" as parser_model);
+import("./parser/registers.wave" as parser_registers);
+import("./encoder/sse.wave" as encoder_sse);

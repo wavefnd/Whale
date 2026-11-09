@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_amd64::encoder::branch")::{amd_direct_branch};
+import("whale_wave_amd64::encoder::emit")::{
+    amd_emit,
+    amd_modrm,
+    amd_prefix,
+    amd_reg_mem,
+    amd_register_pair,
+    amd_rex,
+};
+import("whale_wave_amd64::encoder::model")::{
+    AmdEncodeInput,
+    AmdEncodeResult,
+    AmdOperand,
+    AmdWriter,
+    amd_fail,
+    amd_fits,
+    amd_mnemonic,
+    amd_register,
+    amd_signed64,
+};
+import("whale_wave_amd64::encoder::integer")::{
+    amd_binary,
+    amd_extension,
+    amd_group,
+    amd_imul,
+    amd_mov,
+    amd_shift,
+};
+import("whale_wave_amd64::encoder::namespace")::{amd_expression};
+import("whale_wave_amd64::encoder::sse")::{amd_scalar_sse};
+import("whale_wave_assembler::ast")::{AsmExpr, AsmItem, AsmOperand};
+
+fun amd_operand(p: ptr<AmdEncodeInput>, scope: u64, raw: ptr<AsmOperand>,
+    output: ptr<AmdOperand>, result: ptr<AmdEncodeResult>) -> bool {
+    output.kind = raw.kind;
+    output.code = 0;
+    output.width = 0;
+    output.flags = 0;
+    output.low = raw.low;
+    output.high = raw.high;
+    output.mode = raw.mode;
+    output.memwidth = raw.width;
+    output.base = raw.base;
+    output.index = raw.index;
+    output.scale = raw.scale;
+    output.disp = raw.disp as i64;
+    output.symbol = 18446744073709551615;
+    if (raw.kind == 0) {
+        if (!amd_register(p, raw.name, output)) {
+            return amd_fail(result, 5);
+        }
+    } else if (raw.kind == 2 || raw.kind == 3) {
+        var expression: AsmExpr;
+        expression.kind = 1;
+        expression.name = raw.name;
+        expression.low = raw.low;
+        expression.high = raw.high;
+        if (raw.kind == 2) {
+            expression.low = 0;
+            expression.high = 0;
+        }
+        var resolved: AsmExpr;
+        if (!amd_expression(p, scope, &expression, &resolved, result)) {
+            return false;
+        }
+        output.low = resolved.low;
+        output.high = resolved.high;
+        if (resolved.kind == 0) {
+            output.kind = 1;
+        } else {
+            output.symbol = resolved.name;
+        }
+    } else if (raw.kind == 4 && raw.symbol != 18446744073709551615) {
+        var expression: AsmExpr;
+        expression.kind = 1;
+        expression.name = raw.symbol;
+        expression.low = raw.disp;
+        expression.high = 0;
+        if ((raw.disp as i64) < 0) {
+            expression.high = 18446744073709551615;
+        }
+        var resolved: AsmExpr;
+        if (!amd_expression(p, scope, &expression, &resolved, result)) {
+            return false;
+        }
+        if (resolved.kind == 0) {
+            if (!amd_signed64(resolved.low, resolved.high)) {
+                return amd_fail(result, 43);
+            }
+            output.disp = resolved.low as i64;
+        } else {
+            output.symbol = resolved.name;
+        }
+    } else if (raw.kind > 4) {
+        return amd_fail(result, 3);
+    }
+    return true;
+}
+
+pub fun amd_encode_instruction(w: ptr<AmdWriter>, node: u64, iteration: u64) -> bool {
+    var item: AsmItem = w.p.items[node];
+    var operation: u64 = amd_mnemonic(w.p, item.name);
+    if (operation == 255) {
+        w.result.argument = item.name;
+        return amd_fail(w.result, 44);
+    }
+    var count: u64 = 2;
+    if ((operation >= 13 && operation <= 16) || (operation >= 26 && operation <= 28)) {
+        count = 0;
+    } else if ((operation >= 8 && operation <= 12) || (operation >= 19 && operation <= 22)
+        || (operation >= 64 && operation <= 95)) {
+        count = 1;
+    }
+    if (operation == 7 && item.count == 3) {
+        count = 3;
+    }
+    if (item.count != count) {
+        w.result.argument = count;
+        return amd_fail(w.result, 45);
+    }
+    var a: AmdOperand;
+    var b: AmdOperand;
+    var c: AmdOperand;
+    a.kind = 255;
+    b.kind = 255;
+    c.kind = 255;
+    if (count > 0 && !amd_operand(w.p, w.p.nodes[node].scope,
+        &w.p.operands[item.first], &a, w.result)) {
+        return false;
+    }
+    if (count > 1 && !amd_operand(w.p, w.p.nodes[node].scope,
+        &w.p.operands[item.first + 1], &b, w.result)) {
+        return false;
+    }
+    if (count > 2 && !amd_operand(w.p, w.p.nodes[node].scope,
+        &w.p.operands[item.first + 2], &c, w.result)) {
+        return false;
+    }
+    if (operation == 0) {
+        return amd_mov(w, &a, &b);
+    }
+    if (operation >= 1 && operation <= 6) {
+        var opcode: u64 = 0;
+        var extension: u64 = 0;
+        if (operation == 2) {
+            opcode = 40;
+            extension = 5;
+        } else if (operation == 3) {
+            opcode = 32;
+            extension = 4;
+        } else if (operation == 4) {
+            opcode = 8;
+            extension = 1;
+        } else if (operation == 5) {
+            opcode = 48;
+            extension = 6;
+        } else if (operation == 6) {
+            opcode = 56;
+            extension = 7;
+        }
+        return amd_binary(w, &a, &b, opcode, extension);
+    }
+    if (operation == 7) {
+        return amd_imul(w, &a, &b, &c, count);
+    }
+    if (operation == 8 || operation == 9) {
+        if (operation == 8 && a.kind == 1) {
+            var tail: u64 = 4;
+            var opcode: u64 = 104;
+            if (amd_fits(a.low, a.high, 8, true)) {
+                tail = 1;
+                opcode = 106;
+            } else if (!amd_fits(a.low, a.high, 32, true)) {
+                return amd_fail(w.result, 46);
+            }
+            return amd_emit(w, opcode, 1) && amd_emit(w, a.low, tail);
+        }
+        if (a.kind != 0 || (a.width != 16 && a.width != 64)) {
+            return amd_fail(w.result, 47);
+        }
+        var opcode: u64 = 80;
+        if (operation == 9) {
+            opcode = 88;
+        }
+        return amd_prefix(w, a.width) && amd_rex(w, 0, 0, 0, (a.code >= 8) as u64, 0)
+            && amd_emit(w, opcode + (a.code & 7), 1);
+    }
+    if (operation == 10 || operation == 11 || operation == 12
+        || (operation >= 64 && operation <= 79)) {
+        if ((operation == 10 || operation == 11) && (a.kind == 0 || a.kind == 4)) {
+            var extension: u64 = 4;
+            if (operation == 11) {
+                extension = 2;
+            }
+            return amd_group(w, &a, 64, 0, 255, 0, extension);
+        }
+        return amd_direct_branch(w, operation, &a, node, iteration);
+    }
+    if (operation == 13) {
+        return amd_emit(w, 195, 1);
+    }
+    if (operation == 14) {
+        return amd_emit(w, 144, 1);
+    }
+    if (operation == 15) {
+        return amd_emit(w, 1295, 2);
+    }
+    if (operation == 16) {
+        return amd_emit(w, 204, 1);
+    }
+    if (operation == 17) {
+        if (a.kind != 0 || (a.width != 32 && a.width != 64) || b.kind != 4) {
+            return amd_fail(w.result, 48);
+        }
+        return amd_reg_mem(w, 141, 0, &a, &b);
+    }
+    if (operation == 18 || operation == 32 || operation == 33) {
+        var opcode: u64 = 132;
+        if (operation == 32) {
+            opcode = 16;
+        } else if (operation == 33) {
+            opcode = 24;
+        }
+        if (a.width != 8) {
+            opcode += 1;
+        }
+        return amd_register_pair(w, opcode, &a, &b);
+    }
+    if (operation >= 19 && operation <= 22) {
+        if (a.kind != 0 || a.width == 128) {
+            return amd_fail(w.result, 5);
+        }
+        var extension: u64 = operation - 17;
+        if (operation >= 21) {
+            extension = operation - 15;
+        }
+        var opcode: u64 = 247;
+        if (a.width == 8) {
+            opcode = 246;
+        }
+        return amd_group(w, &a, a.width, a.width, opcode, 0, extension);
+    }
+    if (operation >= 23 && operation <= 25) {
+        return amd_shift(w, operation, &a, &b);
+    }
+    if (operation >= 26 && operation <= 28) {
+        if (operation == 26 && !amd_emit(w, 102, 1)) {
+            return false;
+        }
+        if (operation == 28 && !amd_emit(w, 72, 1)) {
+            return false;
+        }
+        return amd_emit(w, 153, 1);
+    }
+    if (operation >= 29 && operation <= 31) {
+        return amd_extension(w, operation, &a, &b);
+    }
+    if (operation >= 34 && operation <= 43) {
+        return amd_scalar_sse(w, operation, &a, &b);
+    }
+    if (operation >= 80 && operation <= 95) {
+        return amd_group(w, &a, 8, 8, 144 + operation - 80, 1, 0);
+    }
+    if (operation >= 96 && operation <= 111) {
+        if (a.kind != 0 || b.kind != 0 || a.width != b.width
+            || (a.width != 16 && a.width != 32 && a.width != 64)) {
+            return amd_fail(w.result, 49);
+        }
+        return amd_prefix(w, a.width)
+            && amd_rex(w, a.width, (a.code >= 8) as u64, 0, (b.code >= 8) as u64, 0)
+            && amd_emit(w, 15, 1) && amd_emit(w, 64 + operation - 96, 1)
+            && amd_modrm(w, 3, a.code, b.code);
+    }
+    return amd_fail(w.result, 44);
+}

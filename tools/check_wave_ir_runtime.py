@@ -27,7 +27,7 @@ TYPES = {
 # This reads only the record ABI. All generated operations and expected values below
 # are independent of Wave instruction implementation and Rust reference execution.
 for name, body in re.findall(r"struct (IrRuntime\w+)\s*\{([^}]+)\}",
-                             (Path(__file__).resolve().parents[1] / "ir/runtime_model.wave").read_text()):
+                             (Path(__file__).resolve().parents[1] / "ir/src/interpreter/model.wave").read_text()):
     fields = []
     for field, kind in re.findall(r"(\w+):\s*([^;]+);", body):
         pointer = re.fullmatch(r"ptr<(.+)>", kind)

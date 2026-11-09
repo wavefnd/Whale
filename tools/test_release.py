@@ -23,10 +23,12 @@ def product(target, socket=False, reference=False):
     implementations = {name: "wave" for name in ("ir", "assembler", "asmobj", "amd64")}
     if reference:
         implementations.update(ir="rust-reference", assembler="rust-reference", amd64="rust-reference")
-    provenance = {"wave_revision": release.WAVE_REVISION, "target": target, "opt_level": "2",
+    provenance = {"wave_revision": "a" * 40, "target": target, "opt_level": "2",
                   "source_sha256": "1" * 64, "abi_sha256": "2" * 64,
                   "archive_sha256": "3" * 64, "compiler_sha256": "4" * 64, "std_sha256": "5" * 64,
-                  "bootstrap_rust_version": "1.89.0", "required_llvm_major": 21}
+                  "compiler_version": "0.0.1-alpha-dev", "nightly_archive_sha256": "6" * 64,
+                  "vex_version": "vex 0.0.3-beta", "vex_sha256": "7" * 64,
+                  "vex_provenance_sha256": "8" * 64}
     return {"schema_version": 1, "version": VERSION, "source_commit": SOURCE, "source_dirty": False,
             "host_target": target, "rustc": "rustc 1.86.0", "reference_feature": reference,
             "wave_modules": {name: provenance.copy() for name, value in implementations.items() if value == "wave"},

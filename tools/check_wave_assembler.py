@@ -36,7 +36,7 @@ def integer(value):
     return bits - (1 << 128) if bits >> 127 else bits
 
 
-text = (Path(__file__).resolve().parents[1] / "assembler/src/unicode_reference.rs").read_text()
+text = (Path(__file__).resolve().parents[1] / "bindings/rust/assembler/src/unicode_reference.rs").read_text()
 RANGES = [(int(lo), int(hi)) for lo, hi in re.findall(r"\((\d+), (\d+)\)", text)]
 STARTS = [lo for lo, _ in RANGES]
 

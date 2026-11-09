@@ -40,25 +40,33 @@ jobs:
         with:
           repository: wavefnd/Wave
           ref: e0952ed65d07e14c6ed0aa64f3c9a5532dd7533b
-          path: .asmobj-bootstrap-source
+          path: .hir-fixture-source
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13'
-      - name: Install pinned compiler prerequisites
+      - name: Install build tools and verified Vex v0.0.3-beta
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y wget software-properties-common ninja-build nasm
-          wget --tries=3 --timeout=30 https://apt.llvm.org/llvm.sh -O "$RUNNER_TEMP/llvm.sh"
-          sudo bash "$RUNNER_TEMP/llvm.sh" 21
-          sudo apt-get install --no-install-recommends -y llvm-21-dev lld-21
-          printf '%s\n' \
-            'LLVM_SYS_211_PREFIX=/usr/lib/llvm-21' \
-            'LLVM_CONFIG_PATH=/usr/lib/llvm-21/bin/llvm-config' \
-            'AR=/usr/lib/llvm-21/bin/llvm-ar' >> "$GITHUB_ENV"
-          echo "/usr/lib/llvm-21/bin" >> "$GITHUB_PATH"
-          rustup toolchain install 1.89.0 --profile minimal
+          sudo apt-get install --no-install-recommends -y ninja-build nasm llvm
+          echo "AR=/usr/bin/llvm-ar" >> "$GITHUB_ENV"
+          python3 -m pip install --disable-pip-version-check meson==1.8.5
           rustup toolchain install stable --profile minimal
+          rustup toolchain install 1.89.0 --profile minimal
+          curl --fail --location --retry 3 \
+            https://github.com/wavefnd/Vex/releases/download/v0.0.3-beta/vex-v0.0.3-beta-x86_64-unknown-linux-gnu.tar.gz \
+            --output "$RUNNER_TEMP/vex.tar.gz"
+          echo "0b2fb97b74b38711d41bf4f58a7b1d15af392cc13271575cd517ac0f67fd8059  $RUNNER_TEMP/vex.tar.gz" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/vex-bin"
+          tar -xzf "$RUNNER_TEMP/vex.tar.gz" -C "$RUNNER_TEMP/vex-bin" --strip-components=1
+          echo "$RUNNER_TEMP/vex-bin" >> "$GITHUB_PATH"
+      - name: Resolve one nightly compiler for this entire build
+        run: |
+          python3 tools/wave_nightly.py --cache-dir "$RUNNER_TEMP/wave-nightly" \
+            --output "$RUNNER_TEMP/wave-toolchain.json"
+          python3 tools/vex_module.py --prepare --vex "$(command -v vex)" \
+            --toolchain "$RUNNER_TEMP/wave-toolchain.json" \
+            --build-dir "$RUNNER_TEMP/vex-prepare" --state-dir "$RUNNER_TEMP/vex-state"
       - name: Build each archive from the same complete source module
         run: |
           for target in \
@@ -69,15 +77,16 @@ jobs:
             aarch64-pc-windows-msvc \
             x86_64-apple-darwin \
             aarch64-apple-darwin; do
-            python3 tools/build_asmobj.py --wave-source .asmobj-bootstrap-source \
-              --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
-              --out-dir ".ci-asmobj/$target" --target "$target" --allow-network
+            python3 tools/vex_module.py --module asmobj --vex "$(command -v vex)" \
+              --toolchain "$RUNNER_TEMP/wave-toolchain.json" --state-dir "$RUNNER_TEMP/vex-state" \
+              --build-dir "$RUNNER_TEMP/vex-asmobj-$target" --profile release \
+              --output-dir ".ci-asmobj/$target" --target "$target"
           done
       - name: Compare native Linux O0 and O2 with the independent oracle
         run: |
-          python3 tools/build_asmobj.py --wave-source .asmobj-bootstrap-source \
-            --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
-            --out-dir "$RUNNER_TEMP/asmobj-o0" --opt-level 0
+          python3 tools/vex_module.py --module asmobj --vex "$(command -v vex)" \
+            --toolchain "$RUNNER_TEMP/wave-toolchain.json" --state-dir "$RUNNER_TEMP/vex-state" \
+            --build-dir "$RUNNER_TEMP/vex-asmobj-o0" --output-dir "$RUNNER_TEMP/asmobj-o0"
           cc -shared -Wl,--whole-archive "$RUNNER_TEMP/asmobj-o0/libwhale_asmobj.a" \
             -Wl,--no-whole-archive -o "$RUNNER_TEMP/asmobj-o0.so"
           cc -shared -Wl,--whole-archive .ci-asmobj/x86_64-unknown-linux-gnu/libwhale_asmobj.a \
@@ -92,9 +101,12 @@ jobs:
         run: |
           cargo fetch --locked
           for optimization in 0 2; do
-            python3 tools/build_wave_ir.py --wave-source .asmobj-bootstrap-source \
-              --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
-              --out-dir "$RUNNER_TEMP/wave-ir-o$optimization" --opt-level "$optimization"
+            profile=dev
+            if [ "$optimization" = 2 ]; then profile=release; fi
+            python3 tools/vex_module.py --module ir --vex "$(command -v vex)" \
+              --toolchain "$RUNNER_TEMP/wave-toolchain.json" --state-dir "$RUNNER_TEMP/vex-state" \
+              --build-dir "$RUNNER_TEMP/vex-ir-o$optimization" --profile "$profile" \
+              --output-dir "$RUNNER_TEMP/wave-ir-o$optimization"
             cc -shared -Wl,--whole-archive "$RUNNER_TEMP/wave-ir-o$optimization/libwhale_wave_ir.a" \
               -Wl,--no-whole-archive -o "$RUNNER_TEMP/wave-ir-o$optimization.so"
             ir_python="$(command -v python3)"
@@ -131,11 +143,14 @@ jobs:
         run: |
           for optimization in 0 2; do
             for module in common amd64 aarch64 riscv64 loongarch64; do
-              python3 tools/build_wave_assembler.py --module "$module" \
-                --wave-source .asmobj-bootstrap-source \
-                --bootstrap-dir "$RUNNER_TEMP/asmobj-bootstrap" --rust-toolchain 1.89.0 \
-                --out-dir "$RUNNER_TEMP/assembler-$module-o$optimization" \
-                --opt-level "$optimization"
+              package="$module"
+              if [ "$module" = common ]; then package=assembler; fi
+              profile=dev
+              if [ "$optimization" = 2 ]; then profile=release; fi
+              python3 tools/vex_module.py --module "$package" --vex "$(command -v vex)" \
+                --toolchain "$RUNNER_TEMP/wave-toolchain.json" --state-dir "$RUNNER_TEMP/vex-state" \
+                --build-dir "$RUNNER_TEMP/vex-$package-o$optimization" --profile "$profile" \
+                --output-dir "$RUNNER_TEMP/assembler-$module-o$optimization"
             done
             export WHALE_WAVE_ASSEMBLER_DIR="$RUNNER_TEMP/assembler-common-o$optimization"
             export WHALE_WAVE_AMD64_DIR="$RUNNER_TEMP/assembler-amd64-o$optimization"
@@ -227,21 +242,20 @@ jobs:
             python3 tools/check_wave_module_selection.py \
               --ir-dir "$WHALE_WAVE_IR_DIR" --assembler-dir "$WHALE_WAVE_ASSEMBLER_DIR" \
               --target-dir "$RUNNER_TEMP/wave-selection-target"
-      - name: Reproduce the pinned typed HIR fixture
+      - name: Reproduce the historical typed HIR fixture
         run: |
-          python3 tools/check_wave_hir_fixture.py --wave-source .asmobj-bootstrap-source \
+          cargo +1.89.0 fetch --locked --manifest-path .hir-fixture-source/Cargo.toml
+          python3 tools/check_wave_hir_fixture.py --wave-source .hir-fixture-source \
             --target-dir "$RUNNER_TEMP/wave-hir-fixture" --rust-toolchain 1.89.0
       - name: Build, test and install the Meson source product
         run: |
-          python3 -m pip install --disable-pip-version-check meson==1.8.5
           cargo fetch --locked
           meson setup "$RUNNER_TEMP/whale-meson" \
-            -Dwave-source="$GITHUB_WORKSPACE/.asmobj-bootstrap-source" \
-            -Dwave-bootstrap-dir="$RUNNER_TEMP/asmobj-bootstrap" -Dsocket-cli=true
+            -Dwave-cache-dir="$RUNNER_TEMP/wave-nightly" -Dwave-offline=true -Dsocket-cli=true
           meson compile -C "$RUNNER_TEMP/whale-meson"
-          warm_build="$(meson compile -C "$RUNNER_TEMP/whale-meson")"
-          printf '%s\n' "$warm_build"
-          printf '%s\n' "$warm_build" | grep -F 'ninja: no work to do.'
+          before="$(stat -c '%Y:%s' "$RUNNER_TEMP/whale-meson/whale")"
+          meson compile -C "$RUNNER_TEMP/whale-meson"
+          test "$before" = "$(stat -c '%Y:%s' "$RUNNER_TEMP/whale-meson/whale")"
           meson test -C "$RUNNER_TEMP/whale-meson" --print-errorlogs
           DESTDIR="$RUNNER_TEMP/whale-meson-install" meson install -C "$RUNNER_TEMP/whale-meson"
           "$RUNNER_TEMP/whale-meson-install/usr/local/bin/whale" --version

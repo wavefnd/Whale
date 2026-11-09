@@ -1,0 +1,17 @@
+{
+    version = 4,
+    roots = [{edges = [{alias = "whale_wave_assembler", default_features = true, features = [], key = "binding_66c52b8baba9c424444225e1437fecb6da8226d0e7d26fb25769078ff5409d87", optional = false, target = null}], features = {}, manifest = "assembler/aarch64/vex.ws", name = "whale_wave_aarch64", version = "0.1.0"}, {edges = [{alias = "whale_wave_assembler", default_features = true, features = [], key = "binding_66c52b8baba9c424444225e1437fecb6da8226d0e7d26fb25769078ff5409d87", optional = false, target = null}], features = {}, manifest = "assembler/amd64/vex.ws", name = "whale_wave_amd64", version = "0.1.0"}, {edges = [], features = {}, manifest = "assembler/asmobj/vex.ws", name = "whale_asmobj", version = "0.1.0"}, {edges = [{alias = "whale_wave_assembler", default_features = true, features = [], key = "binding_66c52b8baba9c424444225e1437fecb6da8226d0e7d26fb25769078ff5409d87", optional = false, target = null}], features = {}, manifest = "assembler/loongarch64/vex.ws", name = "whale_wave_loongarch64", version = "0.1.0"}, {edges = [{alias = "whale_wave_assembler", default_features = true, features = [], key = "binding_66c52b8baba9c424444225e1437fecb6da8226d0e7d26fb25769078ff5409d87", optional = false, target = null}], features = {}, manifest = "assembler/riscv64/vex.ws", name = "whale_wave_riscv64", version = "0.1.0"}, {edges = [], features = {}, manifest = "assembler/vex.ws", name = "whale_wave_assembler", version = "0.1.0"}, {edges = [], features = {}, manifest = "ir/vex.ws", name = "whale_wave_ir", version = "0.1.0"}],
+    package = [
+        {
+            name = "binding_66c52b8baba9c424444225e1437fecb6da8226d0e7d26fb25769078ff5409d87",
+            version = "0.1.0",
+            package = "whale_wave_assembler",
+            id = "e8f0d5b5c99914af7f588dc4cef9e14dd25fb6e8244627f46758ea8de59c68a8",
+            import_name = "whale_wave_assembler",
+            source = "path",
+            path = "..",
+            resolved = "assembler",
+            dependencies = []
+        }
+    ]
+}

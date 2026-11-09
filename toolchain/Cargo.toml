@@ -9,9 +9,10 @@ default = []
 rust-reference = ["assembler/rust-reference", "ir/rust-reference"]
 
 [dependencies]
-assembler = { path = "../assembler" }
+assembler = { path = "../bindings/rust/assembler" }
+asmobj = { path = "../bindings/rust/asmobj" }
 backend-api = { path = "../backend-api" }
 target-spec = { path = "../target-spec" }
-ir = { path = "../ir" }
+ir = { path = "../bindings/rust/ir" }
 diagnostic = { path = "../diagnostic" }
 object = { path = "../object" }

@@ -1,0 +1,15 @@
+[package]
+name = "amd64"
+version = "0.1.0"
+edition = "2021"
+rust-version.workspace = true
+
+[features]
+default = []
+rust-reference = ["assembler/rust-reference"]
+
+[dependencies]
+assembler = { path = "../assembler" }
+
+[dev-dependencies]
+diagnostic = { path = "../../../diagnostic" }

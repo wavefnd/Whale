@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Explicit composition root. No built-in ISA, global state, or dynamic loader.
-pub mod assembly_object;
+pub use asmobj as assembly_object;
 
 use assembler::extension::Assembler;
 

@@ -1,0 +1,87 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_assembler::fixed::model")::{
+    FixedContext,
+    FixedInput,
+    FixedInstruction,
+    FixedResult,
+    FixedState,
+};
+import("whale_wave_riscv64::encoder")::{rv_encode};
+
+extern(c, "asm_fixed_charge") fun asm_fixed_charge(result: ptr<FixedResult>, units: u64) -> bool;
+extern(c, "asm_fixed_commit") fun asm_fixed_commit(state: ptr<FixedState>, word: u64,
+    result: ptr<FixedResult>) -> bool;
+extern(c, "asm_fixed_next") fun asm_fixed_next(state: ptr<FixedState>, instruction: ptr<FixedInstruction>,
+    result: ptr<FixedResult>) -> i32;
+extern(c, "asm_fixed_prepare") fun asm_fixed_prepare(packet: ptr<FixedInput>, state: ptr<FixedState>,
+    result: ptr<FixedResult>) -> bool;
+extern(c, "asm_span_valid") fun asm_span_valid(data: ptr<u8>, count: u64, width: u64) -> bool;
+
+// The source driver is appended once its shared prepare/next/commit ABI is ready.
+pub export(c) fun whale_riscv64_instruction(instruction: ptr<FixedInstruction>,
+    context: ptr<FixedContext>, result: ptr<FixedResult>) -> i32 {
+    if (result == null) {
+        return 2;
+    }
+    if (instruction == null || context == null || instruction.fold > 1
+        || !asm_span_valid(instruction.mnemonic.data, instruction.mnemonic.count, 1)
+        || !asm_span_valid(instruction.operands as ptr<u8>, instruction.count, 16)) {
+        result.status = 2;
+        return 2;
+    }
+    var index: u64 = 0;
+    while (index < instruction.count) {
+        if (!asm_fixed_charge(result, 1)) {
+            return result.status as i32;
+        }
+        if (!asm_span_valid(instruction.operands[index].data, instruction.operands[index].count, 1)) {
+            result.status = 2;
+            return 2;
+        }
+        index += 1;
+    }
+    if (!rv_encode(instruction, context, result)) {
+        return result.status as i32;
+    }
+    return 0;
+}
+
+pub export(c) fun whale_riscv64_entry(packet: ptr<FixedInput>, result: ptr<FixedResult>) -> i32 {
+    if (packet == null || result == null) {
+        return 2;
+    }
+    var state: FixedState;
+    var instruction: FixedInstruction;
+    var step: i32 = 0;
+    if (!asm_fixed_prepare(packet, &state, result)) {
+        if (result.status == 0) {
+            result.status = 2;
+        }
+        return result.status as i32;
+    }
+    while (true) {
+        step = asm_fixed_next(&state, &instruction, result);
+        if (step == 0) {
+            return result.status as i32;
+        }
+        if (step != 1) {
+            if (result.status == 0) {
+                result.status = 2;
+            }
+            return result.status as i32;
+        }
+        if (whale_riscv64_instruction(&instruction, &state.context, result) != 0
+            || !asm_fixed_commit(&state, result.word, result)) {
+            if (result.status == 0) {
+                result.status = 2;
+            }
+            return result.status as i32;
+        }
+    }
+    return 2;
+}
+
+// Distinct compiled identity used by product composition checks.
+pub export(c) fun whale_riscv64_module_identity() -> u64 {
+    return 6289348675459241473;
+}

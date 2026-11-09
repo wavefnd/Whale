@@ -3,7 +3,7 @@ use std::{path::PathBuf, process::Command};
 #[test]
 fn cli_reports_original_source_and_both_direct_and_indirect_callers_without_reading_source_files() {
     let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("ir/tests/fixtures/runtime-diagnostics-v7.wir");
+        .join("bindings/rust/ir/tests/fixtures/runtime-diagnostics-v7.wir");
     let output = Command::new(env!("CARGO_BIN_EXE_whale"))
         .args(["ir", "run"])
         .arg(input)

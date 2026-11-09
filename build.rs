@@ -26,7 +26,7 @@ fn provenance(directory: &Path) -> Value {
     assert!(bytes.len() <= 16384, "oversized module provenance");
     let original: Value = serde_json::from_slice(&bytes).expect("invalid module provenance");
     let mut portable = Map::new();
-    // Exclude the bootstrap cache path: it is not part of the built product.
+    // Exclude the toolchain cache path: it is not part of the built product.
     for key in [
         "wave_revision",
         "target",
@@ -36,8 +36,11 @@ fn provenance(directory: &Path) -> Value {
         "archive_sha256",
         "compiler_sha256",
         "std_sha256",
-        "bootstrap_rust_version",
-        "required_llvm_major",
+        "compiler_version",
+        "nightly_archive_sha256",
+        "vex_version",
+        "vex_sha256",
+        "vex_provenance_sha256",
     ] {
         let value = original.get(key).unwrap_or_else(|| panic!("missing provenance {key}"));
         portable.insert(key.into(), value.clone());

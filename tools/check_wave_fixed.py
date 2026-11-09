@@ -13,7 +13,7 @@ MIN, MAX = -(1 << 127), (1 << 127) - 1
 SPACE = '\t\n\v\f\r \u0085\u00a0\u1680' + ''.join(chr(n) for n in range(0x2000, 0x200B)) + '\u2028\u2029\u202f\u205f\u3000'
 TYPES = {'u64': U, 'i64': C.c_int64, 'u8': C.c_uint8, 'bool': C.c_bool}
 for name, body in re.findall(r'struct (\w+)\s*\{([^}]+)\}',
-                             (ROOT / 'assembler/fixed_model.wave').read_text()):
+                             (ROOT / 'assembler/src/fixed/model.wave').read_text()):
     fields = []
     for field, kind in re.findall(r'(\w+):\s*([^;]+);', body):
         pointer = re.fullmatch(r'ptr<(.+)>', kind)

@@ -36,9 +36,9 @@ def main():
         raise RuntimeError('Cargo is required for actual module selection checks')
     checks = 0
     for package, directory, variable, library, metadata in [
-        ('ir', arguments.ir_dir, 'WHALE_WAVE_IR_DIR', 'libwhale_wave_ir.a', 'wave-ir.meta'),
+        ('ir', arguments.ir_dir, 'WHALE_WAVE_IR_DIR', 'libwhale_wave_ir.a', 'module.meta'),
         ('assembler', arguments.assembler_dir, 'WHALE_WAVE_ASSEMBLER_DIR',
-         'libwhale_wave_assembler.a', 'wave-assembler.meta'),
+         'libwhale_wave_assembler.a', 'module.meta'),
     ]:
         command = [cargo, 'check', '--manifest-path', str(root / 'Cargo.toml'), '-p', package,
                    '--no-default-features', '--locked', '--offline', '--jobs', '2']

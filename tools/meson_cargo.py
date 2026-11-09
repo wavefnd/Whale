@@ -8,7 +8,6 @@ asm-* features select which machine-code outputs that executable can produce.
 
 import argparse
 import json
-import json
 import os
 from pathlib import Path
 import re
@@ -23,8 +22,8 @@ class BuildError(ValueError):
 
 ASSEMBLERS = ("amd64", "aarch64", "riscv64", "loongarch64")
 FEATURES = {"asm-" + arch for arch in ASSEMBLERS} | {"socket-cli", "native-linker", "rust-reference"}
-COMPONENTS = ("diagnostic", "assembler", "backend-api", "toolchain",
-              "reverse", "target-spec", "object", "linker", "ir")
+COMPONENTS = ("diagnostic", "bindings/rust/assembler", "backend-api", "toolchain",
+              "reverse", "target-spec", "object", "linker", "bindings/rust/ir", "bindings/rust/asmobj")
 TRIPLE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]+\Z")
 
 
@@ -170,7 +169,7 @@ def source_dependencies(source, features):
     # The repository root also receives unrelated tool state (for example
     # .git and editor directories). Tracking it makes every warm build dirty.
     dependencies = {source / "Cargo.toml", source / "Cargo.lock", Path(__file__).resolve()}
-    components = [*COMPONENTS, *("assembler/" + arch for arch in ASSEMBLERS if "asm-" + arch in features)]
+    components = [*COMPONENTS, *("bindings/rust/" + arch for arch in ASSEMBLERS if "asm-" + arch in features)]
     for component in ["", *components]:
         root = source / component
         for name in ["Cargo.toml", "build.rs"]:
@@ -188,16 +187,7 @@ def source_dependencies(source, features):
         elif path.is_dir():
             dependencies.add(path)
             dependencies.update(path.iterdir())
-    dependencies.add(source / "assembler/asmobj")
-    dependencies.update((source / "assembler/asmobj").rglob("*.wave"))
-    dependencies.update(path for path in (source / "assembler/asmobj").rglob("*") if path.is_dir())
-    dependencies.update((source / "ir").glob("*.wave"))
-    dependencies.update((source / "assembler").glob("*.wave"))
-    if (source / "assembler/build_support.rs").is_file():
-        dependencies.add(source / "assembler/build_support.rs")
-    for arch in ASSEMBLERS:
-        if "asm-" + arch in features:
-            dependencies.update((source / "assembler" / arch).glob("*.wave"))
+    dependencies.add(source / "bindings/rust/build_support.rs")
     return dependencies
 
 
@@ -297,17 +287,17 @@ def build(arguments):
                         for path in cargo_dependencies(directory / "whale.d"))
     if asmobj_directory:
         archive = "whale_asmobj.lib" if "msvc" in target else "libwhale_asmobj.a"
-        dependencies.update(asmobj_directory / name for name in [archive, "asmobj.meta", "provenance.json"])
+        dependencies.update(asmobj_directory / name for name in [archive, "module.meta", "provenance.json"])
     if wave_ir_directory:
         archive = "whale_wave_ir.lib" if "msvc" in target else "libwhale_wave_ir.a"
-        dependencies.update(wave_ir_directory / name for name in [archive, "wave-ir.meta", "provenance.json"])
+        dependencies.update(wave_ir_directory / name for name in [archive, "module.meta", "provenance.json"])
     for name, directory in [("assembler", wave_assembler_directory), ("amd64", wave_amd64_directory),
                             ("aarch64", wave_aarch64_directory), ("riscv64", wave_riscv64_directory),
                             ("loongarch64", wave_loongarch64_directory)]:
         if directory:
             archive = f"whale_wave_{name}.lib" if "msvc" in target else f"libwhale_wave_{name}.a"
             dependencies.update(directory / file for file in
-                                [archive, f"wave-{name}.meta", "provenance.json"])
+                                [archive, "module.meta", "provenance.json"])
     contents = make_escape(output) + ": " + " ".join(make_escape(path) for path in sorted(dependencies)) + "\n"
     candidate = None
     candidate_depfile = None
@@ -394,26 +384,6 @@ def smoke(arguments):
                 raise BuildError("Whale bytecode execution smoke failed")
 
 
-def bootstrap(arguments):
-    from wave_bootstrap import BootstrapError, ensure_bootstrap
-    try:
-        result = ensure_bootstrap(arguments.wave_source, arguments.cache_dir,
-                                  rust_toolchain=arguments.rust_toolchain,
-                                  allow_network=arguments.allow_network)
-    except BootstrapError as error:
-        raise BuildError(str(error)) from error
-    output = arguments.output.resolve()
-    candidate = None
-    try:
-        with tempfile.NamedTemporaryFile(prefix=".wave-ready-", dir=output.parent, delete=False) as temporary:
-            candidate = Path(temporary.name)
-            temporary.write((json.dumps(result.paths(), sort_keys=True) + "\n").encode("utf-8"))
-        os.replace(candidate, output)
-    finally:
-        if candidate is not None:
-            candidate.unlink(missing_ok=True)
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -442,12 +412,6 @@ def main(argv=None):
     smoke_parser.add_argument("--binary", type=Path, required=True)
     smoke_parser.add_argument("--feature", action="append", default=[])
     smoke_parser.add_argument("--runner-arg", action="append", default=[])
-    bootstrap_parser = commands.add_parser("bootstrap")
-    bootstrap_parser.add_argument("--wave-source", type=Path, required=True)
-    bootstrap_parser.add_argument("--cache-dir", type=Path, required=True)
-    bootstrap_parser.add_argument("--rust-toolchain", required=True)
-    bootstrap_parser.add_argument("--output", type=Path, required=True)
-    bootstrap_parser.add_argument("--allow-network", action="store_true")
     arguments = parser.parse_args(argv)
     try:
         if arguments.command == "build":
@@ -456,8 +420,6 @@ def main(argv=None):
             build(arguments)
         elif arguments.command == "smoke":
             smoke(arguments)
-        else:
-            bootstrap(arguments)
     except (BuildError, OSError, subprocess.SubprocessError) as error:
         parser.exit(1, f"Meson Cargo bridge: {error}\n")
     return 0

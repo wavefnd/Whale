@@ -112,7 +112,7 @@ def main():
             for op in ("fadd", "fsub", "fmul", "fdiv", "frem"):
                 expected = arithmetic(width, op, a, b)
                 lines.append(f"{width} {op} {a:x} {b:x} {expected:x}")
-    output = Path(__file__).resolve().parent.parent / "ir/tests/fixtures/float-arithmetic.txt"
+    output = Path(__file__).resolve().parent.parent / "bindings/rust/ir/tests/fixtures/float-arithmetic.txt"
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Generated {len(lines) - 1} exact arithmetic vectors")
 

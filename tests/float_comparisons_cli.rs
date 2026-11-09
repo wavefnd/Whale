@@ -3,7 +3,7 @@ use std::{path::PathBuf, process::Command};
 #[test]
 fn documented_float_comparisons_report_boolean_results() {
     let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("ir/tests/fixtures/float-comparisons-v7.wir");
+        .join("bindings/rust/ir/tests/fixtures/float-comparisons-v7.wir");
     for (function, a, b, expected) in [
         ("@f0", "0x7ff0000000000001", "0x3ff0000000000000", "bool true\n"),
         ("@f0", "0x3ff0000000000000", "0xfff8123456789abc", "bool true\n"),

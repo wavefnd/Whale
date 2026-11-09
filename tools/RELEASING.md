@@ -7,8 +7,7 @@ that mode. Cross-produced Wave objects do not establish another executable host.
 Build a clean revision with Meson, then package it with Python 3.13+:
 
 ```sh
-meson setup /tmp/whale-release --buildtype=release -Dsocket-cli=true \
-  -Dwave-source=/absolute/Wave -Dwave-rust-toolchain=1.89
+meson setup /tmp/whale-release --buildtype=release -Dsocket-cli=true
 meson compile -C /tmp/whale-release
 python3 tools/release.py package --binary /tmp/whale-release/whale \
   --directory /tmp/whale-dist --version 0.1.0 --source FULL_40_DIGIT_COMMIT \

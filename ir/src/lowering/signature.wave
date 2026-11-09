@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_ir::lowering::model")::{
+    IrLowerType,
+    ir_lower_aggregate,
+    ir_lower_charge,
+    ir_lower_fail,
+};
+import("whale_wave_ir::lowering::output")::{IrLowerDriver};
+
+fun ir_lower_signature_type(p: ptr<IrLowerDriver>, ty: u64, depth: u64, node: u64) -> bool {
+    if (!ir_lower_charge(p.core, 1, node)) { return false; }
+    if (depth > p.core.max_depth) { return ir_lower_fail(p.core, 2, node, 0, 0, 0); }
+    if (ty >= p.core.type_count) { return ir_lower_fail(p.core, 21, node, 0, 0, 1); }
+    var t: ptr<IrLowerType> = &p.core.types[ty];
+    if (t.kind == 0) { return ir_lower_fail(p.core, 21, node, 0, 0, 1); }
+    if (t.kind == 18) { return ir_lower_signature_validate(p, ty, depth + 1, node); }
+    if (t.kind == 17) {
+        if (t.child == 0) { return true; }
+        return ir_lower_signature_type(p, t.child, depth + 1, node);
+    }
+    if (t.kind == 19) { return ir_lower_signature_type(p, t.child, depth + 1, node); }
+    var at: u64 = 0;
+    if (t.kind == 20 || t.kind == 21) {
+        while (at < t.count) {
+            if (!ir_lower_signature_type(p, p.core.type_edges[t.first + at], depth + 1, node)) { return false; }
+            at += 1;
+        }
+    }
+    return true;
+}
+
+pub fun ir_lower_signature_validate(p: ptr<IrLowerDriver>, ty: u64, depth: u64, node: u64) -> bool {
+    if (depth > p.core.max_depth) { return ir_lower_fail(p.core, 2, node, 0, 0, 0); }
+    if (ty >= p.core.type_count || p.core.types[ty].kind != 18) {
+        return ir_lower_fail(p.core, 21, node, 0, 0, 1);
+    }
+    var t: ptr<IrLowerType> = &p.core.types[ty];
+    if (t.child != 0) {
+        if (t.auxiliary == 1 && ir_lower_aggregate(p.core, t.child)) { return ir_lower_fail(p.core, 21, node, 0, 0, 1); }
+        if (!ir_lower_signature_type(p, t.child, depth + 1, node)) { return false; }
+    }
+    var at: u64 = 0;
+    while (at < t.count) {
+        var param: u64 = p.core.type_edges[t.first + at];
+        if (t.auxiliary == 1 && ir_lower_aggregate(p.core, param)) { return ir_lower_fail(p.core, 21, node, 0, 0, 1); }
+        if (!ir_lower_signature_type(p, param, depth + 1, node)) { return false; }
+        at += 1;
+    }
+    return true;
+}
+
+pub fun ir_lower_scalar_signature(p: ptr<IrLowerDriver>, ty: u64, node: u64) -> bool {
+    var signature: ptr<IrLowerType> = &p.core.types[ty];
+    if (ir_lower_aggregate(p.core, signature.child)) { return ir_lower_fail(p.core, 18, node, 0, 0, 9); }
+    var at: u64 = 0;
+    while (at < signature.count) {
+        var kind: u64 = p.core.types[p.core.type_edges[signature.first + at]].kind;
+        if (kind == 20 || kind == 21) { return ir_lower_fail(p.core, 18, node, 0, 0, 9); }
+        at += 1;
+    }
+    return true;
+}

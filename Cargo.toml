@@ -1,18 +1,20 @@
 [workspace]
 members = [
     "diagnostic",
-    "assembler",
-    "assembler/amd64",
-    "assembler/aarch64",
-    "assembler/riscv64",
-    "assembler/loongarch64",
+    "bindings/rust/assembler",
+    "bindings/rust/amd64",
+    "bindings/rust/aarch64",
+    "bindings/rust/riscv64",
+    "bindings/rust/loongarch64",
     "backend-api",
     "toolchain",
+    "bindings/rust/asmobj",
     "examples/external-target",
     "reverse",
     "target-spec",
     "object",
-    "linker", "ir",
+    "linker",
+    "bindings/rust/ir",
 ]
 
 [workspace.package]
@@ -36,11 +38,11 @@ native-linker = ["dep:linker"]
 rust-reference = ["assembler/rust-reference", "ir/rust-reference", "toolchain/rust-reference", "amd64?/rust-reference", "aarch64?/rust-reference", "riscv64?/rust-reference", "loongarch64?/rust-reference"]
 
 [dependencies]
-assembler = { path = "assembler" }
-amd64 = { path = "assembler/amd64", optional = true }
-aarch64 = { path = "assembler/aarch64", optional = true }
-riscv64 = { path = "assembler/riscv64", optional = true }
-loongarch64 = { path = "assembler/loongarch64", optional = true }
+assembler = { path = "bindings/rust/assembler" }
+amd64 = { path = "bindings/rust/amd64", optional = true }
+aarch64 = { path = "bindings/rust/aarch64", optional = true }
+riscv64 = { path = "bindings/rust/riscv64", optional = true }
+loongarch64 = { path = "bindings/rust/loongarch64", optional = true }
 toolchain = { path = "toolchain" }
 reverse = { path = "reverse" }
 linker = { path = "linker", optional = true }
@@ -48,7 +50,7 @@ backend-api = { path = "backend-api" }
 diagnostic = { path = "diagnostic" }
 target-spec = { path = "target-spec" }
 object = { path = "object" }
-ir = { path = "ir", version = "0.1.0", default-features = false }
+ir = { path = "bindings/rust/ir", version = "0.1.0", default-features = false }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 same-file = "1"
