@@ -11,7 +11,11 @@ import subprocess
 import tarfile
 import tempfile
 
-from wave_bootstrap import DEFAULT_RUST_TOOLCHAIN, RUST_VERSION, WAVE_REVISION
+# This frozen interchange fixture deliberately identifies its historical
+# frontend; it does not select the compiler used to build Whale's Wave modules.
+DEFAULT_RUST_TOOLCHAIN = "1.89.0"
+RUST_VERSION = "1.89.0"
+WAVE_REVISION = "e0952ed65d07e14c6ed0aa64f3c9a5532dd7533b"
 
 
 def main():
@@ -78,7 +82,7 @@ def main():
     if actual["wave_revision"] != WAVE_REVISION:
         raise ValueError("fixture exporter revision differs from the pinned source")
     data = (json.dumps(actual, indent=2) + "\n").encode()
-    fixture = root / "ir" / "tests" / "fixtures" / "wave_typed_hir_scalar.json"
+    fixture = root / "bindings/rust/ir/tests/fixtures/wave_typed_hir_scalar.json"
     if args.update:
         fixture.write_bytes(data)
     elif fixture.read_bytes() != data:

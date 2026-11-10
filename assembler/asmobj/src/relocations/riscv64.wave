@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_asmobj::model")::{AsmobjRelocation, AsmobjTarget};
+
+// RISC-V relocation numbers are preserved for ELF; other formats are unsupported.
+pub fun asmobj_riscv64_relocation(target: ptr<AsmobjTarget>, relocation: ptr<AsmobjRelocation>,
+    code: ptr<u64>) -> i32 {
+    if (target.format != 0) {
+        return 6;
+    }
+    code[0] = relocation.code;
+    return 0;
+}

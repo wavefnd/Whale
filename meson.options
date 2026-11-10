@@ -16,7 +16,7 @@ option('rust-reference', type: 'boolean', value: false,
 option('asmobj-dir', type: 'string', value: '',
        description: 'Absolute directory of the complete prebuilt Wave asmobj module for the executable host')
 option('wave-ir-dir', type: 'string', value: '',
-       description: 'Absolute directory of a prebuilt internal Wave IR module; source builds use the pinned compiler')
+       description: 'Absolute directory of a prebuilt internal Wave IR module; source builds use the selected nightly')
 option('wave-assembler-dir', type: 'string', value: '',
        description: 'Absolute directory of the shared Wave assembler archive for the executable host')
 option('wave-amd64-dir', type: 'string', value: '',
@@ -27,14 +27,12 @@ option('wave-riscv64-dir', type: 'string', value: '',
        description: 'Absolute directory of the Wave riscv64 module for the executable host')
 option('wave-loongarch64-dir', type: 'string', value: '',
        description: 'Absolute directory of the Wave loongarch64 module for the executable host')
-option('wave-source', type: 'string', value: '',
-       description: 'Read-only Wave Git checkout containing the pinned bootstrap revision')
-option('wave-bootstrap-dir', type: 'string', value: '',
-       description: 'Optional absolute compiler/std cache directory; default is private to this build')
-option('wave-rust-toolchain', type: 'string', value: '1.89.0',
-       description: 'Installed Rust toolchain alias reporting the pinned Rust 1.89.0 compiler')
-option('wave-allow-network', type: 'boolean', value: false,
-       description: 'Explicitly allow locked dependency downloads for the Wave bootstrap build')
+option('vex', type: 'string', value: 'vex',
+       description: 'Build-machine Vex executable (v0.0.3-beta or newer)')
+option('wave-cache-dir', type: 'string', value: '',
+       description: 'Absolute verified nightly cache; default is private to this build directory')
+option('wave-offline', type: 'boolean', value: false,
+       description: 'Reuse the verified cached nightly without network access')
 option('cargo-host-target', type: 'string', value: '',
        description: 'Rust target triple for the Whale executable host; required for cross builds')
 option('cargo-offline', type: 'boolean', value: true,

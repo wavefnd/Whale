@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_aarch64::encoder")::{a64_encode};
+import("whale_wave_assembler::fixed::model")::{
+    FixedInput,
+    FixedInstruction,
+    FixedResult,
+    FixedState,
+};
+
+extern(c, "asm_fixed_commit") fun asm_fixed_commit(state: ptr<FixedState>, word: u64,
+    result: ptr<FixedResult>) -> bool;
+extern(c, "asm_fixed_next") fun asm_fixed_next(state: ptr<FixedState>, instruction: ptr<FixedInstruction>,
+    result: ptr<FixedResult>) -> i32;
+extern(c, "asm_fixed_prepare") fun asm_fixed_prepare(packet: ptr<FixedInput>, state: ptr<FixedState>,
+    result: ptr<FixedResult>) -> bool;
+
+// Source preparation, instruction selection and publication stay in native code.
+pub export(c) fun whale_aarch64_assemble(packet: ptr<FixedInput>, result: ptr<FixedResult>) -> i32 {
+    if (result == null) {
+        return 2;
+    }
+    if (packet == null) {
+        result.status = 2;
+        result.word = 0;
+        return 2;
+    }
+    var state: FixedState;
+    if (!asm_fixed_prepare(packet, &state, result)) {
+        if (result.status == 0) {
+            result.status = 2;
+            result.word = 0;
+        }
+        return result.status as i32;
+    }
+    while (true) {
+        var instruction: FixedInstruction;
+        var next: i32 = asm_fixed_next(&state, &instruction, result);
+        if (next == 0) {
+            return result.status as i32;
+        }
+        if (next != 1) {
+            if (result.status == 0) {
+                result.status = 2;
+                result.word = 0;
+            }
+            return result.status as i32;
+        }
+        if (!a64_encode(&instruction, &state.context, result)
+            || !asm_fixed_commit(&state, result.word, result)) {
+            if (result.status == 0) {
+                result.status = 2;
+                result.word = 0;
+            }
+            return result.status as i32;
+        }
+    }
+    return 0;
+}
+
+// Distinct compiled identity used by product composition checks.
+pub export(c) fun whale_aarch64_module_identity() -> u64 {
+    return 6289348675458121985;
+}

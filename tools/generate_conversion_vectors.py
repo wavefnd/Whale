@@ -50,7 +50,7 @@ def main():
                 if dest != width:
                     want = encode(dest, value, raw == sign)
                     lines.append(f"f{width} f{dest} {'fext' if width < dest else 'ftrunc'} {raw:x} {want:x}")
-    path = Path(__file__).resolve().parent.parent / "ir/tests/fixtures/float-conversions.txt"
+    path = Path(__file__).resolve().parent.parent / "bindings/rust/ir/tests/fixtures/float-conversions.txt"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Generated {len(lines) - 1} exact conversion vectors")
 

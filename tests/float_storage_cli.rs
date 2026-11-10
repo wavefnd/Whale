@@ -1,8 +1,8 @@
 use std::{path::PathBuf, process::Command};
 
 fn run(function: &str, literal: Option<&str>) -> std::process::Output {
-    let input =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ir/tests/fixtures/float-storage-v7.wir");
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("bindings/rust/ir/tests/fixtures/float-storage-v7.wir");
     let mut command = Command::new(env!("CARGO_BIN_EXE_whale"));
     command.args(["ir", "run"]).arg(input).args(["--function", function]);
     if let Some(value) = literal {

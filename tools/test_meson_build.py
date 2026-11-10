@@ -161,29 +161,21 @@ class DependencyTests(unittest.TestCase):
     def test_source_dirs_and_manifests_track_additions_without_disabled_isas(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary).resolve()
-            for name in ["src", "toolchain/src", "assembler/amd64/src", "assembler/aarch64/src"]:
+            for name in ["src", "toolchain/src", "bindings/rust/asmobj/src", "bindings/rust/ir/src",
+                         "bindings/rust/amd64/src", "bindings/rust/aarch64/src"]:
                 (source / name).mkdir(parents=True)
                 (source / name / "lib.rs").write_text("// source")
-            (source / "ir").mkdir()
-            (source / "ir/model.wave").write_text("// type graph")
-            (source / "toolchain/src/assembly_object.rs").write_text("// ffi boundary")
             (source / "Cargo.toml").write_text("manifest")
-            (source / "assembler/model.wave").write_text("shared model")
-            (source / "assembler/build_support.rs").write_text("guard")
-            (source / "assembler/amd64/encoder.wave").write_text("disabled")
-            (source / "assembler/aarch64/encoder.wave").write_text("selected")
+            (source / "bindings/rust/build_support.rs").write_text("guard")
             dependencies = source_dependencies(source, ["asm-aarch64"])
             self.assertNotIn(source, dependencies)
-            self.assertIn(source / "assembler/aarch64/src", dependencies)
-            self.assertIn(source / "assembler/aarch64/src/lib.rs", dependencies)
-            self.assertNotIn(source / "assembler/amd64/src/lib.rs", dependencies)
-            self.assertNotIn(source / "assembler/amd64/encoder.wave", dependencies)
-            self.assertIn(source / "assembler/aarch64/encoder.wave", dependencies)
-            self.assertIn(source / "assembler/model.wave", dependencies)
-            self.assertIn(source / "assembler/build_support.rs", dependencies)
+            self.assertIn(source / "bindings/rust/aarch64/src", dependencies)
+            self.assertIn(source / "bindings/rust/aarch64/src/lib.rs", dependencies)
+            self.assertNotIn(source / "bindings/rust/amd64/src/lib.rs", dependencies)
+            self.assertIn(source / "bindings/rust/build_support.rs", dependencies)
             self.assertIn(source / "Cargo.toml", dependencies)
-            self.assertIn(source / "toolchain/src/assembly_object.rs", dependencies)
-            self.assertIn(source / "ir/model.wave", dependencies)
+            self.assertIn(source / "bindings/rust/asmobj/src/lib.rs", dependencies)
+            self.assertIn(source / "bindings/rust/ir/src/lib.rs", dependencies)
 
 
 class PublicationTests(unittest.TestCase):

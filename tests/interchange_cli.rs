@@ -23,8 +23,8 @@ fn disabled_feature_reports_recovery_without_output() {
 #[test]
 #[cfg(feature = "socket-cli")]
 fn schema_and_lowering_errors_preserve_existing_output_even_without_verify() {
-    let valid = include_str!("../ir/tests/fixtures/ast-v2-u128.json");
-    let calls = include_str!("../ir/tests/fixtures/ast-v2-calls.json");
+    let valid = include_str!("../bindings/rust/ir/tests/fixtures/ast-v2-u128.json");
+    let calls = include_str!("../bindings/rust/ir/tests/fixtures/ast-v2-calls.json");
     let cases = [
         (calls.replace("\"Direct\": \"emit\"", "\"Direct\": \"missing\""), "UnknownFunctionName"),
         (

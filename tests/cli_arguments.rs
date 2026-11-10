@@ -69,10 +69,15 @@ fn repeated_or_conflicting_architecture_options_fail_before_reading_input() {
 fn ir_output_flags_reject_option_shaped_paths_before_publication() {
     let directory = tempfile::tempdir().unwrap();
     let input = directory.path().join("input.wir");
-    fs::write(&input, include_str!("../ir/tests/fixtures/wave-control-v3.wir")).unwrap();
+    fs::write(&input, include_str!("../bindings/rust/ir/tests/fixtures/wave-control-v3.wir"))
+        .unwrap();
     let lower_input = directory.path().join("input.json");
     if cfg!(feature = "socket-cli") {
-        fs::write(&lower_input, include_str!("../ir/tests/fixtures/ast-v2-u128.json")).unwrap();
+        fs::write(
+            &lower_input,
+            include_str!("../bindings/rust/ir/tests/fixtures/ast-v2-u128.json"),
+        )
+        .unwrap();
     }
     let output = directory.path().join("output with spaces.wir");
     let mut modes = vec![("print", &input)];

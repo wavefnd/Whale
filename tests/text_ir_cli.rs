@@ -8,7 +8,8 @@ fn run(args: &[&str]) -> std::process::Output {
 fn run_tracked_memory_reports_initialization_and_validates_byte_budgets() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("tracked memory.wir");
-    fs::write(&path, include_str!("../ir/tests/fixtures/tracked-memory-v4.wir")).unwrap();
+    fs::write(&path, include_str!("../bindings/rust/ir/tests/fixtures/tracked-memory-v4.wir"))
+        .unwrap();
     let input = path.to_str().unwrap();
     let r = run(&["ir", "run", input, "--function", "@f0", "--max-memory", "20"]);
     assert!(r.status.success(), "{r:?}");
@@ -40,7 +41,7 @@ fn typed_ir_commands_work_without_socket_and_publish_only_verified_output() {
     let output = tmp.path().join("output.wir");
     let input = input.to_str().unwrap();
     let output = output.to_str().unwrap();
-    let good = include_str!("../ir/tests/fixtures/wave-control-v3.wir");
+    let good = include_str!("../bindings/rust/ir/tests/fixtures/wave-control-v3.wir");
     fs::write(input, good).unwrap();
     let result = run(&["ir", "verify", input]);
     assert!(result.status.success(), "{result:?}");
@@ -88,7 +89,7 @@ fn hardlink_output_cannot_overwrite_ir_input() {
     let tmp = tempfile::tempdir().unwrap();
     let input = tmp.path().join("input.wir");
     let alias = tmp.path().join("alias.wir");
-    let good = include_str!("../ir/tests/fixtures/calls-v3.wir");
+    let good = include_str!("../bindings/rust/ir/tests/fixtures/calls-v3.wir");
     fs::write(&input, good).unwrap();
     fs::hard_link(&input, &alias).unwrap();
     assert!(!run(&["ir", "print", input.to_str().unwrap(), "-o", alias.to_str().unwrap()])
@@ -102,7 +103,7 @@ fn canonical_printing_obeys_exact_byte_limits_and_preserves_existing_files() {
     let tmp = tempfile::tempdir().unwrap();
     let input = tmp.path().join("input.wir");
     let output = tmp.path().join("output.wir");
-    let source = include_str!("../ir/tests/fixtures/wave-control-v3.wir");
+    let source = include_str!("../bindings/rust/ir/tests/fixtures/wave-control-v3.wir");
     fs::write(&input, source).unwrap();
     let input_name = input.to_str().unwrap();
     let output_name = output.to_str().unwrap();
@@ -146,7 +147,7 @@ fn run_executes_exact_arguments_and_reports_traps_fuel_and_unsupported_operation
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join("loop input.wir");
     let input = path.to_str().unwrap();
-    let source = include_str!("../ir/tests/fixtures/interpreter-loop-v3.wir");
+    let source = include_str!("../bindings/rust/ir/tests/fixtures/interpreter-loop-v3.wir");
     fs::write(input, source).unwrap();
     let result = run(&["ir", "run", input, "--function", "@f7", "--arg", "3"]);
     assert!(result.status.success(), "{result:?}");
@@ -199,7 +200,7 @@ fn run_executes_exact_arguments_and_reports_traps_fuel_and_unsupported_operation
         "{error}"
     );
     assert!(error.contains(input));
-    fs::write(input, include_str!("../ir/tests/fixtures/wave-casts-v3.wir")).unwrap();
+    fs::write(input, include_str!("../bindings/rust/ir/tests/fixtures/wave-casts-v3.wir")).unwrap();
     let converted = run(&["ir", "run", input, "--function", "@f0"]);
     assert!(converted.status.success(), "{converted:?}");
     fs::write(input, "module { format_version 3 semantics_version 1 target \"x86_64-whale-linux\" datalayout {ptr=64,endian=little} declare @f0 \"aggregate\": whale () -> void, linkage internal fn @f0 \"aggregate\"() -> void, entry %b0 { %b0 \"entry\": %v0: ptr<array<u8,1>> = alloca array<u8,1>, align 1 %v1: array<u8,1> = load array<u8,1>, ptr<array<u8,1>> %v0, align 1 ret void } }").unwrap();
@@ -216,7 +217,7 @@ fn ast_lowering_streams_with_the_same_exact_publication_ceiling() {
     let tmp = tempfile::tempdir().unwrap();
     let input = tmp.path().join("input.json");
     let output = tmp.path().join("output.wir");
-    let source = include_str!("../ir/tests/fixtures/ast-v2-u128.json");
+    let source = include_str!("../bindings/rust/ir/tests/fixtures/ast-v2-u128.json");
     fs::write(&input, source).unwrap();
     let input_name = input.to_str().unwrap();
     let output_name = output.to_str().unwrap();

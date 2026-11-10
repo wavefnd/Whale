@@ -1,58 +1,20 @@
 # Assembly modules
 
-The `assembler` crate owns output sections/symbols/relocations, limits and source
-diagnostics. `extension::Assembler` accepts source directly, so implementations
-can use their own syntax. `fixed` supplies bounded two-pass source, label and
-section handling for four-byte instruction sets. AMD64 keeps its existing parser
-and relaxation engine. Its complete existing [instruction and source reference](amd64/README.md)
-is preserved in the AMD64 crate. Each ISA is an independent crate under this directory.
+Wave production code lives in `src/` within each module. Shared source and
+numeric helpers are in `assembler/src/`; each ISA owns its parser, operands,
+registers and encoding files under `assembler/ARCH/src/`. AMD64 additionally
+separates `parser/` and `encoder/`. The complete AMD64
+[instruction reference](amd64/README.md) remains here.
 
-Each new ISA follows the same responsibility boundaries:
+Rust data bindings and explicit comparison references live under
+`bindings/rust/{assembler,amd64,aarch64,riscv64,loongarch64,asmobj}/`.
+The complete [asmobj](asmobj/) Wave module maps assembly records to object
+records; the separate Rust `object` module serializes them. The CLI composes
+assemblers through `toolchain::Registry` in `src/builtins.rs`.
 
-```text
-src/lib.rs               Public assembler entry point and trait implementations
-src/parser.rs            ISA operand syntax and register validation
-src/tables.rs            Register aliases, opcode/form tables and relocation IDs
-src/encoder.rs           Instruction selection, aliases and relocation resolution
-src/encoding/branch.rs   Checked branch ranges and immediate bit layouts
-src/encoding/            Other instruction formats and ISA-specific families
-tests/encodings.rs       Independent LLVM encodings, owned by each ISA crate
-```
-
-A64 separates arithmetic and load/store encoding into `encoding/arithmetic.rs`
-and `encoding/memory.rs`. RV64I and LoongArch64 put register/immediate format
-packing in `encoding/formats.rs`. The shared fixed-width source front end handles
-sections, labels, directives and resource limits; ISA crates own operand syntax
-and machine instruction encoding. Parser and displacement-boundary unit tests
-live beside their implementations. Root integration tests cover registration,
-CLI behavior and the assembly-to-object boundary.
-
-`Assembler::object_target()` identifies native output. The
-[`asmobj`](asmobj/) module under this directory is implemented entirely in Wave.
-Its model, section, symbol, relocation and entry files validate assembly metadata
-and map relocation namespaces to the selected object identity. Rust-owned buffer
-conversion lives outside the module in `toolchain/src/assembly_object.rs`; the
-separate Rust `object` module serializes its result. The CLI composes assemblers
-through `toolchain::Registry` in `src/builtins.rs`.
-
-Build the complete product with [Meson](../BUILDING.md). For Cargo development,
-set `WHALE_ASMOBJ_DIR` to an archive built by `tools/build_asmobj.py` before the
-assembly-to-object examples and integration tests below. Without the module,
-these commands return an explicit unavailable error. The initial linked module
-host is Linux x86_64 GNU; assembler output architectures remain independent.
-
-```sh
-cargo run -- asm --aarch64 examples/isa/aarch64.s -o /tmp/aarch64.o
-cargo run -- asm --riscv64 examples/isa/riscv64.s -o /tmp/riscv64.o
-cargo run -- asm --loongarch64 examples/isa/loongarch64.s -o /tmp/loongarch64.o
-```
-
-`--arm64` aliases `--aarch64`. `--arch ID` selects a registered assembler directly
-(e.g. `--arch riscv64`); extending the built-in registry does not require another
-CLI switch. Architecture switches are mutually exclusive.
-Existing AMD64 syntax and flags retain their behavior. `--ast` and `--token`
-expose only the AMD64 parser; byte dumps, tracing, statistics, input limits and
-atomic output publication work for all four native assemblers.
+Build with [Meson and Vex](../BUILDING.md). Direct Cargo checks require the
+selected Wave archive directories described there. Missing modules report an
+explicit error; Rust comparison algorithms require `rust-reference`.
 
 ## Initial 64-bit instruction subsets
 

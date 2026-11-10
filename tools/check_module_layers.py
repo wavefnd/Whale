@@ -15,12 +15,13 @@ CORE = {
     "diagnostic": set(),
     "target-spec": set(),
     "assembler": {"target-spec", "diagnostic"},
+    "asmobj": {"assembler", "object"},
     "ir": {"target-spec", "diagnostic"},
     "backend-api": {"ir", "target-spec", "diagnostic"},
     "object": {"target-spec", "diagnostic"},
     "linker": {"object", "diagnostic"},
     "reverse": {"object"},
-    "toolchain": {"assembler", "backend-api", "ir", "target-spec", "diagnostic", "object"},
+    "toolchain": {"assembler", "asmobj", "backend-api", "ir", "target-spec", "diagnostic", "object"},
 }
 
 

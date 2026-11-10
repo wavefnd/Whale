@@ -99,9 +99,7 @@ On the initial Linux x86_64 GNU host:
 git clone https://github.com/wavefnd/Whale.git
 cd Whale
 cargo fetch --locked
-export LLVM_SYS_211_PREFIX=/usr/lib64/llvm21
-meson setup /tmp/whale-build --buildtype=release \
-  -Dwave-source=/absolute/path/to/Wave
+meson setup /tmp/whale-build --buildtype=release
 meson compile -C /tmp/whale-build
 meson test -C /tmp/whale-build --print-errorlogs
 /tmp/whale-build/whale --version
@@ -254,8 +252,8 @@ Equal-width integer/float `bitcast` reinterprets those bits. Numeric `fext`,
 with the [defined rounding and range traps](ir/CASTS.md). Bitcasts cannot recover pointer or function-pointer authority from numerical bits.
 
 ```sh
-cargo run --locked -- ir run ir/tests/fixtures/float-storage-v7.wir --function @f0 --arg 0x7c01
-cargo run --locked -- ir run ir/tests/fixtures/float-storage-v7.wir --function @f3
+cargo run --locked -- ir run bindings/rust/ir/tests/fixtures/float-storage-v7.wir --function @f0 --arg 0x7c01
+cargo run --locked -- ir run bindings/rust/ir/tests/fixtures/float-storage-v7.wir --function @f3
 ```
 
 These print `f16 0x7c01` and `u64 9218868437227405603`. Floating storage obeys
@@ -298,15 +296,15 @@ exposes this mapping and `FloatBits::compare` evaluates equal-width predicates.
 Runtime execution preserves instruction/trap order, including unused comparisons.
 
 ```sh
-cargo run --locked -- ir run ir/tests/fixtures/float-comparisons-v7.wir --function @f0 --arg 0x7ff0000000000001 --arg 0x3ff0000000000000
-cargo run --locked -- ir run ir/tests/fixtures/float-comparisons-v7.wir --function @f1 --arg 0x7ff0000000000001 --arg 0x3ff0000000000000
+cargo run --locked -- ir run bindings/rust/ir/tests/fixtures/float-comparisons-v7.wir --function @f0 --arg 0x7ff0000000000001 --arg 0x3ff0000000000000
+cargo run --locked -- ir run bindings/rust/ir/tests/fixtures/float-comparisons-v7.wir --function @f1 --arg 0x7ff0000000000001 --arg 0x3ff0000000000000
 ```
 
 These print `bool true` (generic inequality) and `bool false` (ordered inequality).
 
 ### Execute tracked stack memory
 
-Save [the complete memory fixture](ir/tests/fixtures/tracked-memory-v4.wir)
+Save [the complete memory fixture](bindings/rust/ir/tests/fixtures/tracked-memory-v4.wir)
 as `tracked-memory.wir`. It copies an initialized pointer and then reads its
 pointee. Pointer bits and capability metadata travel separately.
 
@@ -340,13 +338,13 @@ below. Foreign-memory adapters and native shadow metadata are future work.
 
 ### Addressable globals, explicit retirement and pointer offsets
 
-[The executable storage fixture](ir/tests/fixtures/runtime-storage-v6.wir) covers
+[The executable storage fixture](bindings/rust/ir/tests/fixtures/runtime-storage-v6.wir) covers
 mutable/read-only/uninitialized globals, calls, expired aliases and byte differences:
 
 ```sh
-cargo run --locked -- ir run ir/tests/fixtures/runtime-storage-v6.wir --function @f1
-cargo run --locked -- ir run ir/tests/fixtures/runtime-storage-v6.wir --function @f3
-cargo run --locked -- ir run ir/tests/fixtures/runtime-storage-v6.wir --function @f7
+cargo run --locked -- ir run bindings/rust/ir/tests/fixtures/runtime-storage-v6.wir --function @f1
+cargo run --locked -- ir run bindings/rust/ir/tests/fixtures/runtime-storage-v6.wir --function @f3
+cargo run --locked -- ir run bindings/rust/ir/tests/fixtures/runtime-storage-v6.wir --function @f7
 ```
 
 These print `u32 12`, `u32 42` and `i128 16`. `@f4` traps on an uninitialized
@@ -548,7 +546,7 @@ The printer emits typed IR format 8 with semantics version 1. AST JSON writes
 format 5. Definitions and references use explicit `@fN`, `@gN`, `%vN` and `%bN`
 identities; names are quoted annotations, and each function records its entry
 block. Name/string fields escape quotes, backslashes, control characters and
-Unicode line separators. See the [identity fixture](ir/tests/fixtures/text-identities-v3.wir)
+Unicode line separators. See the [identity fixture](bindings/rust/ir/tests/fixtures/text-identities-v3.wir)
 for repeated block names and IDs scoped to different functions.
 
 The verifier checks cast operands, opcode categories and width direction, and
@@ -561,8 +559,8 @@ pointer metadata.
 These commands are available in the default build:
 
 ```sh
-cargo run --locked -- ir verify ir/tests/fixtures/calls-v3.wir
-cargo run --locked -- ir print ir/tests/fixtures/calls-v3.wir -o canonical.wir
+cargo run --locked -- ir verify bindings/rust/ir/tests/fixtures/calls-v3.wir
+cargo run --locked -- ir print bindings/rust/ir/tests/fixtures/calls-v3.wir -o canonical.wir
 ```
 
 `ir print` and `ir lower` stream output under `--max-output N` (default 64 MiB).
@@ -628,12 +626,12 @@ versions rejected.
 
 ### Typed function calls
 
-The [complete call input](ir/tests/fixtures/ast-v2-calls.json) lowers a local
+The [complete call input](bindings/rust/ir/tests/fixtures/ast-v2-calls.json) lowers a local
 function, a stored function pointer, an indirect call, and a SysV64 external
-call. Its [printed IR](ir/tests/fixtures/calls-v3.wir) is checked by a regression test.
+call. Its [printed IR](bindings/rust/ir/tests/fixtures/calls-v3.wir) is checked by a regression test.
 
 ```sh
-cargo run --locked --features socket-cli -- ir lower ir/tests/fixtures/ast-v2-calls.json
+cargo run --locked --features socket-cli -- ir lower bindings/rust/ir/tests/fixtures/ast-v2-calls.json
 ```
 
 Declarations carry `FunctionId`, parameter/result types, calling convention,
@@ -646,12 +644,12 @@ defined runtime trap contract in the interpreter; native dispatch remains future
 This IR support does not implement machine ABI lowering or carry identities
 through object emission and linking yet.
 
-The [executable call fixture](ir/tests/fixtures/interpreted-calls-v4.wir) covers
+The [executable call fixture](bindings/rust/ir/tests/fixtures/interpreted-calls-v4.wir) covers
 caller-owned pointers, nested calls, recursion and callable returns:
 
 ```sh
-cargo run --locked -- ir run ir/tests/fixtures/interpreted-calls-v4.wir --function @f3
-cargo run --locked -- ir run ir/tests/fixtures/interpreted-calls-v4.wir --function @f6 --arg 4
+cargo run --locked -- ir run bindings/rust/ir/tests/fixtures/interpreted-calls-v4.wir --function @f3
+cargo run --locked -- ir run bindings/rust/ir/tests/fixtures/interpreted-calls-v4.wir --function @f6 --arg 4
 ```
 
 These print `u32 42` and `u32 4`. `InterpreterOptions::max_call_depth` limits
@@ -694,16 +692,16 @@ existing object files.
 `assembler/asmobj/` contains the complete Wave implementation of assembly-to-object
 validation and mapping, split into model, section, symbol, relocation and entry
 files. It replaces the former Rust `asmobj` crate. The external Rust data boundary
-in `toolchain/src/assembly_object.rs` supplies buffers and converts the returned
+in `bindings/rust/asmobj/src/lib.rs` supplies buffers and converts the returned
 records; object-file layout and serialization remain the separate Rust `object`
 module's responsibility.
 
 [Meson](BUILDING.md) compiles and links this module as part of the product.
 Cargo development builds select a prebuilt archive with `WHALE_ASMOBJ_DIR`.
 There is one implementation of its policies: an absent module returns an explicit
-unavailable error. The IR module also runs in Wave when built with its pinned
+unavailable error. The IR module also runs in Wave when built with its verified
 archive: parsing, verification, numeric semantics, constant evaluation, passes
-and execution live in role-specific `ir/*.wave` sources. Rust supplies owned
+and execution live in role-specific `ir/src/` sources. Rust supplies owned
 data, allocation and I/O; its reference implementation supports migration tests.
 
 ### Assembly symbol metadata and library resolution

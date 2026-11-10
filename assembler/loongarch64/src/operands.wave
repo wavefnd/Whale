@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_assembler::fixed::model")::{FixedResult, FixedText};
+import("whale_wave_assembler::model")::{AsmWide};
+
+extern(c, "asm_fixed_fail") fun asm_fixed_fail(result: ptr<FixedResult>, code: u64,
+    text: FixedText, detail: u64) -> bool;
+extern(c, "asm_fixed_integer") fun asm_fixed_integer(text: FixedText, output: ptr<AsmWide>,
+    result: ptr<FixedResult>) -> bool;
+extern(c, "asm_number_fits_signed") fun asm_number_fits_signed(value: ptr<AsmWide>, bits: u64) -> bool;
+
+// LoongArch-specific immediate diagnostics preserve source evaluation order.
+pub fun loong_upper_immediate(text: FixedText, output: ptr<u64>,
+    result: ptr<FixedResult>) -> bool {
+    var number: AsmWide;
+    if (!asm_fixed_integer(text, &number, result)) {
+        return false;
+    }
+    if (!asm_number_fits_signed(&number, 20)) {
+        return asm_fixed_fail(result, 3001, text, 0);
+    }
+    output[0] = number.low & 1048575;
+    return true;
+}
+
+pub fun loong_jirl_offset(text: FixedText, output: ptr<i64>, result: ptr<FixedResult>) -> bool {
+    var number: AsmWide;
+    if (!asm_fixed_integer(text, &number, result)) {
+        return false;
+    }
+    if (!asm_number_fits_signed(&number, 64)) {
+        return asm_fixed_fail(result, 3002, text, 0);
+    }
+    output[0] = number.low as i64;
+    return true;
+}

@@ -3,55 +3,26 @@ subdir('asmobj')
 wave_assembler_all_dependencies = []
 wave_assembler_dependencies = []
 wave_assembler_directory = get_option('wave-assembler-dir')
-if wave_assembler_directory == '' and wave_source != ''
+if wave_assembler_directory == '' and not get_option('rust-reference')
   wave_assembler_directory = meson.current_build_dir()
-  module_target = cargo_host_target
-  if module_target == ''
-    target_os = {'linux': 'unknown-linux-gnu', 'darwin': 'apple-darwin', 'windows': 'pc-windows-msvc'}
-    module_target = host_machine.cpu_family() + '-' + target_os[host_machine.system()]
-  endif
   archive_name = module_target.contains('msvc') ? 'whale_wave_assembler.lib' : 'libwhale_wave_assembler.a'
-  arguments = ['--module', 'common', '--wave-source', wave_source, '--out-dir', '@OUTDIR@',
-               '--bootstrap-dir', wave_cache, '--target', module_target,
-               '--rust-toolchain', get_option('wave-rust-toolchain')]
-  if get_option('wave-allow-network')
-    arguments += ['--allow-network']
-  endif
   wave_assembler_module = custom_target('wave-assembler',
-    output: [archive_name, 'wave-assembler.meta', 'provenance.json'],
-    command: [python, files('../tools/build_wave_assembler.py'), arguments],
-    depend_files: files(
-      'src/lib.rs',
-      'model.wave',
-      'unicode.wave',
-      'numeric.wave',
-      'output.wave',
-      'lexer.wave',
-      'fixed_model.wave',
-      'fixed_text.wave',
-      'fixed_numbers.wave',
-      'fixed_operands.wave',
-      'fixed_namespace.wave',
-      'fixed_relative.wave',
-      'fixed_scalar.wave',
-      'fixed_source.wave',
-      'fixed_driver.wave',
-      'src/tokens.rs',
-      'src/tokens_wave.rs',
-      'src/fixed.rs',
-      'src/fixed_wave.rs',
-      '../tools/build_wave_assembler.py',
-      '../tools/wave_bootstrap.py',
-      'build_support.rs',
-    ),
-    depends: wave_bootstrap, console: true)
+    output: [archive_name, 'module.meta', 'provenance.json'],
+    command: [python, files('../tools/vex_module.py'), '--module', 'assembler',
+              '--vex', vex, '--toolchain', wave_toolchain,
+              '--build-dir', meson.project_build_root() / 'vex/assembler', '--state-dir', wave_state,
+              '--output-dir', '@OUTDIR@', '--depfile', '@DEPFILE@',
+              '--target', module_target, '--profile', wave_profile],
+    depfile: 'module.d', depends: wave_prepared,
+    depend_files: files('vex.ws', '../tools/vex_module.py', '../tools/wave_modules.py'),
+    build_always_stale: true, console: true)
   wave_assembler_dependencies += [wave_assembler_module]
 elif wave_assembler_directory != ''
   if not fs.is_absolute(wave_assembler_directory)
     error('-Dwave-assembler-dir must be absolute.')
   endif
   archive_name = host_machine.system() == 'windows' ? 'whale_wave_assembler.lib' : 'libwhale_wave_assembler.a'
-  foreach artifact : [archive_name, 'wave-assembler.meta', 'provenance.json']
+  foreach artifact : [archive_name, 'module.meta', 'provenance.json']
     if not fs.is_file(wave_assembler_directory / artifact)
       error('Missing Wave assembler artifact: ' + (wave_assembler_directory / artifact))
     endif
@@ -73,7 +44,4 @@ endif
 wave_loongarch64_directory = ''
 if get_option('asm-loongarch64')
   subdir('loongarch64')
-endif
-if wave_assembler_directory == '' and (wave_amd64_directory != '' or wave_aarch64_directory != '' or wave_riscv64_directory != '' or wave_loongarch64_directory != '')
-  error('Wave ISA modules require -Dwave-assembler-dir or a Wave source build.')
 endif

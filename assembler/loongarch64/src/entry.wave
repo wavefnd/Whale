@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_assembler::fixed::model")::{
+    FixedInput,
+    FixedInstruction,
+    FixedResult,
+    FixedState,
+};
+import("whale_wave_loongarch64::encoder")::{whale_loongarch64_encode};
+
+extern(c, "asm_fixed_commit") fun asm_fixed_commit(state: ptr<FixedState>, word: u64,
+    result: ptr<FixedResult>) -> bool;
+extern(c, "asm_fixed_next") fun asm_fixed_next(state: ptr<FixedState>, instruction: ptr<FixedInstruction>,
+    result: ptr<FixedResult>) -> i32;
+extern(c, "asm_fixed_prepare") fun asm_fixed_prepare(packet: ptr<FixedInput>, state: ptr<FixedState>,
+    result: ptr<FixedResult>) -> bool;
+
+// Native source execution stays in Wave across the shared driver and ISA kernel.
+pub export(c) fun whale_loongarch64_assemble(packet: ptr<FixedInput>,
+    result: ptr<FixedResult>) -> i32 {
+    if (packet == null || result == null) {
+        return 2;
+    }
+    var state: FixedState;
+    var instruction: FixedInstruction;
+    var next: i32 = 0;
+    if (!asm_fixed_prepare(packet, &state, result)) {
+        return result.status as i32;
+    }
+    while (true) {
+        next = asm_fixed_next(&state, &instruction, result);
+        if (next == 0) {
+            return 0;
+        }
+        if (next != 1) {
+            return result.status as i32;
+        }
+        if (whale_loongarch64_encode(&instruction, &state.context, result) != 0
+            || !asm_fixed_commit(&state, result.word, result)) {
+            return result.status as i32;
+        }
+    }
+    return 0;
+}
+
+// Distinct compiled identity used by product composition checks.
+pub export(c) fun whale_loongarch64_module_identity() -> u64 {
+    return 6289348675458842881;
+}

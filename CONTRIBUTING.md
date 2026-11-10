@@ -6,7 +6,7 @@ and review comments should be in English. Follow the
 
 ## 1. Development setup
 
-Use [BUILDING.md](BUILDING.md) for Meson, the pinned Wave compiler, dependencies
+Use [BUILDING.md](BUILDING.md) for Meson, the verified Wave nightly, dependencies
 and installation. Rust's MSRV is **1.86.0**; CI uses Python **3.13**.
 
 Use Meson for the native product and its tests. Direct Cargo checks need the
@@ -18,11 +18,12 @@ at runtime.
 
 | Sources | Responsibility |
 | --- | --- |
-| `assembler/<architecture>/` | ISA registers, operands, grammar and encoding, with explicit Rust data bridges |
-| `assembler/*.wave`, `assembler/src/` | Shared Wave source, numeric and output helpers; Rust assembly data |
-| `assembler/asmobj/` | Complete Wave assembly-to-object module |
-| `toolchain/`, `backend-api/` | Rust composition, backend interfaces and external data calls to `asmobj` |
-| `ir/`, `target-spec/` | Wave IR model, text, verification, numeric semantics, passes and execution; Rust data transport and target contracts |
+| `assembler/ARCH/src/` | Wave ISA registers, operands, parser and encoder |
+| `assembler/src/` | Shared Wave source, numeric and output helpers |
+| `assembler/asmobj/src/` | Complete Wave assembly-to-object module |
+| `ir/src/` | Wave IR, verification, lowering, interpreter and bytecode |
+| `bindings/rust/` | Rust data bindings and explicit comparison references |
+| `toolchain/`, `backend-api/`, `target-spec/` | Product composition and target contracts |
 | `object/`, `linker/` | Rust object formats, relocations and executable layout |
 | `reverse/` | Rust image inspection; decoder and CFG currently unavailable |
 | `src/`, `tests/` | CLI and integration tests |
@@ -30,15 +31,15 @@ at runtime.
 
 Split source files by role. Shared modules must not import a concrete ISA.
 `asmobj` contains only Wave sources; its Rust data boundary lives in
-`toolchain/src/assembly_object.rs`. Object serialization belongs to `object`.
+`bindings/rust/asmobj/src/lib.rs`. Object serialization belongs to `object`.
 Rust reference algorithms are selected explicitly with `rust-reference` for comparison tests.
 Keep Wave blocks readable with four-space indentation and one statement per line.
 
 ### Adding an assembler or IR target
 
-1. Add architecture sources under `assembler/<architecture>/`, or the owning IR backend.
+1. Add architecture sources under `assembler/<architecture>/src/`, or the owning IR backend.
 2. Update `target-spec`, explicit dispatch and `src/builtins.rs` as needed.
-3. Update Meson/Cargo source selections and Wave `asmobj` relocation mappings.
+3. Update Vex/Meson/Cargo source selections and Wave `asmobj` relocation mappings.
 4. Test emitted bytes, metadata, rejected inputs and CLI behavior.
 
 Official and contributed architectures follow the same process. Central enum,

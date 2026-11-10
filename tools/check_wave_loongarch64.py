@@ -12,7 +12,7 @@ U = C.c_uint64
 NONE = (1 << 64) - 1
 TYPES = {'u64': U, 'i64': C.c_int64, 'u8': C.c_uint8, 'bool': C.c_bool}
 for name, body in re.findall(r'struct (\w+)\s*\{([^}]+)\}',
-                             (ROOT / 'assembler/fixed_model.wave').read_text()):
+                             (ROOT / 'assembler/src/fixed/model.wave').read_text()):
     fields = []
     for field, kind in re.findall(r'(\w+):\s*([^;]+);', body):
         pointer = re.fullmatch(r'ptr<(.+)>', kind)
@@ -110,7 +110,7 @@ def main():
     kernel = library.whale_loongarch64_encode
     kernel.argtypes = [C.POINTER(Instruction), C.POINTER(Context), C.POINTER(Result)]
     fixtures = 0
-    for line in (ROOT / 'assembler/loongarch64/tests/fixtures/encodings.tsv').read_text().splitlines():
+    for line in (ROOT / 'bindings/rust/loongarch64/tests/fixtures/encodings.tsv').read_text().splitlines():
         if not line or line.startswith('#'):
             continue
         encoded, source = line.split('\t')

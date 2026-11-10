@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_ir::lowering::model")::{ir_lower_float, ir_lower_signed};
+import("whale_wave_ir::lowering::output")::{IrLowerDriver, ir_lower_emit, ir_lower_value};
+
+pub fun ir_lower_immediate(p: ptr<IrLowerDriver>, ty: u64, low: u64, high: u64,
+    node: u64, output: ptr<u64>) -> bool {
+    var id: u64 = 0;
+    if (!ir_lower_value(p, ty, node, &id)) { return false; }
+    var category: u64 = 3;
+    if (ty == 1) { category = 1; }
+    else if (ir_lower_signed(ty)) { category = 2; }
+    else if (ir_lower_float(ty)) { category = 4; }
+    if (!ir_lower_emit(p, 4, id, ty, 2, low, high, category, 0, null, 0, false, node)) { return false; }
+    output[0] = id; return true;
+}
+
+pub fun ir_lower_cast_value(p: ptr<IrLowerDriver>, op: u64, src_ty: u64, dst_ty: u64,
+    value: u64, node: u64, output: ptr<u64>) -> bool {
+    var id: u64 = 0;
+    if (!ir_lower_value(p, dst_ty, node, &id)
+        || !ir_lower_emit(p, 14, id, dst_ty, op, src_ty, value, 0, 0, null, 0, false, node)) { return false; }
+    output[0] = id; return true;
+}

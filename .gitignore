@@ -9,3 +9,5 @@ target/
 .ci-wave/
 __pycache__/
 /docs/
+
+/.vex/

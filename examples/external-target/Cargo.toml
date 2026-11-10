@@ -6,8 +6,8 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-assembler = { path = "../../assembler" }
-ir = { path = "../../ir" }
+assembler = { path = "../../bindings/rust/assembler" }
+ir = { path = "../../bindings/rust/ir" }
 target-spec = { path = "../../target-spec" }
 backend-api = { path = "../../backend-api" }
 toolchain = { path = "../../toolchain" }

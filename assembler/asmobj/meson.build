@@ -1,41 +1,28 @@
 # SPDX-License-Identifier: MPL-2.0
 asmobj_dependencies = []
+asmobj_directory = get_option('asmobj-dir')
 if asmobj_directory == ''
   asmobj_directory = meson.current_build_dir()
-  module_target = cargo_host_target
-  if module_target == ''
-    target_os = {'linux': 'unknown-linux-gnu', 'darwin': 'apple-darwin', 'windows': 'pc-windows-msvc'}
-    if not target_os.has_key(host_machine.system())
-      error('Set cargo-host-target for this executable host.')
-    endif
-    module_target = host_machine.cpu_family() + '-' + target_os[host_machine.system()]
-  endif
   archive_name = module_target.contains('msvc') ? 'whale_asmobj.lib' : 'libwhale_asmobj.a'
-  arguments = ['--wave-source', wave_source, '--out-dir', '@OUTDIR@',
-               '--bootstrap-dir', wave_cache, '--target', module_target,
-               '--rust-toolchain', get_option('wave-rust-toolchain')]
-  if get_option('wave-allow-network')
-    arguments += ['--allow-network']
-  endif
-  asmobj_module = custom_target('asmobj',
-    output: [archive_name, 'asmobj.meta', 'provenance.json'],
-    command: [python, files('../../tools/build_asmobj.py'), arguments],
-    depend_files: files('model.wave', 'sections.wave', 'symbols.wave',
-                        'relocations/amd64.wave', 'relocations/aarch64.wave',
-                        'relocations/riscv64.wave', 'relocations/loongarch64.wave',
-                        'relocations.wave', 'entry.wave',
-                        '../../toolchain/src/assembly_object.rs',
-                        '../../tools/build_asmobj.py', '../../tools/wave_bootstrap.py'),
-    depends: wave_bootstrap, console: true)
+  asmobj_module = custom_target('wave-asmobj',
+    output: [archive_name, 'module.meta', 'provenance.json'],
+    command: [python, files('../../tools/vex_module.py'), '--module', 'asmobj',
+              '--vex', vex, '--toolchain', wave_toolchain,
+              '--build-dir', meson.project_build_root() / 'vex/asmobj', '--state-dir', wave_state,
+              '--output-dir', '@OUTDIR@', '--depfile', '@DEPFILE@',
+              '--target', module_target, '--profile', wave_profile],
+    depfile: 'module.d', depends: wave_prepared,
+    depend_files: files('vex.ws', '../../tools/vex_module.py', '../../tools/wave_modules.py'),
+    build_always_stale: true, console: true)
   asmobj_dependencies += [asmobj_module]
-else
+elif asmobj_directory != ''
   if not fs.is_absolute(asmobj_directory)
     error('-Dasmobj-dir must be absolute.')
   endif
   archive_name = host_machine.system() == 'windows' ? 'whale_asmobj.lib' : 'libwhale_asmobj.a'
-  foreach artifact : [archive_name, 'asmobj.meta', 'provenance.json']
+  foreach artifact : [archive_name, 'module.meta', 'provenance.json']
     if not fs.is_file(asmobj_directory / artifact)
-      error('Missing asmobj module artifact: ' + (asmobj_directory / artifact))
+      error('Missing Wave asmobj artifact: ' + (asmobj_directory / artifact))
     endif
   endforeach
 endif

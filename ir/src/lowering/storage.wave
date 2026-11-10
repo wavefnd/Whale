@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_ir::lowering::model")::{
+    IrLowerNode,
+    IrLowerValue,
+    ir_lower_aggregate,
+    ir_lower_charge,
+    ir_lower_fail,
+    ir_lower_layout,
+    ir_lower_pointer,
+};
+import("whale_wave_ir::lowering::output")::{IrLowerDriver, ir_lower_emit, ir_lower_value};
+import("whale_wave_ir::lowering::values")::{ir_lower_cast_value, ir_lower_immediate};
+
+// Frontend aggregates denote addresses; scalar expressions denote SSA values.
+// Copying an aggregate snapshots the RHS before touching a possibly aliasing LHS.
+pub fun ir_lower_alloca(p: ptr<IrLowerDriver>, ty: u64, align: u64, node: u64, output: ptr<u64>) -> bool {
+    var pointer: u64 = 0;
+    var value: u64 = 0;
+    if (!ir_lower_pointer(p.core, ty, node, &pointer)
+        || !ir_lower_value(p, pointer, node, &value)
+        || !ir_lower_emit(p, 18, value, ty, align, 0, 0, 0, 0, null, 0, true, node)) { return false; }
+    output[0] = value; return true;
+}
+
+pub fun ir_lower_read(p: ptr<IrLowerDriver>, pointer: u64, ty: u64, node: u64,
+    output: ptr<IrLowerValue>) -> bool {
+    if (ir_lower_aggregate(p.core, ty)) { output.value = pointer; output.ty = ty; return true; }
+    if (!ir_lower_layout(p.core, ty, node)) { return false; }
+    var value: u64 = 0;
+    if (!ir_lower_value(p, ty, node, &value)
+        || !ir_lower_emit(p, 21, value, ty, pointer, p.core.layouts[ty].allocation_align,
+            0, 0, 0, null, 0, false, node)) { return false; }
+    output.value = value; output.ty = ty; return true;
+}
+
+pub fun ir_lower_write(p: ptr<IrLowerDriver>, pointer: u64, value: u64, ty: u64, node: u64) -> bool {
+    if (!ir_lower_layout(p.core, ty, node)) { return false; }
+    var align: u64 = p.core.layouts[ty].align;
+    if (!ir_lower_aggregate(p.core, ty)) {
+        return ir_lower_emit(p, 23, 18446744073709551615, ty,
+            value, pointer, align, 0, 0, null, 0, false, node);
+    }
+    if (pointer == value) { return true; }
+    var temporary: u64 = 0;
+    var byte_pointer: u64 = 0;
+    var aggregate_pointer: u64 = 0;
+    var destination: u64 = 0;
+    var source: u64 = 0;
+    var snapshot: u64 = 0;
+    var size: u64 = 0;
+    if (!ir_lower_alloca(p, ty, align, node, &temporary)
+        || !ir_lower_pointer(p.core, 9, node, &byte_pointer)
+        || !ir_lower_pointer(p.core, ty, node, &aggregate_pointer)
+        || !ir_lower_cast_value(p, 10, aggregate_pointer, byte_pointer, pointer, node, &destination)
+        || !ir_lower_cast_value(p, 10, aggregate_pointer, byte_pointer, value, node, &source)
+        || !ir_lower_cast_value(p, 10, aggregate_pointer, byte_pointer, temporary, node, &snapshot)
+        || !ir_lower_immediate(p, 12, p.core.layouts[ty].size, 0, node, &size)
+        || !ir_lower_emit(p, 25, 18446744073709551615, 18446744073709551615,
+            snapshot, source, size, align, 0, null, 0, false, node)
+        || !ir_lower_emit(p, 25, 18446744073709551615, 18446744073709551615,
+            destination, snapshot, size, align, 0, null, 0, false, node)) { return false; }
+    return true;
+}
+
+pub fun ir_lower_field_pointer(p: ptr<IrLowerDriver>, base: u64, ordinal: u64, ty: u64,
+    node: u64, output: ptr<u64>) -> bool {
+    var zero: u64 = 0;
+    var index: u64 = 0;
+    var pointer: u64 = 0;
+    var destination: u64 = 0;
+    var indices: array<u64, 2>;
+    if (!ir_lower_immediate(p, 12, 0, 0, node, &zero)
+        || !ir_lower_immediate(p, 12, ordinal, 0, node, &index)
+        || !ir_lower_pointer(p.core, ty, node, &pointer)
+        || !ir_lower_value(p, pointer, node, &destination)) { return false; }
+    indices[0] = zero; indices[1] = index;
+    if (!ir_lower_emit(p, 24, destination, pointer, base, 0, 0, 0, 0,
+        &indices[0], 2, false, node)) { return false; }
+    output[0] = destination; return true;
+}
+
+
+
+pub fun ir_lower_field_map(p: ptr<IrLowerDriver>, layout: u64, node: u64) -> bool {
+    var t: ptr<IrLowerNode> = &p.core.nodes[layout];
+    var at: u64 = 0;
+    while (at < t.b) {
+        if (!ir_lower_charge(p.core, 1, node)) { return false; }
+        if (p.field_binding_count >= p.field_binding_capacity) { return ir_lower_fail(p.core, 4, node, 0, 0, 0); }
+        var name: u64 = p.core.nodes[p.core.edges[t.a + at]].a;
+        var id: u64 = p.field_binding_count;
+        p.field_bindings[id].name = name; p.field_bindings[id].ordinal = at;
+        p.field_bindings[id].previous = p.field_slots[name]; p.field_bindings[id].used = 0;
+        p.field_slots[name] = id; p.field_binding_count += 1; at += 1;
+    }
+    return true;
+}

@@ -88,13 +88,13 @@ def conversion_oracle(src, dst, value):
 
 def retained(kernel, root):
     rows = 0
-    for line in (root / 'ir/tests/fixtures/float-arithmetic.txt').read_text().splitlines():
+    for line in (root / 'bindings/rust/ir/tests/fixtures/float-arithmetic.txt').read_text().splitlines():
         if not line or line.startswith('#'):
             continue
         w, op, a, b, result = line.split()
         assert kernel.arithmetic(int(w), op, int(a, 16), int(b, 16)) == int(result, 16), line
         rows += 1
-    for line in (root / 'ir/tests/fixtures/float-conversions.txt').read_text().splitlines():
+    for line in (root / 'bindings/rust/ir/tests/fixtures/float-conversions.txt').read_text().splitlines():
         if not line or line.startswith('#'):
             continue
         src, dst, op, source, expected = line.split()

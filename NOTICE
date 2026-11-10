@@ -14,3 +14,7 @@ attribution for the community policy adapted from the Contributor Covenant.
 
 The repository AI-use policy and permission contact are recorded in ai.txt.
 This notice does not replace the applicable license texts.
+
+The generation lease in tools/vex_module.py is adapted from wavefnd/Vex's
+MPL-2.0 tools/meson_consumer.py at v0.0.3-beta:
+https://github.com/wavefnd/Vex/blob/v0.0.3-beta/tools/meson_consumer.py

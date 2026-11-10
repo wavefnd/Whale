@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: MPL-2.0
+import("whale_wave_amd64::encoder::address")::{amd_address};
+import("whale_wave_amd64::encoder::model")::{
+    AmdAddress,
+    AmdEncodeInput,
+    AmdEncodeResult,
+    AmdOperand,
+    AmdWriter,
+    amd_charge,
+    amd_fail,
+    amd_mnemonic,
+};
+import("whale_wave_amd64::encoder::layout")::{amd_layout};
+import("whale_wave_assembler::ast")::{AsmItem, AsmName, AsmOperand};
+
+extern(c, "asm_span_valid") fun asm_span_valid(data: ptr<u8>, count: u64, width: u64) -> bool;
+
+// Typed AST adaptation and complete integer/scalar-SSE instruction dispatch.
+
+
+
+
+fun amd_result_reset(result: ptr<AmdEncodeResult>) {
+    result.status = 0;
+    result.error = 0;
+    result.node = 0;
+    result.previous = 18446744073709551615;
+    result.argument = 18446744073709551615;
+    result.section_count = 0;
+    result.symbol_count = 0;
+    result.output_symbols = 0;
+    result.relocation_count = 0;
+    result.bytes = 0;
+    result.iterations = 0;
+    result.work = 0;
+}
+
+fun amd_input_valid(p: ptr<AmdEncodeInput>, result: ptr<AmdEncodeResult>) -> bool {
+    if (p == null || p.item_count == 18446744073709551615
+        || p.name_count == 18446744073709551615
+        || p.section_capacity < p.item_count + 1 || p.symbol_capacity < p.name_count + 1
+        || p.table_capacity < 2 || p.symbol_capacity > p.table_capacity / 2
+        || (p.table_capacity & (p.table_capacity - 1)) != 0
+        || !asm_span_valid(p.names as ptr<u8>, p.name_count, 16)
+        || !asm_span_valid(p.items as ptr<u8>, p.item_count, 80)
+        || !asm_span_valid(p.operands as ptr<u8>, p.operand_count, 88)
+        || !asm_span_valid(p.values as ptr<u8>, p.value_count, 56)
+        || !asm_span_valid(p.sections as ptr<u8>, p.section_capacity, 48)
+        || !asm_span_valid(p.symbols as ptr<u8>, p.symbol_capacity, 184)
+        || !asm_span_valid(p.table as ptr<u8>, p.table_capacity, 8)
+        || !asm_span_valid(p.nodes as ptr<u8>, p.item_count, 64)
+        || !asm_span_valid(p.queue as ptr<u8>, p.symbol_capacity, 8)
+        || !asm_span_valid(p.relocations as ptr<u8>, p.relocation_capacity, 48)
+        || !asm_span_valid(p.bytes, p.byte_capacity, 1)) {
+        return amd_fail(result, 3);
+    }
+    var index: u64 = 0;
+    var item: AsmItem;
+    while (index < p.name_count) {
+        if (!amd_charge(p, result)) {
+            return false;
+        }
+        if (!asm_span_valid(p.names[index].bytes, p.names[index].count, 1)) {
+            return amd_fail(result, 3);
+        }
+        index += 1;
+    }
+    index = 0;
+    while (index < p.item_count) {
+        if (!amd_charge(p, result)) {
+            return false;
+        }
+        item = p.items[index];
+        if (item.kind > 8 || item.name >= p.name_count) {
+            return amd_fail(result, 3);
+        }
+        if (item.kind == 0 && (item.first > p.operand_count
+            || item.count > p.operand_count - item.first)) {
+            return amd_fail(result, 3);
+        }
+        if (item.kind == 2 && (item.first > p.value_count || item.count > p.value_count - item.first)) {
+            return amd_fail(result, 3);
+        }
+        index += 1;
+    }
+    return true;
+}
+
+pub export(c) fun whale_amd64_encode(p: ptr<AmdEncodeInput>, emission: u64,
+    result: ptr<AmdEncodeResult>) -> i32 {
+    if (result == null) {
+        return 1;
+    }
+    if (emission == 0) {
+        amd_result_reset(result);
+    }
+    if (emission > 1 || !amd_input_valid(p, result)) {
+        amd_fail(result, 3);
+        return 1;
+    }
+    var writer: AmdWriter;
+    writer.p = p;
+    writer.result = result;
+    writer.section = 0;
+    writer.count = 0;
+    writer.materialized = 0;
+    writer.measuring = 1 - emission;
+    if (!amd_layout(&writer, emission)) {
+        if (result.status == 0) {
+            amd_fail(result, 3);
+        }
+        return result.status as i32;
+    }
+    return 0;
+}
+
+pub export(c) fun whale_amd64_address(names: ptr<AsmName>, name_count: u64,
+    raw: ptr<AsmOperand>, mode: u64, output: ptr<AmdAddress>, result: ptr<AmdEncodeResult>) -> i32 {
+    if (raw == null || output == null || result == null
+        || !asm_span_valid(names as ptr<u8>, name_count, 16)) {
+        return 1;
+    }
+    amd_result_reset(result);
+    var p: AmdEncodeInput;
+    p.names = names;
+    p.name_count = name_count;
+    var mem: AmdOperand;
+    mem.mode = raw.mode;
+    mem.memwidth = raw.width;
+    mem.base = raw.base;
+    mem.index = raw.index;
+    mem.scale = raw.scale;
+    mem.disp = raw.disp as i64;
+    mem.symbol = raw.symbol;
+    var at: u64 = 0;
+    while (at < name_count) {
+        if (!asm_span_valid(names[at].bytes, names[at].count, 1)) {
+            return 1;
+        }
+        at += 1;
+    }
+    if (!amd_address(&p, &mem, mode, false, output, result)) {
+        return result.status as i32;
+    }
+    return 0;
+}
+
+pub export(c) fun whale_amd64_condition(name: ptr<AsmName>, output: ptr<u64>) -> i32 {
+    if (name == null || output == null || !asm_span_valid(name.bytes, name.count, 1)) {
+        return 2;
+    }
+    output[0] = 0;
+    var p: AmdEncodeInput;
+    p.names = name;
+    p.name_count = 1;
+    var operation: u64 = amd_mnemonic(&p, 0);
+    if (operation >= 64 && operation <= 79) {
+        output[0] = operation - 64;
+        return 0;
+    }
+    return 1;
+}
+
+// Distinct compiled identity used by product composition checks.
+pub export(c) fun whale_amd64_module_identity() -> u64 {
+    return 6289348675458125057;
+}

@@ -5,15 +5,15 @@ implementation, or language-specific `wave/` subdirectory.
 
 | Source | Role |
 | --- | --- |
-| `model.wave` | Private borrowed input/output records and resource checks |
-| `sections.wave` | Section role and sparse-storage mapping |
-| `symbols.wave` | Symbol mapping, name lookup and undefined-symbol creation |
-| `relocations.wave` | Bounded namespace/target dispatch and relocation records |
-| `relocations/*.wave` | ISA-owned ELF, COFF and Mach-O translation rules |
-| `entry.wave` | Validate the complete conversion before publishing output |
+| `src/model.wave` | Private borrowed input/output records and resource checks |
+| `src/sections.wave` | Section role and sparse-storage mapping |
+| `src/symbols.wave` | Symbol mapping, name lookup and undefined-symbol creation |
+| `src/relocations.wave` | Bounded namespace/target dispatch and relocation records |
+| `src/relocations/*.wave` | ISA-owned ELF, COFF and Mach-O translation rules |
+| `src/lib.wave` | Validate the complete conversion before publishing output |
 
-Meson builds these explicit sources as one module. The calling Rust code in
-`toolchain/src/assembly_object.rs` transfers data across the language boundary;
+Meson asks Vex to build this package as one static library. The calling Rust code in
+`bindings/rust/asmobj/src/lib.rs` transfers data across the language boundary;
 `object/` owns generic object validation and file serialization. There is no Rust
 copy of asmobj's mapping rules. An executable built without this module reports
 that assembly-to-object conversion is unavailable.
@@ -29,4 +29,4 @@ It borrows immutable input only for the duration of a call.
 
 See [BUILDING.md](../../BUILDING.md) for build commands. Independent native
 checks are in `tools/check_asmobj.py`; public Rust-call integration tests are in
-`toolchain/tests/assembly_object.rs`.
+`bindings/rust/asmobj/tests/assembly_object.rs`.
